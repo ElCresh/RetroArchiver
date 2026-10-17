@@ -1,0 +1,15 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  ATTENZIONE: fixtures/_nohdr.dsk non ha un'intestazione DSK riconoscibile.
+              Confronto solo byte per byte, senza mappa delle tracce.
+
+  3 letture a confronto
+
+  1) fixtures/_nohdr.dsk                 300 byte
+  2) fixtures/ident_a.dsk          1.515.776 byte
+  3) fixtures/ident_b.dsk          1.515.776 byte
+
+  ESITO: intestazione non riconosciuta.
+
+exit=2

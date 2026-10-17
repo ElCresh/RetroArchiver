@@ -1,0 +1,239 @@
+/* fake_dic - fake DiscImageCreator to test optical.c, dskrun and the
+ * GUI without an optical drive. Understands "ls X", "cd X FILE.bin ..." and
+ * "dvd X FILE.iso ...", and with no arguments (or with /v) prints the
+ * version like the real one. A read copies a folder from tests/fixtures/dic
+ * (gen_dic.py) next to FILE, with the DISC prefix replaced by the name
+ * of FILE, and echoes its console.txt.
+ *
+ *   FAKE_DIC_DIR      folder of the reads (default fixtures/dic)
+ *   FAKE_DIC_SCRIPT   one line per read: the folder name
+ *                     (cd_good, cd_noise, cd_c2, dvd_good), or FAIL
+ *                     (error), WRONG (disc of the other type) or
+ *                     SLOW folder (5 seconds first) or EXITn folder
+ *                     (complete read but exit code n); without a script
+ *                     cd_good or dvd_good
+ *   FAKE_DIC_NODRIVE  if defined, "ls" fails as with a wrong drive
+ *   FAKE_DIC_PACE     milliseconds to pause after each line printed (the
+ *                     window can be seen reading, for screenshots)
+ *
+ * The position in the script is kept in SCRIPT.pos, as in the fake SAMdisk. */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#define sleep5() Sleep(5000)
+#define pause_ms(ms) Sleep(ms)
+#else
+#include <dirent.h>
+#include <unistd.h>
+#define sleep5() sleep(5)
+#define pause_ms(ms) usleep((useconds_t)(ms) * 1000)
+#endif
+
+static void version(void)
+{
+    printf("AppVersion\n\t32 bit, AnsiBuild, 20260101T233129\n");
+}
+
+static int next_line(const char *script, char *out, size_t n)
+{
+    char pos[1024], line[256]; FILE *f; int k = 0, i;
+    snprintf(pos, sizeof(pos), "%s.pos", script);
+    f = fopen(pos, "r");
+    if (f) { if (fscanf(f, "%d", &k) != 1) k = 0; fclose(f); }
+    f = fopen(script, "r");
+    if (!f) return -1;
+    for (i = 0; i <= k; i++)
+        if (!fgets(line, sizeof(line), f)) { fclose(f); return -1; }
+    fclose(f);
+    line[strcspn(line, "\r\n")] = 0;
+    snprintf(out, n, "%s", line);
+    f = fopen(pos, "w");
+    if (f) { fprintf(f, "%d\n", k + 1); fclose(f); }
+    return 0;
+}
+
+static int is_text(const char *name)
+{
+    const char *dot = strrchr(name, '.');
+    return dot && (!strcmp(dot, ".txt") || !strcmp(dot, ".cue") || !strcmp(dot, ".dat") || !strcmp(dot, ".ccd"));
+}
+
+/* "DISC (Track 1).bin" -> "CD01 (Track 1).bin" */
+static void rename_to(const char *s, const char *base, char *out, size_t n)
+{
+    size_t k = 0;
+    while (*s && k + 1 < n) {
+        if (!strncmp(s, "DISC", 4)) {
+            size_t b = strlen(base);
+            if (k + b >= n) break;
+            memcpy(out + k, base, b); k += b; s += 4;
+        } else {
+            out[k++] = *s++;
+        }
+    }
+    out[k] = 0;
+}
+
+static int copy_file(const char *src, const char *dst, const char *base)
+{
+    static char buf[65536];
+    FILE *in = fopen(src, "rb"), *out; size_t n;
+    if (!in) return -1;
+    if (!(out = fopen(dst, "wb"))) { fclose(in); return -1; }
+    if (is_text(src)) {
+        char line[2048], fixed[4096];
+        while (fgets(line, sizeof(line), in)) {
+            rename_to(line, base, fixed, sizeof(fixed));
+            fputs(fixed, out);
+        }
+    } else {
+        while ((n = fread(buf, 1, sizeof(buf), in)) > 0) fwrite(buf, 1, n, out);
+    }
+    fclose(in);
+    fclose(out);
+    return 0;
+}
+
+/* the name of the read and its folder, from FILE ("dir/CD01.bin") */
+static void split(const char *file, char *dir, size_t dn, char *base, size_t bn)
+{
+    const char *a = strrchr(file, '/'), *b = strrchr(file, '\\'), *dot;
+    if (b > a) a = b;
+    if (a) snprintf(dir, dn, "%.*s", (int)(a - file), file); else snprintf(dir, dn, ".");
+    snprintf(base, bn, "%s", a ? a + 1 : file);
+    if ((dot = strrchr(base, '.')) != NULL) base[dot - base] = 0;
+}
+
+static int copy_one(const char *src_dir, const char *name, const char *dir, const char *base)
+{
+    char src[2048], dst[2048], nn[512];
+    if (!strcmp(name, "console.txt") || name[0] == '.') return 0;
+    snprintf(src, sizeof(src), "%s/%s", src_dir, name);
+    rename_to(name, base, nn, sizeof(nn));
+    snprintf(dst, sizeof(dst), "%s/%s", dir, nn);
+    return copy_file(src, dst, base);
+}
+
+static int copy_dir(const char *src_dir, const char *dir, const char *base)
+{
+    int bad = 0;
+#ifdef _WIN32
+    char pat[1024]; WIN32_FIND_DATAA fd; HANDLE h;
+    snprintf(pat, sizeof(pat), "%s\\*", src_dir);
+    h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && copy_one(src_dir, fd.cFileName, dir, base)) bad = 1;
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR *d = opendir(src_dir); struct dirent *e;
+    if (!d) return -1;
+    while ((e = readdir(d)) != NULL)
+        if (e->d_name[0] != '.' && copy_one(src_dir, e->d_name, dir, base)) bad = 1;
+    closedir(d);
+#endif
+    return bad ? -1 : 0;
+}
+
+/* console.txt: the progress lines ("... 120/ 420") rewrite the same
+ * line. FAKE_DIC_PACE=ms: a pause after each line, to see the window
+ * during a read (screenshots on the VM) */
+static void replay(const char *src_dir, const char *base)
+{
+    char p[1100], line[1024], fixed[2048]; FILE *f; size_t k;
+    const char *pace = getenv("FAKE_DIC_PACE");
+    int ms = pace ? atoi(pace) : 0;
+    snprintf(p, sizeof(p), "%s/console.txt", src_dir);
+    if (!(f = fopen(p, "r"))) return;
+    while (fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        rename_to(line, base, fixed, sizeof(fixed));
+        k = strlen(fixed);
+        printf("%s%s", fixed, k && fixed[k - 1] >= '0' && fixed[k - 1] <= '9' && strchr(fixed, '/') ? "\r" : "\n");
+        if (ms > 0) { fflush(stdout); pause_ms(ms); }
+    }
+    printf("\n");
+    fclose(f);
+}
+
+static int dump(int dvd, const char *file)
+{
+    char line[256], dir[1024], base[256], src[1024], p[1400];
+    const char *script = getenv("FAKE_DIC_SCRIPT"), *fix = getenv("FAKE_DIC_DIR");
+    const char *what = dvd ? "dvd_good" : "cd_good";
+    int code = 0;
+    FILE *f;
+
+    split(file, dir, sizeof(dir), base, sizeof(base));
+    version();
+    printf("CurrentDirectory\n\t%s\nWorkingPath\n\t Argument: %s\n", dir, file);
+    if (script) {
+        if (next_line(script, line, sizeof(line))) { printf("fake_dic: script finished\n"); return 1; }
+        what = line;
+    }
+    /* like the real one, the logs exist even when the read fails */
+    snprintf(p, sizeof(p), "%s/%s_drive.txt", dir, base);
+    if ((f = fopen(p, "w")) != NULL) { fputs("========== InquiryData ==========\n", f); fclose(f); }
+    if (!strcmp(what, "FAIL")) {
+        printf("LBA[000000, 0000000]: [F:ReadCDForCheckingReadInOut][L:1022]\n"
+               "\tOpcode: 0xbe\n\tScsiStatus: 0x02 = CHECK_CONDITION\n"
+               "\tSenseData Key-Asc-Ascq: 02-3a-00 = NOT_READY - MEDIUM NOT PRESENT\n");
+        return 1;
+    }
+    if (!strcmp(what, "WRONG")) {
+        printf("Wrong command. The disc isn't CD, CD-R, CD-RW, GD\n");
+        return 1;
+    }
+    if (!strncmp(what, "SLOW", 4)) {
+        printf("fake_dic: slow\n");
+        fflush(stdout);
+        sleep5();
+        what = what[4] == ' ' ? what + 5 : (dvd ? "dvd_good" : "cd_good");
+    }
+    /* "EXIT3 cd_good": complete read, but DIC exits with 3 */
+    if (!strncmp(what, "EXIT", 4)) {
+        const char *sp = strchr(what, ' ');
+        code = atoi(what + 4);
+        what = sp ? sp + 1 : (dvd ? "dvd_good" : "cd_good");
+    }
+    snprintf(src, sizeof(src), "%s/%s", fix ? fix : "fixtures/dic", what);
+    if (copy_dir(src, dir, base)) { printf("fake_dic: cannot copy %s to %s\n", src, dir); return 1; }
+    replay(src, base);
+    if (code) printf("LBA[123456, 0x1e240]: [F:ReadCDForCheckingReadInOut][L:999] Read error (simulated)\n");
+    return code;
+}
+
+int main(int argc, char **argv)
+{
+    /* with no arguments, like the real one: help, version and "Press any key",
+     * which with input from NUL does not wait */
+    if (argc < 2) {
+        printf("Press any key to continue . . . \n");
+        version();
+        printf("Usage\n\t/v\tPrint version\n\tcd <DriveLetter> <Filename> <DriveSpeed(0-72)> ...\n");
+        getchar();
+        return 1;
+    }
+    if (!strcmp(argv[1], "/v")) {
+        printf("Invalid argument\nIf you see the usage, execute .exe without argument\n");
+        version();
+        return 1;
+    }
+    if (argc >= 3 && !strcmp(argv[1], "ls")) {
+        if (getenv("FAKE_DIC_NODRIVE")) {
+            printf("[F:GetHandle][L:57] GetLastError: 5, Access is denied.\n\n");
+            version();
+            return 1;
+        }
+        version();
+        printf("StartTime: 2026-10-16T21:24:40+0200\nEndTime: 2026-10-16T21:24:40+0200\n");
+        return 0;
+    }
+    if (argc >= 5 && (!strcmp(argv[1], "cd") || !strcmp(argv[1], "dvd")))
+        return dump(!strcmp(argv[1], "dvd"), argv[3]);
+    printf("fake_dic: unexpected command\n");
+    return 2;
+}

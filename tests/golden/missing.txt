@@ -1,0 +1,5 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  ERRORE: non riesco ad aprire fixtures/missing.dsk
+exit=2

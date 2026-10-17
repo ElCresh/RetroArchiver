@@ -1,0 +1,33 @@
+{
+  "BagIt-Profile-Info": {
+    "BagIt-Profile-Identifier": "urn:retroarchiver:bagit-profile:2",
+    "BagIt-Profile-Version": "2",
+    "Source-Organization": "RetroArchiver",
+    "External-Description": "Cofanetto di software archiviato con RetroArchiver, anche misto (floppy, CD, DVD): immagini EDSK dei floppy in data/, i file di ogni CD o DVD in una sottocartella di data/ (CD01/, DVD01/), scansioni, verdetti dei confronti e metadata.json (schema retroarchiver-2). Media-Type e' la composizione (\"3 floppy, 1 CD\"); Media-Expected e Media-Archived contano tutti i supporti; Missing-Media li elenca per nome (\"floppy 2, CD 1\").",
+    "Version": "2.0.0"
+  },
+  "Bag-Info": {
+    "Bag-Software-Agent": { "required": true },
+    "Bagging-Date": { "required": true },
+    "BagIt-Profile-Identifier": { "required": true, "values": ["urn:retroarchiver:bagit-profile:2"] },
+    "Title": { "required": true },
+    "Platform": { "required": true },
+    "Media-Type": { "required": true },
+    "Media-Expected": { "required": true },
+    "Media-Archived": { "required": true },
+    "Box-Status": { "required": true, "values": ["completo", "incompleto"] },
+    "Payload-Oxum": { "required": true },
+    "Missing-Media": { "required": false },
+    "Publisher": { "required": false },
+    "Year": { "required": false },
+    "Language": { "required": false },
+    "Edition": { "required": false },
+    "Notes": { "required": false }
+  },
+  "Manifests-Required": ["sha256"],
+  "Tag-Manifests-Required": ["sha256"],
+  "Tag-Files-Required": [],
+  "Allow-Fetch.txt": false,
+  "Serialization": "forbidden",
+  "Accept-BagIt-Version": ["1.0"]
+}

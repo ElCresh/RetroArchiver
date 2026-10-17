@@ -1,0 +1,12 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  A: fixtures/ident_a.dsk          1.515.776 byte   80 cilindri, 2 facce
+  B: fixtures/ident_b.dsk          1.515.776 byte   80 cilindri, 2 facce
+  tracce formattate: 80 cilindri, 18 settori per traccia
+
+  ESITO: i due file sono IDENTICI.
+
+  La lettura e' perfettamente riproducibile. Catalogalo come pulito.
+
+exit=0

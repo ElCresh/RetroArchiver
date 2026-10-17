@@ -1,0 +1,38 @@
+# The third-party programs that the RetroArchiver installer ships with.
+#
+# It is the only list: `make setup` (with installer/third_party.py) checks the
+# hashes, prepares the files in build/third-party/<id>/ and writes their versions in
+# build/third-party/third_party.nsh, which retroarchiver.nsi includes. The files are NOT
+# in the repo: they are downloaded by hand (from a PC with Internet) and put in the
+# THIRDPARTY folder (default installer/third-party/, ignored by git).
+#
+# To add a component: one line here and a Section in
+# retroarchiver.nsi that uses build/third-party/<id>/ and ${T_<id>_VERSION}.
+#
+# One field per column, separated by "|":
+#   id        short name, no spaces (folder in build/third-party and name of the defines)
+#   name      as the user sees it
+#   version
+#   file      the name of the downloaded file
+#   sha256    the hash of the downloaded file
+#   url       where to download it
+#   root      for a zip: the folder in the zip that becomes the install
+#             folder ("." = the whole zip); loose files at the top of the
+#             zip (licence, readme) are always included. "-" for a file to
+#             use as it is (an installer)
+#   license   the known one, with where to read it
+#   license_file  the original licence text, in installer/licenses/
+#             (in the repo); "-" if there is no text to redistribute (the
+#             Microsoft runtime: the terms are in its installer). The setup
+#             puts it in licenses\ and, for a zip, also next to the program
+#
+# The full credits, for users of RetroArchiver: THIRD-PARTY-NOTICES.txt
+# at the repo root.
+#
+# The hashes are those of the files downloaded on 16-17/10/2026 and tested
+# on the XP VM.
+
+samdisk|SAMdisk|3.8.12|SAMdisk3812.zip|1d55bb9307f48ce6288f75d6d9744ac2993898120cf3f7bcffaa6c7689387596|https://simonowen.com/samdisk/SAMdisk3812.zip|.|MIT (source at https://github.com/simonowen/samdisk); zlib, bzip2 and getopt_long have their own (ReadMe.txt)|samdisk-LICENSE.txt
+fdrawcmd|fdrawcmd.sys|1.0.1.11|FdInstall.exe|76ef73ffb9bca0f6ad3d196b1de02dfe0d9e2d0ff5c0db4bcf3f0c259bf6646e|https://simonowen.com/fdrawcmd/FdInstall.exe|-|MIT (https://github.com/simonowen/fdrawcmd, License.txt); installer signed by Simon Owen|fdrawcmd-LICENSE.txt
+dic|DiscImageCreator|20260101|DiscImageCreator_20260101.zip|f8e4814fca491f0f713b346fb406ed6807ae514507d494d1caea0718dea06ffc|https://github.com/user-attachments/files/24401506/DiscImageCreator_20260101.zip|Release_ANSI|Apache 2.0 (LICENSE in the zip); release page: https://github.com/saramibreak/DiscImageCreator/releases/tag/20260101|DiscImageCreator-LICENSE.txt
+vcredist|runtime di Visual C++ 2015-2019 x86|14.27.29114|VC_redist.x86.exe|d305baa965c9cd1b44ebcd53635ee9ecc6d85b54210e2764c8836f4e9defa345|https://download.visualstudio.microsoft.com/download/pr/56f631e5-4252-4f28-8ecc-257c7bf412b8/D305BAA965C9CD1B44EBCD53635EE9ECC6D85B54210E2764C8836F4E9DEFA345/VC_redist.x86.exe|-|Microsoft Visual C++ Redistributable: redistributable with the programs that use it (terms in its installer); signed by Microsoft Corporation. The last version that installs on XP|-

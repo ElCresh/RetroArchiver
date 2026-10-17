@@ -1,0 +1,34 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  3 letture a confronto
+
+  1) fixtures/grow_1.dsk           1.515.776 byte
+  2) fixtures/grow_2.dsk           1.516.800 byte
+  3) fixtures/grow_3.dsk           1.517.824 byte
+
+  tracce formattate: 80 cilindri, 18 settori per traccia
+  area standard considerata: 0-79
+
+  cil  4 faccia 0 : 3 varianti su 3 letture   (nessuna coppia concorde)   DIMENSIONE DIVERSA
+
+  ESITO: 1 tracce dell'area dati cambiano fra una lettura e l'altra.
+
+  1 di queste hanno DIMENSIONE DIVERSA fra una lettura e l'altra.
+  In un EDSK una traccia cresce quando SAMdisk salva piu' copie di un
+  settore che a riletture successive ha dato dati diversi. Vuol dire
+  che li' SAMdisk ha incontrato errori e ha dovuto insistere, anche se
+  non te l'ha detto a video: e' il segno di un supporto degradato.
+  Verifica con:  samdisk scan NOMEFILE.DSK
+  e cerca i flag m1, m2 o dc sui cilindri elencati sopra.
+
+  Se le letture segnalano errori dc o nd, il supporto e' degradato:
+  rileggi con --retries=30 --rescans=5, pulisci le testine, prova un altro drive.
+
+  Se invece NON segnalano errori, sono settori deboli scritti apposta
+  per essere instabili, cioe' una protezione anticopia. In quel caso
+  nessun tentativo in piu' aiuta: serve la cattura in flux.
+
+  Dove alcune letture concordano puoi tenere la variante di maggioranza.
+
+exit=1

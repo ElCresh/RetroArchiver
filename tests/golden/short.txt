@@ -1,0 +1,26 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  A: fixtures/short_a.dsk          1.534.720 byte   82 cilindri, 2 facce
+  B: fixtures/short_b.dsk          1.544.192 byte   83 cilindri, 2 facce
+  tracce formattate: 80 cilindri, 18 settori per traccia
+
+  ATTENZIONE: i file hanno dimensioni diverse.
+              Le due letture hanno catturato un numero di cilindri
+              diverso (82 contro 83). Per un confronto pulito rileggi
+              entrambe con -c80.
+              Confronto limitato alla parte in comune.
+
+  byte diversi: 2   (il primo a 0x00000030)
+
+  intestazione .............. 2
+
+  ESITO: i cilindri 0-79 sono IDENTICI.
+
+  Tutte le differenze stanno nei cilindri extra o nell'intestazione.
+  Li' il disco non e' formattato e la testina legge rumore magnetico,
+  diverso a ogni passata: non dice nulla sullo stato del supporto.
+
+  Il disco e' stabile. Catalogalo come pulito.
+
+exit=0

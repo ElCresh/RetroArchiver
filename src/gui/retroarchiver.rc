@@ -1,0 +1,4 @@
+/* manifest: common controls version 6, i.e. the XP look */
+1 24 "retroarchiver.manifest"
+/* icon: 16, 32 and 48 pixels; the 16 is drawn specifically for the title bar */
+1 ICON "retroarchiver.ico"

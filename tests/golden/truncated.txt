@@ -1,0 +1,5 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  ERRORE: fixtures/_truncated.dsk e' troppo corto
+exit=2

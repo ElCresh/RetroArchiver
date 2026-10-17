@@ -1,0 +1,21 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  A: fixtures/dd40_a.dsk             399.104 byte   42 cilindri, 2 facce
+  B: fixtures/dd40_b.dsk             399.104 byte   42 cilindri, 2 facce
+  tracce formattate: 40 cilindri, 9 settori per traccia
+
+  byte diversi: 9.179   (il primo a 0x0005F200)
+
+  cil 40 faccia 1 ........... 4.586   (cilindro extra)
+  cil 41 faccia 0 ........... 4.593   (cilindro extra)
+
+  ESITO: i cilindri 0-39 sono IDENTICI.
+
+  Tutte le differenze stanno nei cilindri extra o nell'intestazione.
+  Li' il disco non e' formattato e la testina legge rumore magnetico,
+  diverso a ogni passata: non dice nulla sullo stato del supporto.
+
+  Il disco e' stabile. Catalogalo come pulito.
+
+exit=0

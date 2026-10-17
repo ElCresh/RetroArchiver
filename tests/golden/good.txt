@@ -1,0 +1,20 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  3 letture a confronto
+
+  1) fixtures/good_1.dsk           1.534.720 byte
+  2) fixtures/good_2.dsk           1.534.720 byte
+  3) fixtures/good_3.dsk           1.534.720 byte
+
+  tracce formattate: 80 cilindri, 18 settori per traccia
+  area standard considerata: 0-79
+
+
+  tracce instabili nei cilindri extra: 2 (rumore, normale)
+
+  ESITO: l'area dati e' IDENTICA in tutte le letture.
+
+  Il disco e' stabile. Catalogalo come pulito.
+
+exit=0

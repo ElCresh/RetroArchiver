@@ -1,0 +1,13 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  uso: dskdiff PRIMA.DSK SECONDA.DSK [TERZA.DSK ...] [-c CILINDRI]
+
+  Con due letture mostra le differenze byte per byte.
+  Con tre o piu' dice quante varianti ha ogni traccia e se
+  esiste una maggioranza fra le letture.
+
+  Il formato del disco viene rilevato da solo (40, 80, altro).
+  Usa -c per forzarlo se il rilevamento sbaglia.
+
+exit=2

@@ -1,0 +1,82 @@
+RetroArchiver - Third-party notices
+===================================
+
+RetroArchiver archives retro software collections (3.5" floppy disks,
+CDs and DVDs) on a PC with Windows XP SP3. Its setup program,
+RetroArchiver-Setup.exe, includes and installs the third-party programs
+listed below. They are redistributed exactly as their authors publish
+them, without modifications: the setup only unpacks or runs the original
+files, whose SHA-256 checksums are listed in installer/third-party.txt in the
+source repository.
+
+The full license texts are installed in the "licenses" folder next to
+RetroArchiver.exe, and each program's license is also installed next to
+that program in the "tools" folder.
+
+RetroArchiver itself
+--------------------
+License: to be decided by the author. The third-party licenses below
+apply to the third-party programs only.
+
+
+1. SAMdisk 3.8.12
+-----------------
+Author:   Simon Owen
+Website:  https://simonowen.com/samdisk/
+Source:   https://github.com/simonowen/samdisk
+License:  MIT License, see licenses\samdisk-LICENSE.txt
+          ("Copyright (c) 2002-2020 Simon Owen"). SAMdisk.exe also
+          contains zlib, bzip2 and getopt_long, which have their own
+          licenses; see ReadMe.txt in tools\samdisk.
+Package:  SAMdisk3812.zip, installed unmodified in tools\samdisk
+Used for: reading floppy disks into EDSK (.dsk) images. RetroArchiver,
+          dskrun and dskdiff run SAMdisk as a separate program.
+
+
+2. fdrawcmd.sys 1.0.1.11
+------------------------
+Author:   Simon Owen
+Website:  https://simonowen.com/fdrawcmd/
+Source:   https://github.com/simonowen/fdrawcmd
+License:  MIT License, see licenses\fdrawcmd-LICENSE.txt
+          ("Copyright (c) 2005-2016 Simon Owen")
+Package:  FdInstall.exe (signed by Simon Owen), run unmodified by the
+          setup with /S. It installs the driver with its own entry in
+          Add or Remove Programs, from where it is uninstalled.
+Used for: the Windows driver through which SAMdisk talks directly to the
+          floppy disk controller on the motherboard.
+
+
+3. DiscImageCreator 20260101
+----------------------------
+Author:   sarami
+Website:  https://github.com/saramibreak/DiscImageCreator
+License:  Apache License 2.0, see licenses\DiscImageCreator-LICENSE.txt.
+          The package has no NOTICE file. Its README.md, installed in
+          tools\DIC, lists the copyright and license of the code it
+          includes (mbedtls, unshield, tinyxml2, xxHash and others) and
+          of the helper files distributed with it (driveOffset.txt,
+          E_WISE_W.EXE, i6comp.exe and others).
+Package:  DiscImageCreator_20260101.zip; the Release_ANSI folder and the
+          files at the top of the zip (LICENSE, README.md) are installed
+          unmodified in tools\DIC
+Used for: reading CDs and DVDs into images. RetroArchiver and dskrun run
+          DiscImageCreator as a separate program.
+
+
+4. Microsoft Visual C++ 2015-2019 Redistributable (x86) 14.27.29114
+--------------------------------------------------------------------
+Author:   Microsoft Corporation
+Website:  https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist
+License:  Microsoft Software License Terms for the Visual C++
+          Redistributable, shown by the package itself. The setup runs
+          the package with /install /quiet /norestart, so the terms are
+          not displayed: installing RetroArchiver with this component
+          means accepting the Microsoft license terms of the package.
+Package:  VC_redist.x86.exe (signed by Microsoft Corporation), run
+          unmodified by the setup only when the runtime is missing or
+          older than 14.27. Version 14.27 is the last one that installs
+          on Windows XP.
+Used for: the runtime libraries DiscImageCreator needs. RetroArchiver
+          itself does not use them. It stays installed when RetroArchiver
+          is uninstalled.

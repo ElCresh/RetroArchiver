@@ -1,0 +1,27 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  ATTENZIONE: fixtures/_nohdr.dsk non ha un'intestazione DSK riconoscibile.
+              Confronto solo byte per byte, senza mappa delle tracce.
+
+  A: fixtures/ident_a.dsk          1.515.776 byte   80 cilindri, 2 facce
+  B: fixtures/_nohdr.dsk                 300 byte
+  tracce formattate: 80 cilindri, 18 settori per traccia
+
+  ATTENZIONE: i file hanno dimensioni diverse.
+              Confronto limitato alla parte in comune.
+
+  byte diversi: 300   (il primo a 0x00000000)
+
+  intestazione .............. 256
+  cil  0 faccia 0 ........... 44
+
+  ESITO: ci sono differenze nei DATI del disco.
+
+  Le due letture dello stesso dischetto non coincidono su cilindri
+  dentro l'area standard: il segnale e' al limite e il controller lo
+  interpreta diversamente a ogni passata.
+
+  Rileggi con  --retries=30 --rescans=5  e catalogalo come marginale.
+
+exit=1

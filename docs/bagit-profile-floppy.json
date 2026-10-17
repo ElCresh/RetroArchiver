@@ -1,0 +1,33 @@
+{
+  "BagIt-Profile-Info": {
+    "BagIt-Profile-Identifier": "urn:retroarchiver:bagit-profile:floppy:1",
+    "BagIt-Profile-Version": "1",
+    "Source-Organization": "RetroArchiver",
+    "External-Description": "Cofanetto di floppy archiviato con RetroArchiver: immagini EDSK, scansioni SAMdisk, verdetti dei confronti e metadata.json in data/.",
+    "Version": "1.3.0"
+  },
+  "Bag-Info": {
+    "Bag-Software-Agent": { "required": true },
+    "Bagging-Date": { "required": true },
+    "BagIt-Profile-Identifier": { "required": true, "values": ["urn:retroarchiver:bagit-profile:floppy:1"] },
+    "Title": { "required": true },
+    "Platform": { "required": true },
+    "Media-Type": { "required": true, "values": ["floppy"] },
+    "Media-Expected": { "required": true },
+    "Media-Archived": { "required": true },
+    "Box-Status": { "required": true, "values": ["completo", "incompleto"] },
+    "Payload-Oxum": { "required": true },
+    "Missing-Media": { "required": false },
+    "Publisher": { "required": false },
+    "Year": { "required": false },
+    "Language": { "required": false },
+    "Edition": { "required": false },
+    "Notes": { "required": false }
+  },
+  "Manifests-Required": ["sha256"],
+  "Tag-Manifests-Required": ["sha256"],
+  "Tag-Files-Required": [],
+  "Allow-Fetch.txt": false,
+  "Serialization": "forbidden",
+  "Accept-BagIt-Version": ["1.0"]
+}

@@ -1,0 +1,183 @@
+"""Prepare the third-party programs for the installer.
+
+    python3 -I installer/third_party.py LIST SOURCE DEST
+
+For each line of LIST (installer/third-party.txt) check that SOURCE has the
+file with the right hash; if one is missing, or differs, say what to
+download and from where and exit with 1, preparing nothing. Otherwise put
+the files to install in DEST/<id>/ (a zip is unpacked) and write
+DEST/third_party.nsh with versions and names for retroarchiver.nsi.
+
+The licence texts (license_file field) live in the repo, in licenses/
+next to LIST: they go in DEST/licenses/ and, for a zip, also in
+DEST/<id>/, with CRLF line endings for XP's Notepad.
+"""
+
+import hashlib
+import os
+import shutil
+import sys
+import zipfile
+
+FIELDS = ("id", "name", "version", "file", "sha256", "url", "root", "license", "license_file")
+
+
+def read_list(path):
+    items = []
+    with open(path, encoding="utf-8") as f:
+        for n, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) != len(FIELDS):
+                sys.exit("%s:%d: %d fields separated by '|' are needed, found %d"
+                         % (path, n, len(FIELDS), len(parts)))
+            items.append(dict(zip(FIELDS, parts)))
+    return items
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 16), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def license_path(list_path, it):
+    if it["license_file"] == "-":
+        return None
+    return os.path.join(os.path.dirname(os.path.abspath(list_path)), "licenses", it["license_file"])
+
+
+def check_licenses(items, list_path):
+    ok = True
+    for it in items:
+        p = license_path(list_path, it)
+        if p and not os.path.isfile(p):
+            print("  %s: licence text is missing: %s" % (it["name"], p))
+            ok = False
+    return ok
+
+
+# the licence text with Windows line endings
+def copy_crlf(src, dst):
+    with open(src, "rb") as f:
+        data = f.read().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    with open(dst, "wb") as f:
+        f.write(data)
+
+
+def check(items, src):
+    bad = []
+    for it in items:
+        p = os.path.join(src, it["file"])
+        if not os.path.isfile(p):
+            bad.append((it, "is missing"))
+        elif sha256(p) != it["sha256"].lower():
+            bad.append((it, "has a different hash (wrong or damaged file)"))
+    for it, why in bad:
+        print("  %s %s: %s %s" % (it["name"], it["version"], it["file"], why))
+        print("      download it from %s" % it["url"])
+        print("      and put it in %s (SHA-256 %s)" % (src, it["sha256"]))
+    return not bad
+
+
+# the names inside the zip that must be installed, with the relative path
+def zip_members(z, root):
+    for info in z.infolist():
+        name = info.filename
+        if name.endswith("/"):
+            continue
+        if root == ".":
+            rel = name
+        elif name.startswith(root + "/"):
+            rel = name[len(root) + 1:]
+        elif "/" not in name:
+            rel = name                      # licence and readme at the top of the zip
+        else:
+            continue
+        parts = rel.split("/")
+        if rel.startswith("/") or ".." in parts or ":" in rel:
+            sys.exit("%s: unacceptable path in the zip: %s" % (z.filename, name))
+        yield info, rel
+
+
+def prepare(it, src, dest, list_path):
+    out = os.path.join(dest, it["id"])
+    shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out)
+    p = os.path.join(src, it["file"])
+    files = []
+    if it["root"] == "-":
+        shutil.copyfile(p, os.path.join(out, it["file"]))
+        files.append(it["file"])
+    else:
+        with zipfile.ZipFile(p) as z:
+            for info, rel in zip_members(z, it["root"]):
+                target = os.path.join(out, *rel.split("/"))
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with z.open(info) as a, open(target, "wb") as b:
+                    shutil.copyfileobj(a, b)
+                files.append(rel)
+    if not files:
+        sys.exit("%s: nothing in the zip under '%s'" % (it["file"], it["root"]))
+    lic = license_path(list_path, it)
+    if lic:
+        os.makedirs(os.path.join(dest, "licenses"), exist_ok=True)
+        copy_crlf(lic, os.path.join(dest, "licenses", it["license_file"]))
+        if it["root"] != "-":         # also next to the program
+            copy_crlf(lic, os.path.join(out, it["license_file"]))
+            files.append(it["license_file"])
+    return sorted(files)
+
+
+def nsis(s):
+    return s.replace("$", "$$").replace('"', '$\\"')
+
+
+# for each component: name, version, and the macro that removes the installed files
+def write_nsh(path, prepared):
+    lines = ["; generated by installer/third_party.py: do not edit", ""]
+    for it, files in prepared:
+        k = "T_%s_" % it["id"]
+        for key in ("name", "version", "file", "url", "license_file"):
+            lines.append('!define %s%s "%s"' % (k, key.upper(), nsis(it[key])))
+        lines.append("!macro %sREMOVE DIR" % k)
+        dirs = set()
+        for rel in files:
+            lines.append('  Delete "${DIR}\\%s"' % nsis(rel.replace("/", "\\")))
+            parts = rel.split("/")[:-1]
+            for i in range(1, len(parts) + 1):
+                dirs.add("\\".join(parts[:i]))
+        for d in sorted(dirs, key=lambda d: -d.count("\\")):
+            lines.append('  RMDir "${DIR}\\%s"' % nsis(d))
+        lines.append('  RMDir "${DIR}"')
+        lines.append("!macroend")
+        lines.append("")
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines))
+
+
+def main():
+    if len(sys.argv) != 4:
+        sys.exit("usage: third_party.py LIST SOURCE DEST")
+    list_path, src, dest = sys.argv[1:]
+    items = read_list(list_path)
+    if not check_licenses(items, list_path):
+        sys.exit(1)
+    if not check(items, src):
+        print("  Third-party programs missing or different from the tested ones: see %s." % list_path)
+        print("  Or point to another folder: make setup THIRDPARTY=folder")
+        sys.exit(1)
+    os.makedirs(dest, exist_ok=True)
+    shutil.rmtree(os.path.join(dest, "licenses"), ignore_errors=True)
+    prepared = [(it, prepare(it, src, dest, list_path)) for it in items]
+    write_nsh(os.path.join(dest, "third_party.nsh"), prepared)
+    for it, files in prepared:
+        print("  %s %s: hash ok, %d file(s)" % (it["name"], it["version"], len(files)))
+
+
+if __name__ == "__main__":
+    main()

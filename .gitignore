@@ -1,0 +1,13 @@
+build/
+tests/fixtures/
+*.exe
+*.o
+*.dsk
+*.scan.txt
+archivio.csv
+tests/tmp_unit/
+tests/tmp_session/
+tests/__pycache__/
+tests/xp/dll/
+dist/
+installer/third-party/

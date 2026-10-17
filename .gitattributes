@@ -1,0 +1,4 @@
+# Fine riga LF ovunque: Makefile e script .sh girano nella WSL e non tollerano CRLF
+* text=auto eol=lf
+*.dsk binary
+*.exe binary

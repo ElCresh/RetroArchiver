@@ -1,0 +1,29 @@
+
+dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+
+  3 letture a confronto
+
+  1) fixtures/weak_1.dsk           1.534.720 byte
+  2) fixtures/weak_2.dsk           1.534.720 byte
+  3) fixtures/weak_3.dsk           1.534.720 byte
+
+  tracce formattate: 80 cilindri, 18 settori per traccia
+  area standard considerata: 0-79
+
+  cil  5 faccia 1 : 2 varianti su 3 letture   (2 concordano)
+  cil 30 faccia 0 : 3 varianti su 3 letture   (nessuna coppia concorde)
+
+  tracce instabili nei cilindri extra: 2 (rumore, normale)
+
+  ESITO: 2 tracce dell'area dati cambiano fra una lettura e l'altra.
+
+  Se le letture segnalano errori dc o nd, il supporto e' degradato:
+  rileggi con --retries=30 --rescans=5, pulisci le testine, prova un altro drive.
+
+  Se invece NON segnalano errori, sono settori deboli scritti apposta
+  per essere instabili, cioe' una protezione anticopia. In quel caso
+  nessun tentativo in piu' aiuta: serve la cattura in flux.
+
+  Dove alcune letture concordano puoi tenere la variante di maggioranza.
+
+exit=1
