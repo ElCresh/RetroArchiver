@@ -566,7 +566,11 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
 
     memset(&t, 0, sizeof(t));
     t.f = u8_fopen(con, "wb"); t.fn = on_line; t.ctx = ctx;
-    rc = runner_run(dvd ? dvd_argv : cd_argv, tee_line, &t, &code);
+    /* in a hidden console: on a pipe DIC's C runtime buffers its output in
+     * blocks, so the progress lines ("Creating .scm (LBA) 1234/300000")
+     * arrived only in bursts or at the end and the bar stood still
+     * (seen on the XP VM: 0 bytes in 60 s on a pipe, at once on a console) */
+    rc = runner_run_tty(dvd ? dvd_argv : cd_argv, tee_line, &t, &code);
     if (rc == RUNNER_NOSTART || (rc == RUNNER_DONE && dll_missing(code))) {
         if (t.f) fclose(t.f);
         u8_rmtree(out_dir);

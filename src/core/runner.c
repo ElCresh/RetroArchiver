@@ -194,8 +194,19 @@ static void tty_row(HANDLE out, SHORT y, SHORT w, char *u8, size_t n)
 /* a progress line: "Reading Cyl 3  Head 0", "Cyl 40 Head 0" */
 static int is_progress(const char *s)
 {
-    const char *p = strstr(s, "Cyl ");
-    return p && (p == s || p[-1] == ' ') && p[4] >= '0' && p[4] <= '9';
+    const char *p = strstr(s, "Cyl "), *e;
+    if (p && (p == s || p[-1] == ' ') && p[4] >= '0' && p[4] <= '9') return 1;
+    /* DiscImageCreator: the line ends with a count, "... (LBA) 1234/300000"
+     * (spaces allowed around the slash, as optical_progress accepts) */
+    e = s + strlen(s);
+    while (e > s && e[-1] == ' ') e--;
+    if (e == s || e[-1] < '0' || e[-1] > '9') return 0;
+    while (e > s && e[-1] >= '0' && e[-1] <= '9') e--;
+    while (e > s && e[-1] == ' ') e--;
+    if (e == s || e[-1] != '/') return 0;
+    e--;
+    while (e > s && e[-1] == ' ') e--;
+    return e > s && e[-1] >= '0' && e[-1] <= '9';
 }
 
 typedef struct { SHORT done; char status[TTY_COLS * 4]; } tty_state;
@@ -248,7 +259,9 @@ static int tty_child(const char *const *argv, HANDLE pipe, PROCESS_INFORMATION *
      * helper received from the window: that one is not inherited */
     SetHandleInformation(pipe, HANDLE_FLAG_INHERIT, 0);
     sa.nLength = sizeof(sa); sa.lpSecurityDescriptor = NULL; sa.bInheritHandle = TRUE;
-    in = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+    /* input from NUL, as with runner_run: after an error DiscImageCreator
+     * waits for "Press any key to continue", and with NUL it goes on */
+    in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
                      &sa, OPEN_EXISTING, 0, NULL);
     out = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                       &sa, OPEN_EXISTING, 0, NULL);

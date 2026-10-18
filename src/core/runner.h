@@ -18,7 +18,8 @@ int  runner_run(const char *const *argv, runner_line_fn on_line, void *ctx, int 
  * On Windows, from a process without a console (the window) and with the
  * helper set, the program runs in a hidden console whose screen is read
  * back: finished lines arrive and, when it changes, the progress line
- * under the cursor ("Reading Cyl 3  Head 0").
+ * under the cursor ("Reading Cyl 3  Head 0", or a DiscImageCreator line
+ * ending with a count, "(LBA) 1234/300000"). Input comes from NUL.
  * Otherwise (dskrun already has its console, Linux) it is runner_run */
 int  runner_run_tty(const char *const *argv, runner_line_fn on_line, void *ctx, int *exit_code);
 /* the runner_run_tty helper: a program that, launched with
