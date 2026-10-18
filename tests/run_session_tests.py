@@ -604,6 +604,10 @@ cd = meta(bag("CD sbagliato"))["media"][0]
 ok("wrong disc: failed read with the explanation", rc == 1 and cd["status"] == "read-failed"
    and "The drive does not hold a CD" in out
    and not os.path.exists(os.path.join(bag("CD sbagliato"), "data", "CD01")), json.dumps(cd) + out)
+failed = os.path.join(bag("CD sbagliato"), "set-aside", "CD01.failed")
+ok("wrong disc: DIC's logs kept in set-aside, not deleted",
+   os.path.isfile(os.path.join(failed, "dic-console.txt")) and "set-aside/CD01.failed" in out
+   and check_bag.check(bag("CD sbagliato"), PROFILE) != None, out)
 
 # 27g. DVD in redump: the .iso in its folder
 rc, out = run("Solo DVD", 0, [], [""], ["-D", "1"], tpl=None, dic=["dvd_good"], dats=REDUMP)

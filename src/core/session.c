@@ -268,6 +268,24 @@ static void label_from_disk(run_ctx *r, meta_disk *d, const char *who)
     ev(r, EV_LINE, d->n, "Label of %s taken from the disk: %s", who, lab);
 }
 
+static int move_aside(run_ctx *r, const char *name, const char *suffix, char *rel, size_t n);
+
+/* After a failed read nothing half-written may stay in data/. What the
+ * read left (for a CD: DiscImageCreator's logs and dic-console.txt) is
+ * what explains the failure: it goes to set-aside as FILE.failed instead
+ * of being deleted. An interrupted read (rc 1) was stopped by the user and
+ * is simply removed. */
+static void keep_failed(run_ctx *r, const meta_disk *d, const char *file, const char *path, int rc)
+{
+    char rel[400];
+    if (!u8_exists(path)) return;
+    if (rc != 1 && move_aside(r, file, SESSION_FAILED, rel, sizeof(rel)) == 0) {
+        ev(r, EV_LINE, d->n, "What the failed read left (the reading program's logs) is in %s.", rel);
+        return;
+    }
+    u8_rmtree(path);
+}
+
 static int process(run_ctx *r, meta_disk *d)
 {
     const session_cfg *c = r->cfg; const media_ops *m = c->media[d->kind];
@@ -326,7 +344,7 @@ static int process(run_ctx *r, meta_disk *d)
             return MEDIA_NOTOOL;
         }
         if (rc != 0) {
-            u8_rmtree(path);                /* no half-written files in the bag */
+            keep_failed(r, d, file, path, rc);  /* no half-written files in the bag */
             CP(d->status, rc == 1 ? ST_INTERRUPTED : ST_FAILED);
             break;
         }
@@ -695,7 +713,6 @@ int session_twin(const meta_box *b, const meta_disk *d)
     return 0;
 }
 
-static int move_aside(run_ctx *r, const char *name, const char *suffix, char *rel, size_t n);
 
 /* one file of a duplicate disk out of data/; its name is cleared if moved */
 static void aside_dup(run_ctx *r, const meta_disk *d, char *name, size_t len)

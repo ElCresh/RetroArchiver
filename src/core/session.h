@@ -72,6 +72,8 @@ int  session_twin(const meta_box *b, const meta_disk *d);
 #define SESSION_DAMAGED       ".damaged"
 #define SESSION_DAMAGED_OLD   ".danneggiato"
 #define SESSION_DUPLICATE     ".duplicate"
+/* what a failed read left (DiscImageCreator's logs): kept to explain why */
+#define SESSION_FAILED        ".failed"
 /* the folder of the files set aside in this bag: the old one if only that exists */
 const char *session_aside_dir(const char *bagdir);
 /* the archive's log, one row per disk, next to the boxes; 261017 wrote

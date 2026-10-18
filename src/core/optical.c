@@ -611,7 +611,8 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
         snprintf(p, sizeof(p), "DiscImageCreator finished but %.200s is missing: the read is incomplete.",
                  u8_filesize(dat) > 0 ? base_of(dvd ? img : cue) : base_of(dat));
     say(on_line, ctx, p);
-    u8_rmtree(out_dir);         /* the .dat or the image is missing: it is not a read */
+    /* the .dat or the image is missing: it is not a read. The folder stays,
+     * with DIC's logs: the session sets it aside to explain the failure */
     return -1;
 }
 

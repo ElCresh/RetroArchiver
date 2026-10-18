@@ -285,9 +285,9 @@ void test_optical(void)
     CHECK_STR(r.outcome, "unstable");
     CHECK(r.agree == 2 && r.unstable_tracks == 1);
 
-    /* failed read: no half-done folder */
+    /* failed read: the folder stays with DIC's logs (the session sets it aside) */
     CHECK(cd_media.read("tmp_unit/ottici/CD09", keep, NULL) == -1);
-    CHECK(!u8_exists("tmp_unit/ottici/CD09"));
+    CHECK(u8_exists("tmp_unit/ottici/CD09/dic-console.txt"));
     /* a DVD in the drive instead of the CD */
     sb_clear(&said);
     CHECK(cd_media.read("tmp_unit/ottici/CD08", keep, NULL) == -1);
@@ -359,7 +359,7 @@ void test_optical(void)
     /* without a .dat there is no read, and the message does not blame only the disc */
     sb_clear(&said);
     CHECK(cd_media.read("tmp_unit/ottici/CD04", keep, NULL) == -1);
-    CHECK(!u8_exists("tmp_unit/ottici/CD04"));
+    CHECK(u8_exists("tmp_unit/ottici/CD04/dic-console.txt"));
     CHECK(strstr(said.s, "Last line: ") != NULL && strstr(said.s, "MB free") != NULL);
     CHECK(strstr(said.s, "NOT_READY") != NULL);
 
