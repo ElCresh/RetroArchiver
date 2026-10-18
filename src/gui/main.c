@@ -39,6 +39,7 @@
 #define WM_APP_DIC (WM_APP + 9)     /* wParam: generation, lParam: dic_result* */
 #define WM_APP_FLOPPY (WM_APP + 10) /* wParam: generation, lParam: fd_result* */
 #define WM_APP_LABEL (WM_APP + 11)  /* wParam: generation, lParam: lb_result* */
+#define WM_APP_DISKIN (WM_APP + 12) /* wParam: generation, lParam: FP_... from the floppy watcher */
 #define OPT_MAX   1000              /* disk bar for CDs and DVDs: thousandths */
 
 #define TIMER_ID  1
@@ -47,6 +48,7 @@
 #define TIMER_LINES 4               /* SAMdisk lines: the window takes them in batches */
 #define TIMER_DIC 5                 /* DiscImageCreator check ~600 ms after the last keystroke */
 #define TIMER_FLOPPY 6              /* floppy drive check ~600 ms after the last keystroke */
+#define TIMER_AUTO 7                /* automatic mode: the countdown before the read, every second */
 #define LINES_MS  100
 #define LINES_CHUNK 65536           /* bytes of lines in a batch; beyond that a new one opens */
 #define MIN_CW    640               /* minimum client area: fits an 800x600 screen */
@@ -59,7 +61,7 @@ enum {
     /* setup: from ID_TITLE to ID_START */
     ID_TITLE = 100, ID_RESUME, ID_PLATFORM, ID_COUNT, ID_PUBLISHER, ID_YEAR,
     ID_LANGUAGE, ID_EDITION, ID_NOTES, ID_MEDIA, ID_CD, ID_DVD, ID_ICFLOP, ID_ICCD, ID_ICDVD,
-    ID_HINT, ID_DIR, ID_BROWSE, ID_MAXREAD, ID_SAMDISK, ID_SOURCE, ID_DIC, ID_DRIVE, ID_SOUNDS, ID_BAGPATH,
+    ID_HINT, ID_DIR, ID_BROWSE, ID_MAXREAD, ID_SAMDISK, ID_SOURCE, ID_DIC, ID_DRIVE, ID_SOUNDS, ID_AUTO, ID_BAGPATH,
     ID_BACK, ID_START,
     /* session */
     ID_BANNER = 200, ID_PILLS, ID_LABEL, ID_NOTE, ID_READ, ID_SKIP, ID_FINISH,
@@ -76,6 +78,7 @@ enum {
 typedef struct {
     char master[128], label[128], status[24];
     int  nreads, agree;
+    int  twin;                  /* another disk of the box with the same master SHA-256 */
 } disk_info;
 
 /* EV_LINE carries a batch of lines separated by '\n': len bytes out of cap */
@@ -362,7 +365,7 @@ static void host_event(void *ctx, event_kind k, int disk, const char *text)
     /* here, on the worker thread, g_box can be read safely */
     if (k == EV_DISK_DONE && g_box) {
         meta_disk *d = meta_disk_get(g_box, disk);
-        if (d) copy_disk(&e->info, d);
+        if (d) { copy_disk(&e->info, d); e->info.twin = session_twin(g_box, d); }
     }
     EnterCriticalSection(&g_qlock);
     queue_push(e);
@@ -483,7 +486,8 @@ static void build_setup(void)
     make(L"EDIT", L"D:", WS_TABSTOP | ES_AUTOHSCROLL, 500, 338, 120, 21, ID_DRIVE);
     make(L"STATIC", L"", SS_NOPREFIX | SS_PATHELLIPSIS, 12, 369, 610, 18, ID_BAGPATH);
 
-    make(L"BUTTON", L"Suoni di Windows", WS_TABSTOP | BS_AUTOCHECKBOX, 12, 428, 200, 20, ID_SOUNDS);
+    make(L"BUTTON", L"Suoni di Windows", WS_TABSTOP | BS_AUTOCHECKBOX, 12, 428, 140, 20, ID_SOUNDS);
+    make(L"BUTTON", L"Automatico: legge da solo il disco nuovo", WS_TABSTOP | BS_AUTOCHECKBOX, 160, 428, 260, 20, ID_AUTO);
     make(L"BUTTON", L"Archivio", WS_TABSTOP, 426, 423, 100, 28, ID_BACK);
     make(L"BUTTON", L"Inizia", WS_TABSTOP | BS_DEFPUSHBUTTON, 534, 423, 100, 28, ID_START);
 }
@@ -1243,7 +1247,8 @@ static void layout_setup(int W, int H)
     put(ID_BAGPATH, 12, 369, R - 12, 18);
     /* right below the group boxes: with a tall window the space stays at the bottom */
     (void)H;
-    put(ID_SOUNDS, 12, 411, 200, 20);
+    put(ID_SOUNDS, 12, 411, 140, 20);
+    put(ID_AUTO, 160, 411, 260, 20);
     put(ID_BACK, W - 6 - 100 - 8 - 100, 407, 100, 28);
     put(ID_START, W - 6 - 100, 407, 100, 28);
 }
@@ -1453,6 +1458,8 @@ static void ini_load(void)
     /* the checkbox is not a text: Suoni=1 or 0 */
     CheckDlgButton(g_wnd, ID_SOUNDS,
                    set_int(&g_set, L"Archiviazione", L"Suoni", 0) ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(g_wnd, ID_AUTO,
+                   set_int(&g_set, L"Archiviazione", L"AutoMode", 0) ? BST_CHECKED : BST_UNCHECKED);
     /* the file names are not in the window: they change only here */
     for (i = 0; i < MEDIA_KINDS; i++) {
         set_get(&g_set, L"Archiviazione", name_keys[i], name_defaults[i], v, 512);
@@ -1475,6 +1482,8 @@ static void ini_save(void)
     for (i = 0; ini_keys[i].key; i++) ini_store(i);
     set_save(&g_set, L"Archiviazione", L"Suoni", L"0",
              IsDlgButtonChecked(g_wnd, ID_SOUNDS) == BST_CHECKED ? L"1" : L"0");
+    set_save(&g_set, L"Archiviazione", L"AutoMode", L"0",
+             IsDlgButtonChecked(g_wnd, ID_AUTO) == BST_CHECKED ? L"1" : L"0");
     /* the names change only by hand in the ini: one that differs from the default stays */
     for (i = 0; i < MEDIA_KINDS; i++) {
         to_w(g_ini_names[i], v, 512);
@@ -1753,14 +1762,30 @@ static void floppy_text(wchar_t *out, int n)
 
 enum { LB_FOUND, LB_NONE, LB_NODISK, LB_UNKNOWN };
 
-typedef struct { LONG gen; wchar_t root[8]; char file[512]; } lb_job;
-typedef struct { int state; wchar_t label[64]; wchar_t root[8]; } lb_result;
+typedef struct { LONG gen; int remount; wchar_t root[8]; char file[512]; } lb_job;
+typedef struct { int state, has_serial; DWORD serial; wchar_t label[64]; wchar_t root[8]; } lb_result;
 
 static volatile LONG g_lb_gen;
 static wchar_t g_lb_msg[200];          /* the outcome, in the status bar while waiting for the disk */
 
 static void sbar_text(int part, const wchar_t *t);
 static void focus_to(HWND h);
+
+static int g_auto;                      /* the running session is in automatic mode */
+
+/* the automatic mode's questions to fdrawcmd clear the drive's disk-change
+ * line, so Windows does not know the floppy was swapped and answers with
+ * the label and serial number of the previous one (seen on the VM). A
+ * dismounted volume is mounted again, from the disk, on the next access */
+static void volume_remount(const wchar_t *root)
+{
+    wchar_t dev[8]; HANDLE h; DWORD got;
+    _snwprintf(dev, 8, L"\\\\.\\%c:", root[0]); dev[7] = 0;
+    h = CreateFileW(dev, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DeviceIoControl(h, FSCTL_DISMOUNT_VOLUME, NULL, 0, NULL, 0, &got, NULL);
+    CloseHandle(h);
+}
 
 static DWORD WINAPI label_worker(LPVOID p)
 {
@@ -1776,9 +1801,11 @@ static DWORD WINAPI label_worker(LPVOID p)
             /* with no disk Windows must not open "Disco non presente" */
             UINT old = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
             DWORD e;
-            if (GetVolumeInformationW(job->root, r->label, 64, NULL, NULL, NULL, NULL, 0))
+            if (job->remount) volume_remount(job->root);
+            if (GetVolumeInformationW(job->root, r->label, 64, &r->serial, NULL, NULL, NULL, 0)) {
                 r->state = r->label[0] ? LB_FOUND : LB_NONE;
-            else {
+                r->has_serial = 1;
+            } else {
                 e = GetLastError();
                 r->state = e == ERROR_NOT_READY || e == ERROR_NO_MEDIA_IN_DRIVE ? LB_NODISK : LB_UNKNOWN;
             }
@@ -1790,10 +1817,13 @@ static DWORD WINAPI label_worker(LPVOID p)
     return 0;
 }
 
+static void watch_pause(void);
+
 static void label_read(void)
 {
     lb_job *job; char src[512]; HANDLE th; const wchar_t *d;
     if (!g_waiting || !(job = (lb_job *)calloc(1, sizeof(lb_job)))) return;
+    watch_pause();               /* Windows cannot reach A: while fdrawcmd holds the controller */
     job->gen = InterlockedIncrement(&g_lb_gen);
     if (g_turn.kind == MEDIA_FLOPPY) {
         get_u8_trim(ID_SOURCE, src, sizeof(src));
@@ -1801,6 +1831,7 @@ static void label_read(void)
         if (floppy_source_is_drive(src)) {
             while (*src == ' ') memmove(src, src + 1, strlen(src));
             _snwprintf(job->root, 8, L"%c:\\", (wchar_t)toupper((unsigned char)src[0]));
+            job->remount = g_auto;
         } else {
             str_copy(job->file, sizeof(job->file), src);
             wcscpy(job->root, L"A:\\");
@@ -1816,13 +1847,380 @@ static void label_read(void)
     if (th) CloseHandle(th); else free(job);
 }
 
+/* ---- automatic mode ----
+ * With the Automatico checkbox the window starts the read by itself when a
+ * new disk is in the drive: label, a countdown of AUTO_SECONDS that Esc
+ * stops, then Leggi. A new disk, not just a disk: after a read the same one
+ * stays in the drive, so a change is needed (removed and inserted, or
+ * swapped). Floppies: a thread asks fdrawcmd.sys (IOCTL_FD_CHECK_DISK, tried
+ * first with tests/xp/fdcheck.c), only while waiting, never while SAMdisk
+ * reads. CDs and DVDs: Windows' WM_DEVICECHANGE. Before reading, the volume
+ * serial number: the same as a disk already read in this box stops the
+ * automatic start and asks. */
+
+#define AUTO_SECONDS 5
+/* a "present" answer slower than this found the disk-change line raised:
+ * the driver seeks to clear it, so the disk was swapped in the meantime */
+#define FD_SWAP_MS 25
+#define FD_POLL_PRESENT 1000            /* waiting for the disk just read to be removed */
+#define FD_POLL_ABSENT 2000             /* empty drive: each question may move the head */
+
+#define FD_CTL_CODE(i, m) CTL_CODE(FILE_DEVICE_UNKNOWN, i, m, FILE_READ_DATA | FILE_WRITE_DATA)
+#define IOCTL_FD_CHECK_DISK FD_CTL_CODE(0x917, METHOD_BUFFERED)   /* fdrawcmd.sys 1.0.1.10 and later */
+
+enum { FP_NEW, FP_GONE, FP_NODRIVER, FP_SLOWDRIVE };
+/* off for this turn, waiting for a new disk, reading its label, counting
+ * down, asking because it looks like a disk already read */
+enum { AUTO_OFF, AUTO_WATCH, AUTO_LABEL, AUTO_COUNT, AUTO_ASK };
+
+typedef struct { LONG gen; int drive, armed, prev; HANDLE stop; } fp_job;
+typedef struct { int ok; DWORD serial; wchar_t label[64]; } vol_id;
+
+static int      g_auto_state = AUTO_OFF, g_auto_left;
+static int      g_fd_index = -1;        /* fdraw number of "Leggi da"; -1 for a .dsk file */
+static int      g_fd_used, g_opt_used;  /* a disk of that kind was read since the program started */
+static volatile LONG g_fp_gen;
+static volatile LONG g_fd_slow;         /* every answer of the drive is slow: only removals count */
+static HANDLE   g_fp_thread, g_fp_stop;
+static LONG     g_lb_auto;              /* the label read started by the automatic mode */
+static wchar_t  g_auto_label[64];       /* what it wrote in the field */
+static vol_id   g_vol_turn;             /* the disk in the drive, from the last label read */
+static vol_id   g_vol[META_MAXDISK + 1];        /* the disks read in this box */
+
+static void answer(int cmd);
+static void wait_banner(void);
+
+static void auto_status(const wchar_t *t)
+{
+    wcsncpy(g_lb_msg, t, 199); g_lb_msg[199] = 0;
+    sbar_text(0, g_lb_msg);
+}
+
+static double ms_now(void)
+{
+    LARGE_INTEGER f, c;
+    if (!QueryPerformanceFrequency(&f) || !QueryPerformanceCounter(&c)) return GetTickCount();
+    return (double)c.QuadPart * 1000.0 / (double)f.QuadPart;
+}
+
+/* 1 present, 0 absent, -1 error; *ms how long the driver took */
+static int fd_ask(HANDLE h, double *ms)
+{
+    DWORD got, e; double t0 = ms_now();
+    BOOL ok = DeviceIoControl(h, IOCTL_FD_CHECK_DISK, NULL, 0, NULL, 0, &got, NULL);
+    e = ok ? 0 : GetLastError();
+    *ms = ms_now() - t0;
+    if (ok) return 1;
+    return e == ERROR_NO_MEDIA_IN_DRIVE ? 0 : -1;
+}
+
+static void fp_post(LONG gen, int what)
+{
+    PostMessageW(g_wnd, WM_APP_DISKIN, (WPARAM)gen, (LPARAM)what);
+}
+
+/* a slow "present" is a swap only if the question right after is fast: on
+ * a drive whose every answer is slow the disk would always look new */
+static int fd_swapped(HANDLE h, double ms, LONG gen)
+{
+    double again;
+    if (ms <= FD_SWAP_MS || g_fd_slow) return 0;
+    if (fd_ask(h, &again) != 1) return 0;
+    if (again <= FD_SWAP_MS) return 1;
+    InterlockedExchange(&g_fd_slow, 1);
+    fp_post(gen, FP_SLOWDRIVE);
+    return 0;
+}
+
+/* one question with the drive opened just for it: while \\.\fdrawN is
+ * open fdrawcmd.sys holds the controller, and Windows' own floppy driver
+ * (the label read on A:) waits until it is closed (seen on the VM).
+ * may_swap: a slow answer can mean a swap. -2 if fdrawcmd.sys is not there */
+static int fd_check(const wchar_t *path, int may_swap, int *swapped, int *fast, LONG gen)
+{
+    HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    double ms; int st; DWORD e;
+    *swapped = *fast = 0;
+    if (h == INVALID_HANDLE_VALUE) {
+        e = GetLastError();
+        return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND ? -2 : -1;
+    }
+    st = fd_ask(h, &ms);
+    if (st == 1) {
+        *fast = ms <= FD_SWAP_MS;
+        if (may_swap) *swapped = fd_swapped(h, ms, gen);
+    }
+    CloseHandle(h);
+    return st;
+}
+
+/* armed: a disk already present counts as new (the first one of the run).
+ * A slow answer counts as a swap only after a fast one of the same run:
+ * the first question after SAMdisk or the label read is slow anyway, the
+ * controller has just changed hands (seen on the VM: the countdown kept
+ * starting again on the same disk) */
+static DWORD WINAPI fd_watch(LPVOID p)
+{
+    fp_job *job = (fp_job *)p;
+    wchar_t path[32];
+    int st, prev = job->prev, armed = job->armed, errs = 0, swapped, fast = 0, was_fast = 0;
+    _snwprintf(path, 32, L"\\\\.\\fdraw%d", job->drive); path[31] = 0;
+    for (;;) {
+        st = fd_check(path, was_fast, &swapped, &fast, job->gen);
+        if (st == 1 && (armed || prev == 0 || swapped)) {
+            fp_post(job->gen, FP_NEW);
+            armed = 0;
+        } else if (st == 0 && prev == 1) {
+            fp_post(job->gen, FP_GONE);
+        }
+        /* no driver, or an older one without the question: it never answers */
+        if (st == -2 || (st < 0 && ++errs >= 3)) { fp_post(job->gen, FP_NODRIVER); break; }
+        if (st >= 0) { prev = st; errs = 0; was_fast = fast; }
+        if (WaitForSingleObject(job->stop, st == 0 ? FD_POLL_ABSENT : FD_POLL_PRESENT) != WAIT_TIMEOUT) break;
+    }
+    free(job);
+    return 0;
+}
+
+/* the drive must be free before SAMdisk opens it: waits for the thread */
+static void watch_stop(void)
+{
+    InterlockedIncrement(&g_fp_gen);
+    if (!g_fp_thread) return;
+    SetEvent(g_fp_stop);
+    WaitForSingleObject(g_fp_thread, 5000);
+    CloseHandle(g_fp_thread);
+    CloseHandle(g_fp_stop);
+    g_fp_thread = g_fp_stop = NULL;
+}
+
+/* present: the disk is known to be in the drive (after a label read), only
+ * its removal or a swap counts */
+static void watch_start(int present)
+{
+    fp_job *job;
+    watch_stop();
+    if (g_fd_index < 0 || !(job = (fp_job *)calloc(1, sizeof(fp_job)))) return;
+    if (!(g_fp_stop = CreateEventW(NULL, TRUE, FALSE, NULL))) { free(job); return; }
+    job->gen = InterlockedIncrement(&g_fp_gen);
+    job->drive = g_fd_index;
+    job->armed = !g_fd_used && !present;
+    job->prev = present ? 1 : -1;
+    job->stop = g_fp_stop;
+    if (!(g_fp_thread = CreateThread(NULL, 0, fd_watch, job, 0, NULL))) {
+        free(job);
+        CloseHandle(g_fp_stop);
+        g_fp_stop = NULL;
+    }
+}
+
+/* Windows' floppy driver waits for the controller while the watcher keeps
+ * asking (even with the drive closed between questions: seen on the VM, the
+ * label read hung until the watcher stopped). It pauses for the label read
+ * and goes on after it, knowing the disk is in */
+static int g_fp_paused;
+
+static void watch_pause(void)
+{
+    if (!g_fp_thread) return;
+    watch_stop();
+    g_fp_paused = 1;
+}
+
+static void watch_resume(void)
+{
+    if (!g_fp_paused) return;
+    g_fp_paused = 0;
+    if (g_waiting && g_auto_state != AUTO_OFF && g_turn.kind == MEDIA_FLOPPY) watch_start(1);
+}
+
+/* the automatic mode applies to the disk being asked for */
+static int auto_turn(void)
+{
+    if (!g_auto || !g_waiting || !g_turn.readable) return 0;
+    return g_turn.kind != MEDIA_FLOPPY || g_fd_index >= 0;
+}
+
+/* the drive's letter, "A:" or "D:", for the texts */
+static void auto_drive(wchar_t *out)
+{
+    out[0] = g_turn.kind == MEDIA_FLOPPY ? (wchar_t)(L'A' + g_fd_index) : (g_drive_w[0] ? g_drive_w[0] : L'D');
+    out[1] = L':'; out[2] = 0;
+}
+
+/* a new disk is in the drive: its label and serial number first */
+static void auto_found(void)
+{
+    KillTimer(g_wnd, TIMER_AUTO);
+    g_auto_state = AUTO_LABEL;
+    label_read();
+    g_lb_auto = g_lb_gen;
+}
+
+/* back to waiting for a new disk: the disk was removed */
+static void auto_rewatch(const wchar_t *why)
+{
+    int was = g_auto_state;
+    KillTimer(g_wnd, TIMER_AUTO);
+    g_auto_state = AUTO_WATCH;
+    if (was != AUTO_WATCH) wait_banner();
+    auto_status(why);
+}
+
+/* off for this disk: Leggi by hand */
+static void auto_manual(const wchar_t *why)
+{
+    KillTimer(g_wnd, TIMER_AUTO);
+    watch_stop();
+    g_fp_paused = 0;
+    if (g_auto_state == AUTO_OFF) return;
+    g_auto_state = AUTO_OFF;
+    wait_banner();
+    auto_status(why);
+}
+
+/* leaving the wait (Leggi, Salta, closing): nothing keeps running */
+static void auto_leave(void)
+{
+    KillTimer(g_wnd, TIMER_AUTO);
+    watch_stop();
+    g_fp_paused = 0;
+    g_auto_state = AUTO_OFF;
+}
+
+/* entering the wait, from on_wait */
+static void auto_begin(void)
+{
+    wchar_t w[200], d[3];
+    auto_leave();
+    memset(&g_vol_turn, 0, sizeof(g_vol_turn));
+    g_auto_label[0] = 0;
+    if (!auto_turn()) return;
+    g_auto_state = AUTO_WATCH;
+    auto_drive(d);
+    if (g_turn.kind == MEDIA_FLOPPY) watch_start(0);
+    else if (!g_opt_used) { auto_found(); return; }    /* the first disc may already be in */
+    _snwprintf(w, 200, L"Lettura automatica: aspetto il disco nel lettore %ls", d); w[199] = 0;
+    auto_status(w);
+}
+
+/* another slot of the box read from a disk with the same serial number and
+ * label: probably the same disk again. 0 if none, or no serial number */
+static int vol_twin(void)
+{
+    int k;
+    if (!g_vol_turn.ok) return 0;
+    for (k = 1; k <= g_total && k <= META_MAXDISK; k++)
+        if (k != g_cur && g_vol[k].ok && g_vol[k].serial == g_vol_turn.serial &&
+            !wcscmp(g_vol[k].label, g_vol_turn.label)) return k;
+    return 0;
+}
+
+static void count_banner(void)
+{
+    wchar_t t[160], s[500], who[32], lab[128];
+    slot_name(g_cur, 0, who, 32);
+    if (g_auto_left == 1) _snwprintf(t, 160, L"Leggo il %ls fra un secondo", who);
+    else _snwprintf(t, 160, L"Leggo il %ls fra %d secondi", who, g_auto_left);
+    t[159] = 0;
+    GetWindowTextW(g_label, lab, 128);
+    _snwprintf(s, 500, L"%ls%ls%lsEsc ferma il conto alla rovescia e aspetta che premi Leggi (F5); Invio legge "
+                       L"subito, Alt+S salta il disco.", lab[0] ? L"Etichetta: " : L"", lab, lab[0] ? L". " : L"");
+    s[499] = 0;
+    if (g_turn.kind == MEDIA_FLOPPY) banner_num(B_YELLOW, g_turn.num, t, s);
+    else banner(B_YELLOW, NULL, ICON_DISC, t, s);
+}
+
+static void ask_banner(int twin)
+{
+    wchar_t t[160], s[600], who[32], other[32];
+    const wchar_t *what = g_turn.kind == MEDIA_FLOPPY ? L"dischetto" : L"disco";
+    slot_name(g_cur, 0, who, 32);
+    slot_name(twin, 0, other, 32);
+    _snwprintf(t, 160, L"Sembra lo stesso %ls del %ls: lo rileggo?", what, other); t[159] = 0;
+    _snwprintf(s, 600, L"Ha lo stesso numero di serie (%04lX-%04lX)%ls del %ls già letto. Se è davvero il %ls "
+                       L"premi Leggi (F5); altrimenti metti il %ls giusto e riparto da solo, oppure Salta (Alt+S).",
+               (unsigned long)(g_vol_turn.serial >> 16), (unsigned long)(g_vol_turn.serial & 0xffff),
+               g_vol_turn.label[0] ? L" e la stessa etichetta" : L"", other, who, what);
+    s[599] = 0;
+    if (g_turn.kind == MEDIA_FLOPPY) banner(B_ORANGE, L"!", 0, t, s);
+    else banner(B_ORANGE, NULL, ICON_DISC, t, s);
+}
+
+/* the label read started by auto_found has answered */
+static void auto_labelled(int state)
+{
+    int twin;
+    if (g_turn.kind != MEDIA_FLOPPY && state == LB_NODISK) {
+        wchar_t w[120], d[3];
+        auto_drive(d);
+        _snwprintf(w, 120, L"Lettura automatica: aspetto il disco nel lettore %ls", d); w[119] = 0;
+        auto_rewatch(w);            /* no disc yet: Windows will say when it arrives */
+        return;
+    }
+    if ((twin = vol_twin()) > 0) {
+        g_auto_state = AUTO_ASK;
+        ask_banner(twin);
+        sound(SND_ERROR);
+        return;
+    }
+    g_auto_state = AUTO_COUNT;
+    g_auto_left = AUTO_SECONDS;
+    SetTimer(g_wnd, TIMER_AUTO, 1000, NULL);
+    count_banner();
+}
+
+static void auto_tick(void)
+{
+    if (g_auto_state != AUTO_COUNT || !g_waiting) { KillTimer(g_wnd, TIMER_AUTO); return; }
+    if (--g_auto_left > 0) { count_banner(); return; }
+    KillTimer(g_wnd, TIMER_AUTO);
+    answer(CMD_READ);
+}
+
+/* what the floppy watcher saw */
+static void on_diskin(WPARAM gen, LPARAM what)
+{
+    wchar_t w[200], d[3];
+    if ((LONG)gen != g_fp_gen || !g_waiting || g_auto_state == AUTO_OFF) return;
+    auto_drive(d);
+    switch (what) {
+    case FP_NEW:
+        auto_found();
+        break;
+    case FP_GONE:
+        _snwprintf(w, 200, L"Dischetto tolto dal lettore %ls: inserisci il successivo", d); w[199] = 0;
+        auto_rewatch(w);
+        break;
+    case FP_SLOWDRIVE:
+        auto_status(L"Il lettore risponde lento: noto il cambio solo se togli il dischetto e poi lo inserisci");
+        break;
+    default:
+        _snwprintf(w, 200, L"Lettura automatica non disponibile: fdrawcmd.sys non risponde sul lettore %ls. "
+                           L"Premi Leggi (F5) quando il dischetto è inserito.", d); w[199] = 0;
+        auto_manual(w);
+        break;
+    }
+}
+
 static void on_label(WPARAM gen, lb_result *r)
 {
-    wchar_t *w = g_lb_msg, u[3];
+    wchar_t *w = g_lb_msg, u[3], cur[64];
+    int mine = (LONG)gen == g_lb_auto && g_auto_state == AUTO_LABEL;
     u[0] = r->root[0]; u[1] = L':'; u[2] = 0;
     if ((LONG)gen == g_lb_gen && g_waiting) {
+        g_vol_turn.ok = r->has_serial;
+        g_vol_turn.serial = r->serial;
+        wcscpy(g_vol_turn.label, r->has_serial ? r->label : L"");
         switch (r->state) {
         case LB_FOUND:
+            /* the automatic mode does not overwrite what the user typed */
+            GetWindowTextW(g_label, cur, 64);
+            if (mine && cur[0] && wcscmp(cur, g_auto_label)) {
+                _snwprintf(w, 200, L"Etichetta del disco: %ls (resta quella che hai scritto)", r->label);
+                break;
+            }
+            if (mine) wcscpy(g_auto_label, r->label);
             SetWindowTextW(g_label, r->label);
             focus_to(g_label);
             SendMessageW(g_label, EM_SETSEL, 0, -1);
@@ -1835,20 +2233,41 @@ static void on_label(WPARAM gen, lb_result *r)
         }
         w[199] = 0;
         sbar_text(0, w);
+        if (mine) auto_labelled(r->state);
+        watch_resume();
     }
     free(r);
 }
 
-/* a CD or DVD just inserted in the awaited drive: label read by itself,
- * if the field is still empty */
-static void on_media_arrival(const DEV_BROADCAST_HDR *h)
+/* the notice is about a CD or DVD in the awaited drive. A disc in a real
+ * drive comes with DBTF_MEDIA; an image mounted in a virtual drive is a
+ * whole new volume, without it: for the automatic mode both are a disc
+ * (media_only for the label read by itself, as before) */
+static int awaited_media(const DEV_BROADCAST_HDR *h, int media_only)
 {
     const DEV_BROADCAST_VOLUME *v = (const DEV_BROADCAST_VOLUME *)h;
     int bit;
-    if (!h || h->dbch_devicetype != DBT_DEVTYP_VOLUME || !(v->dbcv_flags & DBTF_MEDIA)) return;
-    if (!g_waiting || g_turn.kind == MEDIA_FLOPPY || GetWindowTextLengthW(g_label) > 0) return;
+    if (!h || h->dbch_devicetype != DBT_DEVTYP_VOLUME || (media_only && !(v->dbcv_flags & DBTF_MEDIA))) return 0;
+    if (!g_waiting || g_turn.kind == MEDIA_FLOPPY) return 0;
     bit = toupper(g_drive_w[0] ? g_drive_w[0] : L'D') - 'A';
-    if (bit >= 0 && bit < 26 && (v->dbcv_unitmask & (1UL << bit))) label_read();
+    return bit >= 0 && bit < 26 && (v->dbcv_unitmask & (1UL << bit));
+}
+
+/* a CD or DVD just inserted in the awaited drive: label read by itself,
+ * if the field is still empty; in automatic mode it is the new disk */
+static void on_media_arrival(const DEV_BROADCAST_HDR *h)
+{
+    if (g_auto_state != AUTO_OFF) { if (awaited_media(h, 0)) auto_found(); }
+    else if (awaited_media(h, 1) && GetWindowTextLengthW(g_label) == 0) label_read();
+}
+
+static void on_media_removal(const DEV_BROADCAST_HDR *h)
+{
+    wchar_t w[120], d[3];
+    if (g_auto_state == AUTO_OFF || !awaited_media(h, 0)) return;
+    auto_drive(d);
+    _snwprintf(w, 120, L"Disco tolto dal lettore %ls: inserisci il successivo", d); w[119] = 0;
+    auto_rewatch(w);
 }
 
 /* ---- DiscImageCreator check during setup ----
@@ -2317,6 +2736,13 @@ static void list_row(int n)
     disk_name(n, w, 200);
     it.pszText = w;
     it.iImage = outcome(&g_disk[n], w + 100, 100);
+    if (g_disk[n].twin) {       /* probably the same disk inserted twice: nothing was deleted */
+        wchar_t who[32], t[100];
+        slot_name(g_disk[n].twin, 0, who, 32);
+        _snwprintf(t, 100, L"%ls, uguale al %ls?", w + 100, who); t[99] = 0;
+        wcscpy(w + 100, t);
+        it.iImage = DOT_OCHRE;
+    }
     SendMessageW(g_list, LVM_SETITEMW, 0, (LPARAM)&it);
     list_text(n - 1, 3, w + 100);
     to_w(g_disk[n].label, w, 200);
@@ -2425,6 +2851,7 @@ static void seed_previous(void)
             const meta_disk *d = &b->disk[i];
             if (d->n < 1 || d->n > META_MAXDISK) continue;
             copy_disk(&g_disk[d->n], d);
+            g_disk[d->n].twin = meta_disk_done(d) ? session_twin(b, d) : 0;
             /* the disks to redo are asked for again: for now they are "da leggere" */
             if (!meta_disk_done(d)) g_disk[d->n].status[0] = 0;
         }
@@ -2695,7 +3122,8 @@ static void reset_state(void)
     }
     g_last_done = 0; g_errbeep = 0; g_closing = 0; g_cur = 0;
     memset(&g_turn, 0, sizeof(g_turn));
-    g_bag_closed = g_bag_complete = g_reread = g_fragile = g_aside_n = 0;
+    memset(g_vol, 0, sizeof(g_vol));        /* serial numbers are compared within one box */
+    g_bag_closed =g_bag_complete = g_reread = g_fragile = g_aside_n = 0;
     g_phase_name[0] = 0; g_last_err[0] = 0;
     pills_clear();
     SendMessageW(g_diskbar, PBM_SETPOS, 0, 0);
@@ -2779,6 +3207,13 @@ static void start(void)
     floppy_set_samdisk(buf[0] ? buf : "samdisk");
     get_u8(ID_SOURCE, buf, sizeof(buf));
     floppy_set_source(buf[0] ? buf : "a:");
+    {   /* a: -> \\.\fdraw0, b: -> \\.\fdraw1; a .dsk file has no drive to watch */
+        const char *q = buf[0] ? buf : "a:";
+        while (*q == ' ') q++;
+        g_fd_index = floppy_source_is_drive(q) && (toupper((unsigned char)*q) == 'A' || toupper((unsigned char)*q) == 'B')
+                   ? toupper((unsigned char)*q) - 'A' : -1;
+    }
+    g_auto = IsDlgButtonChecked(g_wnd, ID_AUTO) == BST_CHECKED;
     get_u8(ID_DIC, buf, sizeof(buf));
     optical_set_dic(buf[0] ? buf : "DiscImageCreator");
     get_u8_trim(ID_DRIVE, buf, sizeof(buf));
@@ -3483,6 +3918,12 @@ static void answer(int cmd)
 {
     wchar_t w[300], who[32];
     if (!g_waiting) return;
+    auto_leave();               /* the floppy watcher lets go of the drive before SAMdisk opens it */
+    if (cmd == CMD_READ && g_turn.readable) {
+        /* the next disk of this kind must be a new one */
+        if (g_turn.kind == MEDIA_FLOPPY) g_fd_used = 1; else g_opt_used = 1;
+        if (g_cur >= 1 && g_cur <= META_MAXDISK) g_vol[g_cur] = g_vol_turn;
+    }
     slot_name(g_cur, 0, who, 32);
     GetWindowTextW(g_label, w, 128);
     to_u8(w, g_label_u8, sizeof(g_label_u8));
@@ -3515,6 +3956,7 @@ static void answer(int cmd)
 static void quit_waiting(void)
 {
     wchar_t w[300];
+    auto_leave();
     GetWindowTextW(g_label, w, 128);
     to_u8(w, g_label_u8, sizeof(g_label_u8));
     GetWindowTextW(g_note, w, 300);
@@ -3769,24 +4211,16 @@ static void wait_unreadable(const disk_turn *t)
     banner(B_BLUE, NULL, ICON_DISC, w, text);
 }
 
-/* waiting for a disk: a new one, or the same after a failed read */
-static void on_wait(void)
-{
-    wchar_t w[160], lab[300];
-    int n = g_turn_in.n, total = g_turn_in.total;
-    const char *last = (n >= 1 && n <= META_MAXDISK) ? g_disk[n].status : "";
-    int retry = (n == g_last_done) &&
-                (!strcmp(last, "lettura fallita") || !strcmp(last, "interrotto"));
+/* the turn being waited for is a retry: 0 no, 1 failed read, 2 interrupted */
+static int g_retry;
 
-    /* close confirmed between the check in host_wait and the PostMessage:
-     * answer at once, the core's label and note stay */
-    if (g_closing) { g_cmd = CMD_QUIT; SetEvent(g_wake); return; }
-    g_turn = g_turn_in;
-    if (total > 0 && total != g_total) { g_total = total; list_rebuild(); box_progress(); }
-    g_cur = n;
-    /* Salta is the Enter button when Leggi is absent */
-    SendDlgItemMessageW(g_wnd, ID_READ, BM_SETSTYLE, g_turn.readable ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON, TRUE);
-    SendDlgItemMessageW(g_wnd, ID_SKIP, BM_SETSTYLE, g_turn.readable ? BS_PUSHBUTTON : BS_DEFPUSHBUTTON, TRUE);
+/* the yellow banner while waiting, or the orange one of a retry */
+static void wait_banner(void)
+{
+    wchar_t w[160];
+    int retry = g_retry != 0;
+    const char *last = g_retry == 2 ? "interrotto" : "lettura fallita";
+    int autom = g_auto_state != AUTO_OFF, again = g_turn.kind == MEDIA_FLOPPY ? g_fd_used : g_opt_used;
     if (!g_turn.readable) {
         wait_unreadable(&g_turn);
     } else if (retry) {
@@ -3798,6 +4232,9 @@ static void on_wait(void)
         if (!strcmp(last, "interrotto"))
             banner(B_ORANGE, L"!", 0, w, L"Premi Riprova per rileggerlo, Salta per passare al successivo, oppure "
                                          L"chiudi la finestra: il cofanetto resta aperto e lo riprendi dall'archivio");
+        else if (g_turn.kind == MEDIA_FLOPPY && autom)
+            banner(B_ORANGE, L"!", 0, w, L"Controlla il dischetto e rimettilo nel lettore: riparto da solo. "
+                                         L"Oppure premi Riprova (F5) o Salta (Alt+S).");
         else if (g_turn.kind == MEDIA_FLOPPY)
             banner(B_ORANGE, L"!", 0, w, L"Controlla il dischetto, rimettilo nel lettore e premi Riprova (F5), "
                                          L"oppure Salta (Alt+S).");
@@ -3810,25 +4247,61 @@ static void on_wait(void)
             banner(B_ORANGE, L"!", 0, w, why);
         }
     } else if (g_turn.kind != MEDIA_FLOPPY) {
-        wchar_t sub[300];
+        wchar_t sub[400];
         if (g_turn.count > 1)
             _snwprintf(w, 160, L"Inserisci il %ls %d di %d nel lettore %ls", kind_w[g_turn.kind], g_turn.num,
                        g_turn.count, g_drive_w);
         else
             _snwprintf(w, 160, L"Inserisci il %ls nel lettore %ls", kind_w[g_turn.kind], g_drive_w);
         w[159] = 0;
-        _snwprintf(sub, 300, L"Chiudi il lettore, aspetta che la spia smetta di lampeggiare, poi premi Invio o "
-                             L"Leggi (F5); F2 rilegge l'etichetta, Alt+S salta. La lettura con "
-                             L"DiscImageCreator dura da 10 a 30 minuti. Etichetta del %ls "
-                             L"(facoltativa):", kind_w[g_turn.kind]);
-        sub[299] = 0;
+        if (autom)
+            _snwprintf(sub, 400, L"Lettura automatica: %ls, quando Windows lo vede parto da solo (da 10 a 30 "
+                                 L"minuti). Invio o F5 legge subito, Alt+S salta, Esc torna alla lettura a mano. "
+                                 L"Etichetta del %ls (facoltativa):",
+                       again ? L"togli il disco appena letto e inserisci questo" : L"inserisci il disco",
+                       kind_w[g_turn.kind]);
+        else
+            _snwprintf(sub, 400, L"Chiudi il lettore, aspetta che la spia smetta di lampeggiare, poi premi Invio o "
+                                 L"Leggi (F5); F2 rilegge l'etichetta, Alt+S salta. La lettura con "
+                                 L"DiscImageCreator dura da 10 a 30 minuti. Etichetta del %ls "
+                                 L"(facoltativa):", kind_w[g_turn.kind]);
+        sub[399] = 0;
         banner(B_YELLOW, NULL, ICON_DISC, w, sub);
     } else {
         _snwprintf(w, 160, L"Inserisci il %ls %d di %d", kind_w[g_turn.kind], g_turn.num, g_turn.count);
         w[159] = 0;
-        banner_num(B_YELLOW, g_turn.num, w, L"Poi premi Invio o Leggi (F5); F2 rilegge l'etichetta, Alt+S salta "
-                                            L"il disco. Etichetta del disco (facoltativa):");
+        if (autom)
+            banner_num(B_YELLOW, g_turn.num, w, again
+                       ? L"Lettura automatica: togli il dischetto appena letto e inserisci questo, parto da solo. "
+                         L"Invio o F5 legge subito, Alt+S salta, Esc torna alla lettura a mano. Etichetta del disco "
+                         L"(facoltativa):"
+                       : L"Lettura automatica: appena il dischetto è nel lettore parto da solo. Invio o F5 legge "
+                         L"subito, Alt+S salta, Esc torna alla lettura a mano. Etichetta del disco (facoltativa):");
+        else
+            banner_num(B_YELLOW, g_turn.num, w, L"Poi premi Invio o Leggi (F5); F2 rilegge l'etichetta, Alt+S salta "
+                                                L"il disco. Etichetta del disco (facoltativa):");
     }
+}
+
+/* waiting for a disk: a new one, or the same after a failed read */
+static void on_wait(void)
+{
+    wchar_t lab[300];
+    int n = g_turn_in.n, total = g_turn_in.total;
+    const char *last = (n >= 1 && n <= META_MAXDISK) ? g_disk[n].status : "";
+    int retry = (n == g_last_done) &&
+                (!strcmp(last, "lettura fallita") || !strcmp(last, "interrotto"));
+
+    /* close confirmed between the check in host_wait and the PostMessage:
+     * answer at once, the core's label and note stay */
+    if (g_closing) { g_cmd = CMD_QUIT; SetEvent(g_wake); return; }
+    g_turn = g_turn_in;
+    if (total > 0 && total != g_total) { g_total = total; list_rebuild(); box_progress(); }
+    g_cur = n;
+    g_retry = !retry ? 0 : !strcmp(last, "interrotto") ? 2 : 1;
+    /* Salta is the Enter button when Leggi is absent */
+    SendDlgItemMessageW(g_wnd, ID_READ, BM_SETSTYLE, g_turn.readable ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON, TRUE);
+    SendDlgItemMessageW(g_wnd, ID_SKIP, BM_SETSTYLE, g_turn.readable ? BS_PUSHBUTTON : BS_DEFPUSHBUTTON, TRUE);
     SetDlgItemTextW(g_wnd, ID_READ, retry ? L"Riprova" : L"Leggi");
     /* what the core already has; on retry, what was typed stays */
     to_w(g_label_u8, lab, 128);
@@ -3839,13 +4312,15 @@ static void on_wait(void)
     SetWindowTextW(g_cyltxt, L"");
     g_lb_msg[0] = 0;            /* the magnifier's outcome was for the previous disk */
     g_waiting = 1;
+    auto_begin();
+    wait_banner();
     view(V_WAIT);
     list_select(n);
     focus_to(g_label);
     SendMessageW(g_label, EM_SETSEL, 0, -1);
     attention(retry);
     /* CD or DVD already in the drive: the label at once, without spinning anything */
-    if (g_turn.kind != MEDIA_FLOPPY && GetWindowTextLengthW(g_label) == 0) label_read();
+    if (g_auto_state == AUTO_OFF && g_turn.kind != MEDIA_FLOPPY && GetWindowTextLengthW(g_label) == 0) label_read();
 }
 
 /* the final banner: green complete, orange incomplete or open, red error */
@@ -4084,6 +4559,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         else if (wp == TIMER_SAMDISK) samdisk_check();
         else if (wp == TIMER_DIC) dic_check();
         else if (wp == TIMER_FLOPPY) floppy_check();
+        else if (wp == TIMER_AUTO) auto_tick();
         else if (wp == TIMER_ADIR) archive_dir_changed();
         return 0;
     case WM_APP_ARCHIVE:
@@ -4101,8 +4577,12 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_APP_LABEL:
         on_label(wp, (lb_result *)lp);
         return 0;
+    case WM_APP_DISKIN:
+        on_diskin(wp, lp);
+        return 0;
     case WM_DEVICECHANGE:
         if (wp == DBT_DEVICEARRIVAL) on_media_arrival((const DEV_BROADCAST_HDR *)lp);
+        else if (wp == DBT_DEVICEREMOVECOMPLETE) on_media_removal((const DEV_BROADCAST_HDR *)lp);
         return TRUE;
     case WM_APP_FLOPPY:
         on_floppy(wp, (fd_result *)lp);
@@ -4174,6 +4654,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         break;
     case WM_DESTROY:
         place_save();
+        watch_stop();
         KillTimer(h, TIMER_ID);
         KillTimer(h, TIMER_LINES);
         queue_drain(0);             /* the worker thread has already ended: nothing stays in memory */
@@ -4283,6 +4764,15 @@ static int wait_key(const MSG *m)
     }
     if (m->wParam == VK_F2 || (alt && m->wParam == 'L')) { label_read(); return 1; }
     if (alt && m->wParam == 'S') { answer(CMD_SKIP); return 1; }
+    /* automatic mode: Esc goes back to Leggi by hand for this disk */
+    if (m->wParam == VK_ESCAPE && g_auto_state != AUTO_OFF) {
+        auto_manual(L"Lettura automatica fermata per questo disco: premi Leggi (F5) quando sei pronto.");
+        return 1;
+    }
+    /* typing the label during the countdown: the read waits for Enter */
+    if (g_auto_state == AUTO_COUNT && !alt && m->wParam != VK_RETURN && m->wParam != VK_TAB &&
+        m->wParam != VK_SHIFT && m->wParam != VK_CONTROL && m->wParam != VK_MENU)
+        auto_manual(L"Stai scrivendo: leggo quando premi Invio o Leggi (F5).");
     return 0;
 }
 

@@ -710,6 +710,13 @@ ok("old box resumed: the earlier read intact, new schema",
 rc, out = run("Tutte", 1, ["ident_a", "ident_b"], [""], ["-k"])
 ok("-k: second read kept", "disco01_b.dsk" in data_files(bag("Tutte")), out)
 
+# 29. the same disk inserted twice: floppy 3 gives the same image as floppy 1
+rc, out = run("Doppione", 3, ["ident_a", "ident_a", "fat_144", "fat_144", "ident_a", "ident_a"], ["", "", ""])
+b = bag("Doppione")
+ok("same disk twice: closed, nothing deleted", rc == 0 and "disco03.dsk" in data_files(b), out)
+ok("same disk twice: the log says floppy 3 is identical to floppy 1",
+   "il floppy 3 e' identico al floppy 1" in out and "il floppy 2 e' identico" not in out, out)
+
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))
 sys.exit(1 if fails else 0)
