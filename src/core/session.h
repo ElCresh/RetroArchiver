@@ -58,6 +58,10 @@ typedef struct {
 
 int  session_run(const session_cfg *cfg, const session_host *host);
 
+/* another medium of the box whose master has the same SHA-256 as d's
+ * (the same disk read twice, probably): its position, 0 if none */
+int  session_twin(const meta_box *b, const meta_disk *d);
+
 /* the reads whose fingerprint did not match at closing: outside data/,
  * in this tag folder of the bag (not in the manifest), as
  * NAME.danneggiato */

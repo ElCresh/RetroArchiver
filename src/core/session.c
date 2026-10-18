@@ -659,6 +659,41 @@ void session_settle_names(meta_box *b, const char *const names[MEDIA_KINDS])
         if (!b->names[k][0] && meta_count(b, k)) CP(b->names[k], session_name_tpl(b, names, k));
 }
 
+/* the SHA-256 of a disk's master read; NULL without one */
+static const char *master_sha(const meta_disk *d)
+{
+    int i;
+    if (!d->master[0]) return NULL;
+    for (i = 0; i < d->nreads; i++)
+        if (!strcmp(d->reads[i].file, d->master) && d->reads[i].sha256[0]) return d->reads[i].sha256;
+    return NULL;
+}
+
+int session_twin(const meta_box *b, const meta_disk *d)
+{
+    const char *h = master_sha(d), *o;
+    int i;
+    if (!h) return 0;
+    for (i = 0; i < b->ndisk; i++) {
+        if (b->disk[i].n == d->n) continue;
+        if ((o = master_sha(&b->disk[i])) != NULL && !strcmp(o, h)) return b->disk[i].n;
+    }
+    return 0;
+}
+
+/* nothing is deleted: two disks of a set can really be identical, but
+ * usually the same disk was inserted twice */
+static void tell_twin(run_ctx *r, const meta_disk *d)
+{
+    char who[32], other[32];
+    int t = session_twin(r->cfg->box, d);
+    if (!t) return;
+    ev(r, EV_LINE, d->n, "ATTENZIONE: il %s e' identico al %s (stessa impronta SHA-256): forse e' lo "
+                         "stesso disco inserito due volte. Non cancello niente: controlla le etichette "
+                         "dei due dischi.",
+       name_of(r->cfg->box, d->n, who, sizeof(who)), name_of(r->cfg->box, t, other, sizeof(other)));
+}
+
 enum { DISK_NEXT, DISK_QUIT, DISK_FINISH, DISK_FAIL };
 
 /* one round on the disk: asks for it, reads or skips it, records the outcome */
@@ -693,7 +728,7 @@ static int ask_and_do(run_ctx *r, meta_disk *d, int *cmd, char *bye, size_t blen
         snprintf(bye, blen, "Il cofanetto resta aperto: dopo aver sistemato %s, "
                             "riparti con lo stesso titolo.", tool ? tool : "il programma di lettura");
         return DISK_QUIT;
-    }
+    } else tell_twin(r, d);
     csv_row(r, d);
     if (save(r)) return DISK_FAIL;
     host->event(host->ctx, EV_DISK_DONE, d->n, d->status);

@@ -156,6 +156,58 @@ static void mixed_box(void)
     meta_delete(box);
 }
 
+/* the same disk inserted twice: floppy 3 gives the same image as floppy 1;
+ * the session says so in the log and deletes nothing */
+static int twin_disk, twin_lines, twin_line_disk;
+static void t_put(const char *p, int n, int c)
+{
+    FILE *f = u8_fopen(p, "wb");
+    if (f) { while (n--) fputc(c, f); fclose(f); }
+}
+static int t_read(const char *o, runner_line_fn fn, void *c)
+{
+    (void)fn; (void)c;
+    t_put(o, 600, twin_disk == 2 ? 'b' : 'a');
+    return 0;
+}
+static void t_event(void *c, event_kind k, int d, const char *t)
+{
+    (void)c;
+    if (k == EV_LINE && strstr(t, "identico al floppy 1")) { twin_lines++; twin_line_disk = d; }
+}
+static int t_wait(void *c, const disk_turn *t, char *l, size_t ll, char *no, size_t nl)
+{
+    (void)c; (void)l; (void)ll; (void)no; (void)nl;
+    twin_disk = t->n;
+    return CMD_READ;
+}
+
+static void twin_box(void)
+{
+    media_ops m = { "floppy", ".dsk", NULL, f_scan, t_read, m_cmp, f_tech };
+    session_host h; session_cfg c; meta_box *box = meta_new();
+    char p[256];
+
+    str_copy(box->title, sizeof(box->title), "Doppione");
+    str_copy(box->platform, sizeof(box->platform), "X");
+    meta_set_counts(box, 3, 0, 0);
+    memset(&h, 0, sizeof(h));
+    h.event = t_event; h.wait_disk = t_wait;
+    memset(&c, 0, sizeof(c));
+    c.box = box; c.outroot = "tmp_unit/sess"; c.maxread = 2; c.start = 1;
+    c.media[MEDIA_FLOPPY] = &m;
+    twin_lines = twin_line_disk = 0;
+    CHECK(session_run(&c, &h) == SESSION_CLOSED);
+    CHECK(twin_lines == 1 && twin_line_disk == 3);
+    CHECK(session_twin(box, &box->disk[2]) == 1);
+    CHECK(session_twin(box, &box->disk[0]) == 3);
+    CHECK(session_twin(box, &box->disk[1]) == 0);
+    session_bagdir(p, sizeof(p), "tmp_unit/sess", "Doppione");
+    strcat(p, U8_SEP "data" U8_SEP "FLOPPY03.dsk");
+    CHECK(u8_exists(p));                    /* kept */
+    meta_delete(box);
+}
+
 void test_session(void)
 {
     char out[64], longt[501], dir[256];
@@ -179,4 +231,5 @@ void test_session(void)
     cancel_in_compare(0, "Annullato");
     cancel_in_compare(1, "Annullato con riprova");
     mixed_box();
+    twin_box();
 }
