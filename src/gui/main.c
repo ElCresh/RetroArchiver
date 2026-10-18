@@ -608,7 +608,7 @@ static void label_button(void)
     ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
     ti.hwnd = g_wnd;
     ti.uId = (UINT_PTR)b;
-    ti.lpszText = (wchar_t *)L"Leggi l'etichetta dal disco inserito";
+    ti.lpszText = (wchar_t *)L"Leggi l'etichetta dal disco inserito (F2)";
     SendMessageW(tip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
 }
 
@@ -3799,12 +3799,13 @@ static void on_wait(void)
             banner(B_ORANGE, L"!", 0, w, L"Premi Riprova per rileggerlo, Salta per passare al successivo, oppure "
                                          L"chiudi la finestra: il cofanetto resta aperto e lo riprendi dall'archivio");
         else if (g_turn.kind == MEDIA_FLOPPY)
-            banner(B_ORANGE, L"!", 0, w, L"Controlla il dischetto, rimettilo nel lettore e premi Riprova, oppure Salta.");
+            banner(B_ORANGE, L"!", 0, w, L"Controlla il dischetto, rimettilo nel lettore e premi Riprova (F5), "
+                                         L"oppure Salta (Alt+S).");
         else {
             wchar_t why[700];
-            if (g_why[0]) _snwprintf(why, 700, L"%ls\nPoi premi Riprova, oppure Salta.", g_why);
+            if (g_why[0]) _snwprintf(why, 700, L"%ls\nPoi premi Riprova (F5), oppure Salta (Alt+S).", g_why);
             else _snwprintf(why, 700, L"Controlla il disco (il tipo giusto, pulito), rimettilo nel lettore e "
-                                      L"premi Riprova, oppure Salta.");
+                                      L"premi Riprova (F5), oppure Salta (Alt+S).");
             why[699] = 0;
             banner(B_ORANGE, L"!", 0, w, why);
         }
@@ -3817,14 +3818,16 @@ static void on_wait(void)
             _snwprintf(w, 160, L"Inserisci il %ls nel lettore %ls", kind_w[g_turn.kind], g_drive_w);
         w[159] = 0;
         _snwprintf(sub, 300, L"Chiudi il lettore, aspetta che la spia smetta di lampeggiare, poi premi Invio o "
-                             L"Leggi. La lettura con DiscImageCreator dura da 10 a 30 minuti. Etichetta del %ls "
+                             L"Leggi (F5); F2 rilegge l'etichetta, Alt+S salta. La lettura con "
+                             L"DiscImageCreator dura da 10 a 30 minuti. Etichetta del %ls "
                              L"(facoltativa):", kind_w[g_turn.kind]);
         sub[299] = 0;
         banner(B_YELLOW, NULL, ICON_DISC, w, sub);
     } else {
         _snwprintf(w, 160, L"Inserisci il %ls %d di %d", kind_w[g_turn.kind], g_turn.num, g_turn.count);
         w[159] = 0;
-        banner_num(B_YELLOW, g_turn.num, w, L"Poi premi Invio o Leggi. Etichetta del disco (facoltativa):");
+        banner_num(B_YELLOW, g_turn.num, w, L"Poi premi Invio o Leggi (F5); F2 rilegge l'etichetta, Alt+S salta "
+                                            L"il disco. Etichetta del disco (facoltativa):");
     }
     SetDlgItemTextW(g_wnd, ID_READ, retry ? L"Riprova" : L"Leggi");
     /* what the core already has; on retry, what was typed stays */
@@ -4264,6 +4267,25 @@ static void default_rect(RECT *out)
     out->bottom = out->top + h;
 }
 
+/* Shortcuts while waiting for a disk, for long sessions with many disks:
+ * F5 or Alt+R reads (or retries), F2 or Alt+L reads the volume label again,
+ * Alt+S skips. Plain letters would end up in the Label field, which has
+ * the focus. Handled before IsDialogMessage; 1 if the key was used. */
+static int wait_key(const MSG *m)
+{
+    int alt;
+    if (!g_waiting || (m->message != WM_KEYDOWN && m->message != WM_SYSKEYDOWN)) return 0;
+    if (m->hwnd != g_wnd && !IsChild(g_wnd, m->hwnd)) return 0;
+    alt = m->message == WM_SYSKEYDOWN;
+    if (m->wParam == VK_F5 || (alt && m->wParam == 'R')) {
+        if (g_turn.readable) answer(CMD_READ);
+        return 1;
+    }
+    if (m->wParam == VK_F2 || (alt && m->wParam == 'L')) { label_read(); return 1; }
+    if (alt && m->wParam == 'S') { answer(CMD_SKIP); return 1; }
+    return 0;
+}
+
 /* "RetroArchiver.exe --tty PROGRAM ARG...": the program launched by itself
  * as runner_run_tty's intermediary, with no window. -1 if the command line
  * is not that, otherwise the program's exit code */
@@ -4328,6 +4350,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show_cmd)
     if (!place_load(show_cmd)) ShowWindow(g_wnd, show_cmd);
     SetFocus(g_alist);
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
+        if (wait_key(&msg)) continue;
         if (IsDialogMessageW(g_wnd, &msg)) continue;
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
