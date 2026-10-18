@@ -2,7 +2,7 @@
 #
 #   make          Win32 executables, run from XP upward
 #   make native   local build, needed by the tests
-#   make xp-tests unit.exe, fake_samdisk.exe, fake_dic.exe, settings_test.exe and tty_test.exe
+#   make xp-tests unit.exe, fake_samdisk.exe, fake_dic.exe, settings_test.exe, tty_test.exe, fdcheck.exe
 #                 for the XP VM (settings_test.exe also on the Windows host)
 #   make test     generates the fixtures and runs all the suites
 #   make setup    dist/RetroArchiver-Setup.exe, the installer for XP (NSIS 3);
@@ -62,7 +62,7 @@ build/fake_samdisk: tests/fake_samdisk.c | build
 	$(CC) $(CFLAGS) -o $@ $<
 
 # core tests and fake SAMdisk for the XP VM
-xp-tests: build/unit.exe build/fake_samdisk.exe build/fake_dic.exe build/settings_test.exe build/tty_test.exe
+xp-tests: build/unit.exe build/fake_samdisk.exe build/fake_dic.exe build/settings_test.exe build/tty_test.exe build/fdcheck.exe
 
 build/unit.exe: $(UNIT) $(CORE) $(CORE_H) tests/unit/unit.h | build
 	$(WINCC) $(WINFLAGS) -Itests/unit -o $@ $(UNIT) $(CORE)
@@ -74,6 +74,10 @@ build/settings_test.exe: tests/xp/test_settings.c $(GUI) | build
 # the hidden console of runner_run_tty: the test detaches from the console, like the GUI
 build/tty_test.exe: tests/xp/test_tty.c src/core/runner.c src/core/runner.h src/core/strbuf.c | build
 	$(WINCC) $(WINFLAGS) -o $@ tests/xp/test_tty.c src/core/runner.c src/core/strbuf.c
+
+# probe for the automatic mode: is a floppy in the drive? (fdrawcmd, only on the real PC)
+build/fdcheck.exe: tests/xp/fdcheck.c | build
+	$(WINCC) $(WINFLAGS) -o $@ $<
 
 build/fake_samdisk.exe: tests/fake_samdisk.c | build
 	$(WINCC) $(WINFLAGS) -o $@ $<
