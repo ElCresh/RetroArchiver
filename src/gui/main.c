@@ -4225,6 +4225,14 @@ static void on_disk_done(const gui_event *e, const wchar_t *t)
     log_append(w);
 }
 
+/* a DiscImageCreator counter that measures the disc: the dump ("Creating
+ * .scm (LBA) 1234/300000", the .iso of a DVD) or the C2 check ("Checking
+ * sectors: 420/420"); not the counters of its preliminary steps */
+static int bar_counter(const char *s)
+{
+    return strstr(s, "LBA)") != NULL || strstr(s, "Checking sectors") != NULL;
+}
+
 /* a batch of lines: into the log with a single EM_REPLACESEL, except the
  * progress ones, of which only the last matters, for the bar */
 static void on_lines(char *text, size_t len)
@@ -4243,7 +4251,11 @@ static void on_lines(char *text, size_t len)
             int is = (*nl = 0, optical_progress(s, &a, &b));
             *nl = save;
             /* "Creating .scm (LBA) 1234/300000": the bar only; "Remains 3 c2
-             * error ... 20/20" also in the log */
+             * error ... 20/20" also in the log. Only the dump and the C2
+             * check move the bar: DIC also counts its preliminary steps
+             * ("Reading DirectoryRecord 3/ 101", "1/ 1"), which made the bar
+             * jump to 100% before the real read started (seen on the PC) */
+            if (is && !bar_counter(s)) { if (!strstr(s, "error")) continue; is = 0; }
             if (is) { done = a; total = b; prog = 1; if (!strstr(s, "error")) continue; }
         }
         if (w) {
