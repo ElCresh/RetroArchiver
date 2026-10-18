@@ -246,6 +246,15 @@ static int dump(int dvd, const char *file, int sf)
         printf("Wrong command. The disc isn't CD, CD-R, CD-RW, GD\n");
         return 1;
     }
+    /* a drive that cannot read the lead-in, as the ASUS DRW-08D6MT on the PC */
+    if (!strcmp(what, "LEADIN")) {
+        printf("This drive can't read the lead-in\nSet OpCode: 0xbe, SubCode: 1(Raw)\n"
+               "LBA[-00001, 0xffffffff]: [F:ReadCDAll][L:1114]\n\tOpcode: 0xbe\n"
+               "\tScsiStatus: 0x02 = CHECK_CONDITION\n"
+               "\tSenseData Key-Asc-Ascq: 05-2c-00 = ILLEGAL_REQUEST - COMMAND SEQUENCE ERROR\n"
+               "lpCmd: be, 04, ff, ff, ff, ff, 00, 00, 01, fa, 01, 00\ndwBufSize: 2742\n");
+        return 1;
+    }
     if (!strncmp(what, "SLOW", 4)) {
         printf("fake_dic: slow\n");
         fflush(stdout);

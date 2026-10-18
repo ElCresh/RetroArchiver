@@ -605,6 +605,12 @@ cd = meta(bag("CD sbagliato"))["media"][0]
 ok("wrong disc: failed read with the explanation", rc == 1 and cd["status"] == "read-failed"
    and "The drive does not hold a CD" in out
    and not os.path.exists(os.path.join(bag("CD sbagliato"), "data", "CD01")), json.dumps(cd) + out)
+rc, out = run("CD senza lead-in", 0, [], [""], ["-C", "1"], tpl=None, dic=["LEADIN"])
+cd = meta(bag("CD senza lead-in"))["media"][0]
+ok("drive without lead-in: clear reason, no copy protection scan proposed",
+   rc == 1 and cd["status"] == "read-failed" and "cannot read the lead-in" in out
+   and "copy protection scan would not help" in out, json.dumps(cd) + out)
+
 failed = os.path.join(bag("CD sbagliato"), "set-aside", "CD01.failed")
 ok("wrong disc: DIC's logs kept in set-aside, not deleted",
    os.path.isfile(os.path.join(failed, "dic-console.txt")) and "set-aside/CD01.failed" in out

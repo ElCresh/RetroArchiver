@@ -238,6 +238,7 @@ typedef struct {
     int unit_att;       /* the resets alone: they stop a read with /sf */
     int stopped;        /* stopped by RetroArchiver after RESET_STOP of them, with /sf */
     char last[300];     /* the last meaningful line: it goes into the error message */
+    int leadin;         /* the drive cannot read the lead-in (LBA -1) */
 } tee;
 
 /* DIC housekeeping lines that do not explain an error */
@@ -255,6 +256,10 @@ static void tee_line(void *c, const char *line)
     if (strstr(line, "Wrong command")) t->wrong = 1;
     if (strstr(line, "GetLastError: 5,")) t->denied = 1;
     if (strstr(line, ASK_OFFSET)) t->ask_offset = 1;
+    /* seen on the PC (ASUS DRW-08D6MT): "This drive can't read the lead-in",
+     * then a raw read of LBA -1 refused with ILLEGAL_REQUEST, and DIC stops
+     * with error 1. The cd command needs it; /sf has nothing to do with it */
+    if (strstr(line, "can't read the lead-in") || strstr(line, "LBA[-00001")) t->leadin = 1;
     /* seen on the PC with /sf: "GetLastError: 121" (semaphore timeout), then
      * "SenseData 06-29-00 = UNIT_ATTENTION - POWER ON, RESET..." and "Please
      * wait for 40000 milliseconds": the scan resets the drive over and over,
@@ -904,13 +909,18 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
         }
         return 0;
     }
-    if (t.wrong || t.denied || (t.ask_offset && !offset[0])) prot_used = -1;    /* /sf would not help */
+    if (t.wrong || t.denied || t.leadin || (t.ask_offset && !offset[0])) prot_used = -1;    /* /sf would not help */
     if (t.stopped)
         snprintf(p, sizeof(p), "The drive was reset %d times while DiscImageCreator looked for copy "
                                "protections (/sf): stopped it, it would go on like this for an hour. Read the "
                                "CD again without the protection scan (Copy protection: Off).", t.unit_att);
     else if (t.ask_offset && !offset[0])
         offset_message(p, sizeof(p), out_dir, base);
+    else if (t.leadin && !dvd)
+        snprintf(p, sizeof(p), "This drive cannot read the lead-in (the sector before the start of the "
+                               "disc, LBA -1), which DiscImageCreator's cd command needs: it stopped there. "
+                               "The copy protection scan would not help. Use a drive that can (DiscImageCreator "
+                               "recommends PLEXTOR drives), or skip this CD for now.");
     else if (t.wrong)
         snprintf(p, sizeof(p), "The drive does not hold a %s: DiscImageCreator says the disc is of "
                                "another type. Check the disc, or the contents of the box.",
