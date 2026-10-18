@@ -407,15 +407,16 @@ static int read_dir_name(const run_ctx *r, const char *name)
  * allows other tag files, in subfolders too, and verifiers ignore those
  * the tagmanifest does not list. So they stay with their box without
  * ending up in the data manifest.
- * name is an entry of data/; rel gets the new path, relative to the bag */
-static int move_aside(run_ctx *r, const char *name, char *rel, size_t n)
+ * name is an entry of data/, suffix ".danneggiato" or ".duplicato"; rel
+ * gets the new path, relative to the bag */
+static int move_aside(run_ctx *r, const char *name, const char *suffix, char *rel, size_t n)
 {
     char from[1024], dir[1024], to[1200], file[300]; int j;
     u8_join(from, sizeof(from), r->datadir, name);
     u8_join(dir, sizeof(dir), r->bagdir, SESSION_ASIDE_DIR);
     if (u8_mkdir(dir)) return -1;
-    if (strstr(name, ".danneggiato")) CP(file, name);      /* already set aside before */
-    else snprintf(file, sizeof(file), "%s.danneggiato", name);
+    if (strstr(name, suffix)) CP(file, name);              /* already set aside before */
+    else snprintf(file, sizeof(file), "%s%s", name, suffix);
     u8_join(to, sizeof(to), dir, file);
     for (j = 2; u8_exists(to) && j < 100; j++) {
         char alt[320];
@@ -433,7 +434,7 @@ static void orphan(void *c, const char *name, int isdir)
     if (referenced(r->cfg->box, name)) return;
     /* a .danneggiato left in data/ by an earlier version: out of the payload */
     if (strstr(name, ".danneggiato")) {
-        if (move_aside(r, name, rel, sizeof(rel)) == 0) {
+        if (move_aside(r, name, ".danneggiato", rel, sizeof(rel)) == 0) {
             ev(r, EV_LINE, 0, "Sposto data/%s in %s: fuori dal pacchetto dei dati.", name, rel);
             return;
         }
@@ -475,7 +476,7 @@ static void set_aside(run_ctx *r, int n)
             continue;
         }
         if (u8_exists(p)) {
-            if (move_aside(r, d->reads[i].file, rel, sizeof(rel))) {
+            if (move_aside(r, d->reads[i].file, ".danneggiato", rel, sizeof(rel))) {
                 ev(r, EV_LINE, n, "ATTENZIONE: non riesco a spostare data/%s in %s: e' aperto da un "
                                   "altro programma? chiudilo e rilancia.", d->reads[i].file, SESSION_ASIDE_DIR);
                 d->reads[k++] = d->reads[i];
@@ -681,17 +682,56 @@ int session_twin(const meta_box *b, const meta_disk *d)
     return 0;
 }
 
-/* nothing is deleted: two disks of a set can really be identical, but
- * usually the same disk was inserted twice */
-static void tell_twin(run_ctx *r, const meta_disk *d)
+static int move_aside(run_ctx *r, const char *name, const char *suffix, char *rel, size_t n);
+
+/* one file of a duplicate disk out of data/; its name is cleared if moved */
+static void aside_dup(run_ctx *r, const meta_disk *d, char *name, size_t len)
 {
-    char who[32], other[32];
-    int t = session_twin(r->cfg->box, d);
-    if (!t) return;
-    ev(r, EV_LINE, d->n, "ATTENZIONE: il %s e' identico al %s (stessa impronta SHA-256): forse e' lo "
-                         "stesso disco inserito due volte. Non cancello niente: controlla le etichette "
-                         "dei due dischi.",
-       name_of(r->cfg->box, d->n, who, sizeof(who)), name_of(r->cfg->box, t, other, sizeof(other)));
+    char rel[400];
+    if (!name[0] || move_aside(r, name, ".duplicato", rel, sizeof(rel))) {
+        if (name[0]) ev(r, EV_LINE, d->n, "ATTENZIONE: non riesco a spostare data/%s in %s: e' aperto da "
+                                          "un altro programma?", name, SESSION_ASIDE_DIR);
+        return;
+    }
+    ev(r, EV_LINE, d->n, "Metto da parte data/%s come %s, fuori dal pacchetto dei dati.", name, rel);
+    name[0] = 0;
+    (void)len;
+}
+
+/* The same image as another disk of the box: usually the same disk inserted
+ * twice. Its reads are set aside, never deleted, and it goes back to be read
+ * from zero, so the right disk is not compared with the wrong reads; the
+ * status says whose duplicate it was, also if the box is closed without it */
+static void check_twin(run_ctx *r, meta_disk *d)
+{
+    char who[32], other[32], file[128];
+    int t = session_twin(r->cfg->box, d), i, k = 0;
+    if (!t) { d->duplicate_of = 0; return; }
+    name_of(r->cfg->box, d->n, who, sizeof(who));
+    name_of(r->cfg->box, t, other, sizeof(other));
+    /* read again and still the same: the two disks really are identical */
+    if (d->duplicate_of == t) {
+        ev(r, EV_LINE, d->n, "Il %s e' di nuovo identico al %s: lo tengo, i due dischi sono davvero uguali.",
+           who, other);
+        d->duplicate_of = 0;
+        return;
+    }
+    ev(r, EV_LINE, d->n, "ATTENZIONE: il %s e' identico al %s (stessa impronta SHA-256): e' lo stesso disco "
+                         "inserito due volte? Il %s resta da leggere: inserisci quello giusto. Se i due "
+                         "dischi sono davvero uguali, rileggilo: alla seconda volta lo tengo.", who, other, who);
+    for (i = 0; i < d->nreads; i++) {
+        CP(file, d->reads[i].file);
+        aside_dup(r, d, file, sizeof(file));
+        if (file[0]) d->reads[k++] = d->reads[i];       /* could not be moved: it stays recorded */
+    }
+    d->nreads = k;
+    aside_dup(r, d, d->scan, sizeof(d->scan));
+    aside_dup(r, d, d->report, sizeof(d->report));
+    CP(d->master, k ? d->reads[0].file : "");
+    d->verdict[0] = 0;
+    d->agree = d->unstable_tracks = 0;
+    d->duplicate_of = t;
+    CP(d->status, "duplicato");
 }
 
 enum { DISK_NEXT, DISK_QUIT, DISK_FINISH, DISK_FAIL };
@@ -728,7 +768,7 @@ static int ask_and_do(run_ctx *r, meta_disk *d, int *cmd, char *bye, size_t blen
         snprintf(bye, blen, "Il cofanetto resta aperto: dopo aver sistemato %s, "
                             "riparti con lo stesso titolo.", tool ? tool : "il programma di lettura");
         return DISK_QUIT;
-    } else tell_twin(r, d);
+    } else check_twin(r, d);
     csv_row(r, d);
     if (save(r)) return DISK_FAIL;
     host->event(host->ctx, EV_DISK_DONE, d->n, d->status);
@@ -739,7 +779,8 @@ static int ask_and_do(run_ctx *r, meta_disk *d, int *cmd, char *bye, size_t blen
 static int retry_wanted(const run_ctx *r, const meta_disk *d, int cmd)
 {
     return r->host->ask_again && cmd == CMD_READ
-        && (!strcmp(d->status, "lettura fallita") || !strcmp(d->status, "interrotto"));
+        && (!strcmp(d->status, "lettura fallita") || !strcmp(d->status, "interrotto")
+            || !strcmp(d->status, "duplicato"));
 }
 
 /* after a read: did the user ask to stop? */

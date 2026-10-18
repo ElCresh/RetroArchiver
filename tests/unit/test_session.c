@@ -56,7 +56,7 @@ static int g_read(const char *o, runner_line_fn fn, void *c)
 {
     (void)fn; (void)c;
     if (runner_stopped()) return 1;
-    put(o, 500);
+    put(o, 500 + asked);         /* each disk its own image: not a duplicate */
     return 0;
 }
 static int g_cmp(const char *const *i, int n, int f, compare_result *r)
@@ -103,7 +103,7 @@ static void cancel_in_compare(int ask_again, const char *title)
 /* mixed box: the floppies are read, the CD is asked for but stays to be read */
 static disk_turn turns[8];
 static int nturns, cd_cmd;
-static int m_read(const char *o, runner_line_fn fn, void *c) { (void)fn; (void)c; put(o, 700); return 0; }
+static int m_read(const char *o, runner_line_fn fn, void *c) { (void)fn; (void)c; put(o, 700 + nturns); return 0; }
 static int m_cmp(const char *const *i, int n, int f, compare_result *r) { (void)i; (void)n; (void)f; (void)r; return 0; }
 static int m_wait(void *c, const disk_turn *t, char *l, size_t ll, char *no, size_t nl)
 {
@@ -156,9 +156,11 @@ static void mixed_box(void)
     meta_delete(box);
 }
 
-/* the same disk inserted twice: floppy 3 gives the same image as floppy 1;
- * the session says so in the log and deletes nothing */
-static int twin_disk, twin_lines, twin_line_disk;
+/* the same disk inserted twice: floppy 3 gives the same image as floppy 1.
+ * Its reads are set aside (never deleted) and it is asked for again; the
+ * right disk, read on resume, closes the box. Read identical twice in a
+ * row, it is kept: the two disks really are the same */
+static int twin_disk, twin_lines, twin_line_disk, twin_right;
 static void t_put(const char *p, int n, int c)
 {
     FILE *f = u8_fopen(p, "wb");
@@ -167,7 +169,7 @@ static void t_put(const char *p, int n, int c)
 static int t_read(const char *o, runner_line_fn fn, void *c)
 {
     (void)fn; (void)c;
-    t_put(o, 600, twin_disk == 2 ? 'b' : 'a');
+    t_put(o, 600, twin_disk == 2 ? 'b' : twin_disk == 3 && twin_right ? 'c' : 'a');
     return 0;
 }
 static void t_event(void *c, event_kind k, int d, const char *t)
@@ -182,29 +184,56 @@ static int t_wait(void *c, const disk_turn *t, char *l, size_t ll, char *no, siz
     return CMD_READ;
 }
 
+static void twin_cfg(meta_box *box, const char *title, session_host *h, session_cfg *c, const media_ops *m)
+{
+    str_copy(box->title, sizeof(box->title), title);
+    str_copy(box->platform, sizeof(box->platform), "X");
+    meta_set_counts(box, 3, 0, 0);
+    memset(h, 0, sizeof(*h));
+    h->event = t_event; h->wait_disk = t_wait;
+    memset(c, 0, sizeof(*c));
+    c->box = box; c->outroot = "tmp_unit/sess"; c->maxread = 2; c->start = 1;
+    c->media[MEDIA_FLOPPY] = m;
+}
+
 static void twin_box(void)
 {
     media_ops m = { "floppy", ".dsk", NULL, f_scan, t_read, m_cmp, f_tech };
     session_host h; session_cfg c; meta_box *box = meta_new();
-    char p[256];
+    char bag[256], p[300];
 
-    str_copy(box->title, sizeof(box->title), "Doppione");
-    str_copy(box->platform, sizeof(box->platform), "X");
-    meta_set_counts(box, 3, 0, 0);
-    memset(&h, 0, sizeof(h));
-    h.event = t_event; h.wait_disk = t_wait;
-    memset(&c, 0, sizeof(c));
-    c.box = box; c.outroot = "tmp_unit/sess"; c.maxread = 2; c.start = 1;
-    c.media[MEDIA_FLOPPY] = &m;
-    twin_lines = twin_line_disk = 0;
-    CHECK(session_run(&c, &h) == SESSION_CLOSED);
+    twin_cfg(box, "Doppione", &h, &c, &m);
+    twin_lines = twin_line_disk = twin_right = 0;
+    CHECK(session_run(&c, &h) == SESSION_OPEN);     /* floppy 3 still to be read */
     CHECK(twin_lines == 1 && twin_line_disk == 3);
-    CHECK(session_twin(box, &box->disk[2]) == 1);
-    CHECK(session_twin(box, &box->disk[0]) == 3);
-    CHECK(session_twin(box, &box->disk[1]) == 0);
-    session_bagdir(p, sizeof(p), "tmp_unit/sess", "Doppione");
-    strcat(p, U8_SEP "data" U8_SEP "FLOPPY03.dsk");
-    CHECK(u8_exists(p));                    /* kept */
+    CHECK_STR(box->disk[2].status, "duplicato");
+    CHECK(box->disk[2].duplicate_of == 1 && box->disk[2].nreads == 0 && !box->disk[2].master[0]);
+    CHECK(!meta_disk_done(&box->disk[2]));
+    CHECK(session_twin(box, &box->disk[0]) == 0);
+    session_bagdir(bag, sizeof(bag), "tmp_unit/sess", "Doppione");
+    snprintf(p, sizeof(p), "%s" U8_SEP "data" U8_SEP "FLOPPY03.dsk", bag);
+    CHECK(!u8_exists(p));
+    snprintf(p, sizeof(p), "%s" U8_SEP SESSION_ASIDE_DIR U8_SEP "FLOPPY03.dsk.duplicato", bag);
+    CHECK(u8_exists(p));                    /* set aside, not deleted */
+
+    /* resumed with the right disk: read from zero, the box closes */
+    twin_right = 1;
+    meta_set_counts(box, 3, 0, 0);
+    CHECK(session_run(&c, &h) == SESSION_CLOSED);
+    CHECK_STR(box->disk[2].status, "pulito");
+    CHECK(box->disk[2].duplicate_of == 0 && box->disk[2].nreads == 1);
+    CHECK(u8_exists(p));
+    meta_delete(box);
+
+    /* really identical: Rileggi (ask_again) and the same image again is kept */
+    box = meta_new();
+    twin_cfg(box, "Gemelli", &h, &c, &m);
+    h.ask_again = 1;
+    twin_lines = twin_right = 0;
+    CHECK(session_run(&c, &h) == SESSION_CLOSED);
+    CHECK(twin_lines == 2);
+    CHECK_STR(box->disk[2].status, "pulito");
+    CHECK(box->disk[2].duplicate_of == 0 && session_twin(box, &box->disk[2]) == 1);
     meta_delete(box);
 }
 

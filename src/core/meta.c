@@ -176,6 +176,8 @@ static void write_disk(json_writer *w, const meta_disk *d, const char *datadir,
     jw_str(w, "label", d->label);
     jw_str(w, "note", d->note);
     jw_str(w, "status", d->status[0] ? d->status : "da leggere");
+    /* only when there is one: older readers do not know the field */
+    if (d->duplicate_of > 0) jw_int(w, "duplicate_of", d->duplicate_of);
     opt(w, "master", d->master);
     opt(w, "scan", d->scan);
     jw_begin_arr(w, "reads");
@@ -287,6 +289,7 @@ static void load_disk(meta_box *b, const jval *e)
     CP(d->note, json_str(e, "note"));
     CP(d->status, json_str(e, "status"));
     if (!strcmp(d->status, "da leggere")) d->status[0] = 0;
+    d->duplicate_of = (int)json_int(e, "duplicate_of", 0);     /* absent in older boxes */
     CP(d->master, json_str(e, "master"));
     CP(d->scan, json_str(e, "scan"));
     r = json_get(e, "reads");

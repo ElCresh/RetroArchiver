@@ -177,13 +177,14 @@ b = bag("Ripreso")
 ok("resume: first part left open", rc == 1, out)
 with open(os.path.join(b, "data", "disco02_b.dsk"), "w") as f:
     f.write("resto di un'interruzione")
-rc, out = run("Ripreso", 2, ["ident_a", "ident_b"], [""])
+# disk 2 is another disk: another image, or it would be a duplicate of disk 1
+rc, out = run("Ripreso", 2, ["good_2", "good_2"], [""])
 ok("resume: closed and valid", rc == 0 and check_bag.check(b, PROFILE) == [], out)
 ok("resume: orphan removed with a warning", "Tolgo data/disco02_b.dsk" in out, out)
 ok("resume: both disks clean", [d["status"] for d in meta(b)["media"]] == ["pulito", "pulito"])
 ok("resume: images intact",
    sha(os.path.join(b, "data", "disco01.dsk")) == sha(os.path.join(FIX, "ident_a.dsk")) and
-   sha(os.path.join(b, "data", "disco02.dsk")) == sha(os.path.join(FIX, "ident_a.dsk")))
+   sha(os.path.join(b, "data", "disco02.dsk")) == sha(os.path.join(FIX, "good_2.dsk")))
 
 # 6. title with an accent and characters forbidden in folder names
 title = "Citt\u00e0: parte 1/2"
@@ -266,7 +267,8 @@ ok("different title, same folder: the first stays open and intact",
    os.path.exists(os.path.join(b, ".in-corso"))
    and open(os.path.join(b, "data", "metadata.json"), "rb").read() == before
    and meta(b)["box"]["title"] == "Prova: A", out)
-rc, out = run("Prova: A", 3, ["ident_a", "ident_b"], [""])
+# (each disk of a box gets its own image: the same one would be a duplicate)
+rc, out = run("Prova: A", 3, ["good_2", "good_2"], [""])
 ok("different number of disks: the saved one wins, with a warning",
    rc == 0 and "aperto con 2 floppy: continuo con 2 floppy" in out
    and meta(b)["box"]["media_expected"] == 2, out)
@@ -280,7 +282,7 @@ with open(img, "r+b") as f:
     c = f.read(1)
     f.seek(1000)
     f.write(bytes([c[0] ^ 0xFF]))
-rc, out = run("Impronta", 2, ["ident_a", "ident_b"], [""])
+rc, out = run("Impronta", 2, ["good_2", "good_2"], [""])
 d1 = meta(b)["media"][0]
 ok("changed hash: stays open and says to read disk 1 again",
    rc == 1 and "rileggi il floppy 1" in out and os.path.exists(os.path.join(b, ".in-corso")), out)
@@ -456,7 +458,7 @@ with open(mp, encoding="utf-8") as f:
 m["media"][0]["status"] = "interrotto"      # as after a Ctrl+C on the second read
 with open(mp, "w", encoding="utf-8") as f:
     json.dump(m, f)
-rc, out = run("Salto interrotto", 2, ["ident_a", "ident_b"], ["S", ""])
+rc, out = run("Salto interrotto", 2, ["good_2", "good_2"], ["S", ""])
 m = meta(b)
 ok("skip an interrupted disk: disk 2 is asked for and read",
    "Inserisci il floppy 2" in out and m["media"][1]["status"] == "pulito"
@@ -492,7 +494,7 @@ ok("-r and Skip: disk 2 is read, disk 1 stays missing",
    and [d["status"] for d in m["media"]] == ["mancante", "pulito"], json.dumps(m["media"]) + "\n" + out)
 
 # 27. mixed box: three floppies with the fake SAMdisk, then Q on the CD's turn
-rc, out = run("Windows NT Workstation 4.0", 3, ["ident_a", "ident_b"] * 3,
+rc, out = run("Windows NT Workstation 4.0", 3, ["ident_a", "ident_b", "good_2", "good_2", "good_3", "good_3"],
               ["Setup Disk 1", "Setup Disk 2", "Setup Disk 3", "Q"],
               ["-C", "1", "-P", "Windows NT"], tpl=None)
 b = bag("Windows NT Workstation 4.0")
@@ -696,7 +698,7 @@ for d in m["media"]:
 with open(mp, "w", encoding="utf-8") as f:
     json.dump(m, f, indent=2)
 first = sha(os.path.join(b, "data", "DISK001.dsk"))
-rc, out = run("Vecchio", 3, ["ident_a", "ident_b"] * 2, ["", ""], tpl=None)
+rc, out = run("Vecchio", 3, ["good_2", "good_2", "good_3", "good_3"], ["", ""], tpl=None)
 m = meta(b)
 ok("old box resumed: closed and valid", rc == 0 and check_bag.check(b, PROFILE) == [], out)
 ok("old box resumed: the new floppies with the old naming scheme",
@@ -710,12 +712,34 @@ ok("old box resumed: the earlier read intact, new schema",
 rc, out = run("Tutte", 1, ["ident_a", "ident_b"], [""], ["-k"])
 ok("-k: second read kept", "disco01_b.dsk" in data_files(bag("Tutte")), out)
 
-# 29. the same disk inserted twice: floppy 3 gives the same image as floppy 1
+# 29. the same disk inserted twice: floppy 3 gives the same image as floppy 1.
+# Its reads are set aside, it stays to be read, and on resume the right one closes the box
 rc, out = run("Doppione", 3, ["ident_a", "ident_a", "fat_144", "fat_144", "ident_a", "ident_a"], ["", "", ""])
 b = bag("Doppione")
-ok("same disk twice: closed, nothing deleted", rc == 0 and "disco03.dsk" in data_files(b), out)
+d3 = meta(b)["media"][2]
 ok("same disk twice: the log says floppy 3 is identical to floppy 1",
    "il floppy 3 e' identico al floppy 1" in out and "il floppy 2 e' identico" not in out, out)
+ok("same disk twice: box open, floppy 3 duplicate of floppy 1 with no reads",
+   rc == 1 and d3["status"] == "duplicato" and d3.get("duplicate_of") == 1
+   and d3["reads"] == [] and d3["master"] is None, json.dumps(d3) + "\n" + out)
+dup = os.path.join(b, "messi-da-parte", "disco03.dsk.duplicato")
+ok("same disk twice: the reads set aside outside data/, not deleted",
+   os.path.exists(dup) and "disco03.dsk" not in data_files(b)
+   and sha(dup) == sha(os.path.join(FIX, "ident_a.dsk")), str(data_files(b)))
+rc, out = run("Doppione", 3, ["good_3", "good_3"], [""])
+d3 = meta(b)["media"][2]
+ok("same disk twice: on resume floppy 3 is asked for and read from zero",
+   rc == 0 and "Inserisci il floppy 3" in out and d3["status"] == "pulito" and "duplicate_of" not in d3
+   and len(d3["reads"]) == 1 and sha(os.path.join(b, "data", "disco03.dsk")) == sha(os.path.join(FIX, "good_3.dsk"))
+   and check_bag.check(b, PROFILE) == [], json.dumps(d3) + "\n" + out)
+ok("same disk twice: the duplicate stays among the files set aside",
+   os.path.exists(dup) and "disco03.dsk.duplicato" in out, out)
+# with -r the right disk is asked for at once
+rc, out = run("Doppione subito", 2, ["ident_a", "ident_a", "ident_a", "ident_a", "good_2", "good_2"],
+              ["", "", ""], ["-r"])
+ok("same disk twice with -r: floppy 2 asked again at once, the box closes",
+   rc == 0 and out.count("Inserisci il floppy 2") == 2
+   and [d["status"] for d in meta(bag("Doppione subito"))["media"]] == ["pulito", "pulito"], out)
 
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))

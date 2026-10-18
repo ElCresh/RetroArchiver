@@ -78,7 +78,7 @@ enum {
 typedef struct {
     char master[128], label[128], status[24];
     int  nreads, agree;
-    int  twin;                  /* another disk of the box with the same master SHA-256 */
+    int  twin;                  /* duplicate_of: the disk its read was the same as */
 } disk_info;
 
 /* EV_LINE carries a batch of lines separated by '\n': len bytes out of cap */
@@ -319,6 +319,7 @@ static void copy_disk(disk_info *o, const meta_disk *d)
     str_copy(o->status, sizeof(o->status), d->status);
     o->nreads = d->nreads;
     o->agree = d->agree;
+    o->twin = d->duplicate_of;
 }
 
 /* called with g_qlock held */
@@ -365,7 +366,7 @@ static void host_event(void *ctx, event_kind k, int disk, const char *text)
     /* here, on the worker thread, g_box can be read safely */
     if (k == EV_DISK_DONE && g_box) {
         meta_disk *d = meta_disk_get(g_box, disk);
-        if (d) { copy_disk(&e->info, d); e->info.twin = session_twin(g_box, d); }
+        if (d) copy_disk(&e->info, d);
     }
     EnterCriticalSection(&g_qlock);
     queue_push(e);
@@ -2736,11 +2737,14 @@ static void list_row(int n)
     disk_name(n, w, 200);
     it.pszText = w;
     it.iImage = outcome(&g_disk[n], w + 100, 100);
-    if (g_disk[n].twin) {       /* probably the same disk inserted twice: nothing was deleted */
-        wchar_t who[32], t[100];
+    /* the same image as another disk: its reads are set aside, to read again
+     * (or skipped, closed without it: the reason stays visible) */
+    if (g_disk[n].twin && (!strcmp(g_disk[n].status, "duplicato") || !strcmp(g_disk[n].status, "mancante"))) {
+        wchar_t who[32];
         slot_name(g_disk[n].twin, 0, who, 32);
-        _snwprintf(t, 100, L"%ls, uguale al %ls?", w + 100, who); t[99] = 0;
-        wcscpy(w + 100, t);
+        if (!strcmp(g_disk[n].status, "duplicato")) _snwprintf(w + 100, 100, L"duplicato del %ls", who);
+        else _snwprintf(w + 100, 100, L"saltato: era un duplicato del %ls", who);
+        w[199] = 0;
         it.iImage = DOT_OCHRE;
     }
     SendMessageW(g_list, LVM_SETITEMW, 0, (LPARAM)&it);
@@ -2851,7 +2855,6 @@ static void seed_previous(void)
             const meta_disk *d = &b->disk[i];
             if (d->n < 1 || d->n > META_MAXDISK) continue;
             copy_disk(&g_disk[d->n], d);
-            g_disk[d->n].twin = meta_disk_done(d) ? session_twin(b, d) : 0;
             /* the disks to redo are asked for again: for now they are "da leggere" */
             if (!meta_disk_done(d)) g_disk[d->n].status[0] = 0;
         }
@@ -4100,6 +4103,8 @@ static void on_disk_done(const gui_event *e, const wchar_t *t)
     g_phase_name[0] = 0;        /* between one disk and the next no phase is running */
     if (n >= 1 && n <= META_MAXDISK) {
         g_disk[n] = e->info;
+        /* the serial number read before was the wrong disk's */
+        if (!strcmp(g_disk[n].status, "duplicato")) memset(&g_vol[n], 0, sizeof(g_vol[n]));
         list_row(n);
     }
     pills_done();
@@ -4211,7 +4216,8 @@ static void wait_unreadable(const disk_turn *t)
     banner(B_BLUE, NULL, ICON_DISC, w, text);
 }
 
-/* the turn being waited for is a retry: 0 no, 1 failed read, 2 interrupted */
+/* the turn being waited for is a retry: 0 no, 1 failed read, 2 interrupted,
+ * 3 duplicate of another disk */
 static int g_retry;
 
 /* the yellow banner while waiting, or the orange one of a retry */
@@ -4223,6 +4229,23 @@ static void wait_banner(void)
     int autom = g_auto_state != AUTO_OFF, again = g_turn.kind == MEDIA_FLOPPY ? g_fd_used : g_opt_used;
     if (!g_turn.readable) {
         wait_unreadable(&g_turn);
+    } else if (g_retry == 3) {
+        wchar_t who[32], other[32], text[400];
+        const wchar_t *what = g_turn.kind == MEDIA_FLOPPY ? L"dischetto" : L"disco";
+        int t = g_cur >= 1 && g_cur <= META_MAXDISK ? g_disk[g_cur].twin : 0;
+        slot_name(g_cur, 0, who, 32);
+        if (t) slot_name(t, 0, other, 32); else wcscpy(other, L"un altro disco");
+        _snwprintf(w, 160, L"Il %ls è identico al %ls", who, other); w[159] = 0;
+        _snwprintf(text, 400, autom
+                   ? L"Togli il %ls e inserisci il %ls giusto: riparto da solo. Oppure Rileggi (F5) o Salta "
+                     L"(Alt+S). Le letture sbagliate sono in messi-da-parte, non cancellate; se i due dischi sono "
+                     L"davvero uguali, rileggilo: alla seconda volta lo tengo."
+                   : L"Togli il %ls, inserisci il %ls giusto e premi Rileggi (F5), oppure Salta (Alt+S). Le letture "
+                     L"sbagliate sono in messi-da-parte, non cancellate; se i due dischi sono davvero uguali, "
+                     L"rileggilo: alla seconda volta lo tengo.", what, who);
+        text[399] = 0;
+        if (g_turn.kind == MEDIA_FLOPPY) banner(B_ORANGE, L"!", 0, w, text);
+        else banner(B_ORANGE, NULL, ICON_DISC, w, text);
     } else if (retry) {
         _snwprintf(w, 160, L"%ls %d: lettura %ls", kind_cap[g_turn.kind], g_turn.num,
                    !strcmp(last, "interrotto") ? L"interrotta" : L"non riuscita");
@@ -4290,7 +4313,7 @@ static void on_wait(void)
     int n = g_turn_in.n, total = g_turn_in.total;
     const char *last = (n >= 1 && n <= META_MAXDISK) ? g_disk[n].status : "";
     int retry = (n == g_last_done) &&
-                (!strcmp(last, "lettura fallita") || !strcmp(last, "interrotto"));
+                (!strcmp(last, "lettura fallita") || !strcmp(last, "interrotto") || !strcmp(last, "duplicato"));
 
     /* close confirmed between the check in host_wait and the PostMessage:
      * answer at once, the core's label and note stay */
@@ -4298,11 +4321,11 @@ static void on_wait(void)
     g_turn = g_turn_in;
     if (total > 0 && total != g_total) { g_total = total; list_rebuild(); box_progress(); }
     g_cur = n;
-    g_retry = !retry ? 0 : !strcmp(last, "interrotto") ? 2 : 1;
+    g_retry = !retry ? 0 : !strcmp(last, "interrotto") ? 2 : !strcmp(last, "duplicato") ? 3 : 1;
     /* Salta is the Enter button when Leggi is absent */
     SendDlgItemMessageW(g_wnd, ID_READ, BM_SETSTYLE, g_turn.readable ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON, TRUE);
     SendDlgItemMessageW(g_wnd, ID_SKIP, BM_SETSTYLE, g_turn.readable ? BS_PUSHBUTTON : BS_DEFPUSHBUTTON, TRUE);
-    SetDlgItemTextW(g_wnd, ID_READ, retry ? L"Riprova" : L"Leggi");
+    SetDlgItemTextW(g_wnd, ID_READ, g_retry == 3 ? L"Rileggi" : retry ? L"Riprova" : L"Leggi");
     /* what the core already has; on retry, what was typed stays */
     to_w(g_label_u8, lab, 128);
     if (lab[0] || !retry) SetWindowTextW(g_label, lab);

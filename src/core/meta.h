@@ -31,6 +31,7 @@ typedef struct {
     meta_read reads[META_MAXREAD];
     char verdict[16];        /* verdict_name() or "" */
     int  agree, unstable_tracks;
+    int  duplicate_of;       /* the read was the same as this disk's: set aside, to read again */
 } meta_disk;
 
 typedef struct {
