@@ -10,11 +10,19 @@
  *                     (cd_good, cd_noise, cd_c2, dvd_good), or FAIL
  *                     (error), WRONG (disc of the other type) or
  *                     SLOW folder (5 seconds first) or EXITn folder
- *                     (complete read but exit code n); without a script
+ *                     (complete read but exit code n), RESETSn folder (n
+ *                     drive resets first, then the folder or FAIL); without a script
  *                     cd_good or dvd_good
  *   FAKE_DIC_NODRIVE  if defined, "ls" fails as with a wrong drive
  *   FAKE_DIC_PACE     milliseconds to pause after each line printed (the
  *                     window can be seen reading, for screenshots)
+ *   FAKE_DIC_ASK_OFFSET  if defined, the drive is not in driveOffset.txt: a
+ *                     CD read asks for the offset on the input and reads it
+ *                     as DIC 20260101 does (scanf, then a character): with
+ *                     NUL it fails with "GetLastError: 6"
+ *   FAKE_DIC_LOG      file where each read appends one line: "cd sf" or
+ *                     "cd nosf", then "offset N", "offset failed" or
+ *                     "offset none" (not asked)
  *
  * The position in the script is kept in SCRIPT.pos, as in the fake SAMdisk. */
 #include <stdio.h>
@@ -159,24 +167,75 @@ static void replay(const char *src_dir, const char *base)
     fclose(f);
 }
 
-static int dump(int dvd, const char *file)
+/* GetDriveOffsetManually of DIC 20260101: the same scanf and getchar */
+static int ask_offset(int *v)
 {
-    char line[256], dir[1024], base[256], src[1024], p[1400];
+    char buf[8] = "";
+    printf("This drive doesn't define in driveOffset.txt\n"
+           "Please input drive offset(Samples): ");
+    fflush(stdout);
+    if (!scanf("%6[^\n]%*[^\n]", buf) || getchar() == EOF) {
+        printf("[F:GetDriveOffsetManually][L:1234] GetLastError: 6, The handle is invalid.\n\n");
+        return 0;
+    }
+    *v = atoi(buf);
+    return 1;
+}
+
+/* FAKE_DIC_LOG: how the read was asked for */
+static void log_read(int dvd, int sf, const char *off)
+{
+    const char *p = getenv("FAKE_DIC_LOG"); FILE *f;
+    if (!p || !(f = fopen(p, "a"))) return;
+    fprintf(f, "%s %s offset %s\n", dvd ? "dvd" : "cd", sf ? "sf" : "nosf", off);
+    fclose(f);
+}
+
+static int dump(int dvd, const char *file, int sf)
+{
+    char line[256], dir[1024], base[256], src[1024], p[1400], off[16] = "none";
     const char *script = getenv("FAKE_DIC_SCRIPT"), *fix = getenv("FAKE_DIC_DIR");
     const char *what = dvd ? "dvd_good" : "cd_good";
-    int code = 0;
+    int code = 0, asked = 0, have_offset = 0;
     FILE *f;
 
     split(file, dir, sizeof(dir), base, sizeof(base));
     version();
     printf("CurrentDirectory\n\t%s\nWorkingPath\n\t Argument: %s\n", dir, file);
+    /* like the real one, the logs exist even when the read fails; the
+     * drive is known before the offset question */
+    snprintf(p, sizeof(p), "%s/%s_drive.txt", dir, base);
+    if ((f = fopen(p, "w")) != NULL) {
+        fputs("========== InquiryData ==========\n\t            VendorId: ASUS\n"
+              "\t           ProductId: DRW-08D6MT\n\tProductRevisionLevel: 1.00\n", f);
+        fclose(f);
+    }
+    if (getenv("FAKE_DIC_ASK_OFFSET") && !dvd) {
+        if (!ask_offset(&asked)) { log_read(dvd, sf, "failed"); return 1; }
+        snprintf(off, sizeof(off), "%d", asked);
+        have_offset = 1;
+    }
+    log_read(dvd, sf, off);
     if (script) {
         if (next_line(script, line, sizeof(line))) { printf("fake_dic: script finished\n"); return 1; }
         what = line;
     }
-    /* like the real one, the logs exist even when the read fails */
-    snprintf(p, sizeof(p), "%s/%s_drive.txt", dir, base);
-    if ((f = fopen(p, "w")) != NULL) { fputs("========== InquiryData ==========\n", f); fclose(f); }
+    /* "RESETS3 cd_good": the drive resets itself 3 times, as seen on the PC
+     * with /sf; with /sf and 3 or more, RetroArchiver must stop it */
+    if (!strncmp(what, "RESETS", 6)) {
+        const char *sp = strchr(what, ' ');
+        int i, n = atoi(what + 6);
+        for (i = 0; i < n; i++) {
+            printf("LBA[000016, 0x00010]: [F:ReadCDForCheckingExe][L:1712]\n\tOpcode: 0xa8\n"
+                   "[F:ExecSptiCmd][L:247] GetLastError: 121, The semaphore timeout period has expired.\n"
+                   "\tScsiStatus: 0x02 = CHECK_CONDITION\n"
+                   "\tSenseData Key-Asc-Ascq: 06-29-00 = UNIT_ATTENTION - POWER ON, RESET, OR BUS DEVICE RESET OCCURRED\n"
+                   "Please wait for 40000 milliseconds until the device is returned\n");
+            fflush(stdout);
+        }
+        if (sf && n >= 3) { printf("fake_dic: still resetting\n"); fflush(stdout); sleep5(); sleep5(); }
+        what = sp ? sp + 1 : (dvd ? "dvd_good" : "cd_good");
+    }
     if (!strcmp(what, "FAIL")) {
         printf("LBA[000000, 0000000]: [F:ReadCDForCheckingReadInOut][L:1022]\n"
                "\tOpcode: 0xbe\n\tScsiStatus: 0x02 = CHECK_CONDITION\n"
@@ -202,6 +261,14 @@ static int dump(int dvd, const char *file)
     snprintf(src, sizeof(src), "%s/%s", fix ? fix : "fixtures/dic", what);
     if (copy_dir(src, dir, base)) { printf("fake_dic: cannot copy %s to %s\n", src, dir); return 1; }
     replay(src, base);
+    /* DIC writes the offset it used in _disc.txt */
+    if (have_offset) {
+        snprintf(p, sizeof(p), "%s/%s_disc.txt", dir, base);
+        if ((f = fopen(p, "a")) != NULL) {
+            fprintf(f, "\t-         Drive Offset(Byte) %6d, (Samples) %5d\n", asked * 4, asked);
+            fclose(f);
+        }
+    }
     if (code) printf("LBA[123456, 0x1e240]: [F:ReadCDForCheckingReadInOut][L:999] Read error (simulated)\n");
     return code;
 }
@@ -233,7 +300,11 @@ int main(int argc, char **argv)
         return 0;
     }
     if (argc >= 5 && (!strcmp(argv[1], "cd") || !strcmp(argv[1], "dvd")))
-        return dump(!strcmp(argv[1], "dvd"), argv[3]);
+    {
+        int i, sf = 0;
+        for (i = 5; i < argc; i++) if (!strcmp(argv[i], "/sf")) sf = 1;
+        return dump(!strcmp(argv[1], "dvd"), argv[3], sf);
+    }
     printf("fake_dic: unexpected command\n");
     return 2;
 }

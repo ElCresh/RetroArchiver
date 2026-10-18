@@ -31,6 +31,13 @@
 /* an outcome as 261017 wrote it ("pulito"...) in English; others unchanged */
 const char *meta_status_english(const char *s);
 
+/* the copy protection scan of the CDs (DiscImageCreator /sf), a choice of
+ * the box: the files on the disc decide (auto), always, never */
+enum { META_PROT_AUTO, META_PROT_ON, META_PROT_OFF };
+/* "auto" "on" "off", as in metadata.json and on the command line */
+const char *meta_prot_key(int mode);
+int  meta_prot_parse(const char *key);          /* -1 if unknown */
+
 /* the media types of a box, in the order they are asked for */
 enum { MEDIA_FLOPPY, MEDIA_CD, MEDIA_DVD, MEDIA_KINDS };
 
@@ -53,6 +60,10 @@ typedef struct {
     char verdict[16];        /* verdict_name() or "" */
     int  agree, unstable_tracks;
     int  duplicate_of;       /* the read was the same as this disk's: set aside, to read again */
+    /* META_PROT_ON or _OFF: this disk is read with or without the protection
+     * scan whatever the box says (the safety net: a read without it failed
+     * or had errors; with it the drive reset itself); 0 follows the box */
+    int  copy_protection;
 } meta_disk;
 
 typedef struct {
@@ -61,6 +72,7 @@ typedef struct {
     int  count[MEDIA_KINDS];        /* composition: 3 floppies, 1 CD */
     int  media_expected;            /* all the media: meta_set_counts */
     char names[MEDIA_KINDS][64];    /* naming scheme per type, "" = not decided */
+    int  copy_protection;           /* META_PROT_..., auto in boxes made before it */
     char started[20], closed[20];   /* "" = not yet */
     int  ndisk;
     meta_disk disk[META_MAXDISK];   /* in order of n */

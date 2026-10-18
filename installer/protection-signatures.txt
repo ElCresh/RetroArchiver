@@ -1,0 +1,40 @@
+# RetroArchiver: files that tell that a CD has a copy protection.
+#
+# Before reading a CD with "Copy protection: Automatic", RetroArchiver looks
+# at the files on the disc: if one of these is there, DiscImageCreator reads
+# it with /sf (it looks for the protection and does not insist on its
+# intentional errors). Without them the read goes without /sf.
+#
+# One per line: the name (upper or lower case does not matter), then the
+# protection. "*" at the start: any name with that ending. "/" at the end:
+# a folder. Lines starting with # are comments.
+#
+# Source: BinaryObjectScanner (SabreTools), the file and folder names it
+# checks in Protection/Macrovision.SafeDisc.cs, SecuROM.cs, LaserLok.cs and
+# CDDVDCops.cs. If this file is missing, RetroArchiver uses the same list,
+# built in.
+
+00000001.TMP    SafeDisc
+00000002.TMP    SafeDisc
+CLCD16.DLL      SafeDisc
+CLCD32.DLL      SafeDisc
+CLOKSPL.EXE     SafeDisc
+DPLAYERX.DLL    SafeDisc
+DRVMGT.DLL      SafeDisc
+SECDRV.SYS      SafeDisc
+*.ICD           SafeDisc
+
+CMS16.DLL       SecuROM
+CMS_95.DLL      SecuROM
+CMS_NT.DLL      SecuROM
+CMS32_95.DLL    SecuROM
+CMS32_NT.DLL    SecuROM
+
+LASERLOK.IN     LaserLock
+LASERLOK/       LaserLock
+
+CDCOPS.DLL      CD-Cops
+# the endings of the files CD-Cops encrypts (.GZ_ unconfirmed in the source)
+*.GZ_           CD-Cops
+*.QZ_           CD-Cops
+*.W_X           CD-Cops

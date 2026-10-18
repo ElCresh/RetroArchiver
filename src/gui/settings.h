@@ -41,9 +41,11 @@
 #define KEY_DRIVE      L"Drive"            /* Optical: D: */
 #define KEY_CDNAME     L"CDFileName"       /* Optical: CD{nn} */
 #define KEY_DVDNAME    L"DVDFileName"      /* Optical: DVD{nn} */
+#define KEY_DRIVEOFFSET L"DriveOffset"     /* Optical: the CD drive's read offset in samples, "" = not set */
 #define KEY_ENABLED    L"Enabled"          /* Automatic */
 #define KEY_PLATFORM   L"Platform"         /* Box */
 #define KEY_LANGUAGE   L"Language"         /* Box: the box's language, not the program's */
+#define KEY_COPYPROT   L"CopyProtection"   /* Box: the CD copy protection scan, auto on off */
 
 #define SET_FILE        L"RetroArchiver.ini"
 #define SET_USER_DIR    L"RetroArchiver"     /* inside Application Data */

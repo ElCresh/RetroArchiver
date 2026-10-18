@@ -42,7 +42,7 @@ def ok(desc, cond, extra=""):
             print("       | " + line)
 
 
-def run(title, ndisk, script, keys, extra_args=(), arch=ARCH, tpl="disco{nn}", dic=None, dats=NODAT):
+def run(title, ndisk, script, keys, extra_args=(), arch=ARCH, tpl="disco{nn}", dic=None, dats=NODAT, env_extra=None):
     sfile = os.path.join(WORK, "script.txt")
     with open(sfile, "w") as f:
         f.write("\n".join(script) + "\n")
@@ -58,6 +58,7 @@ def run(title, ndisk, script, keys, extra_args=(), arch=ARCH, tpl="disco{nn}", d
         if os.path.exists(dfile + ".pos"):
             os.remove(dfile + ".pos")
         env["FAKE_DIC_SCRIPT"] = dfile
+    env.update(env_extra or {})
     p = subprocess.run(
         [DSKRUN, str(ndisk), "-t", title, "-o", arch, "-x", FAKE, "-X", FAKE_DIC, "-d", "E:", "-R", dats]
         + (["-p", tpl] if tpl else []) + list(extra_args),
@@ -795,6 +796,159 @@ rc, out = run("Doppione subito", 2, ["ident_a", "ident_a", "ident_a", "ident_a",
 ok("same disk twice with -r: floppy 2 asked again at once, the box closes",
    rc == 0 and out.count("Insert floppy 2") == 2
    and [d["status"] for d in meta(bag("Doppione subito"))["media"]] == ["clean", "clean"], out)
+
+# 30. the copy protection scan (DiscImageCreator /sf): the box chooses, and with
+# auto the files on the disc decide. RETROARCHIVER_DISC_ROOT is the disc's files
+DISC_PLAIN = os.path.join(WORK, "disco-normale")
+DISC_SAFEDISC = os.path.join(WORK, "disco-safedisc")
+os.makedirs(os.path.join(DISC_PLAIN, "SETUP"), exist_ok=True)
+os.makedirs(os.path.join(DISC_SAFEDISC, "GIOCO"), exist_ok=True)
+for path in (os.path.join(DISC_PLAIN, "SETUP", "SETUP.EXE"), os.path.join(DISC_SAFEDISC, "GIOCO", "clcd32.dll"),
+             os.path.join(DISC_SAFEDISC, "00000001.TMP"), os.path.join(DISC_SAFEDISC, "GIOCO", "GIOCO.EXE")):
+    open(path, "wb").close()
+DICLOG = os.path.join(WORK, "dic-log.txt")
+
+
+def dic_log():
+    """the fake DIC's reads, one line each ("cd sf offset none"), and a new log"""
+    if not os.path.exists(DICLOG):
+        return []
+    with open(DICLOG) as f:
+        lines = f.read().splitlines()
+    os.remove(DICLOG)
+    return lines
+
+
+def disc_env(root, **more):
+    env = dict(RETROARCHIVER_DISC_ROOT=root, FAKE_DIC_LOG=DICLOG)
+    env.update(more)
+    return env
+
+
+dic_log()
+rc, out = run("Protezione auto pulito", 0, [], [""], ["-C", "1"], tpl=None, dic=["cd_good", "cd_good"],
+              env_extra=disc_env(DISC_PLAIN))
+m = meta(bag("Protezione auto pulito"))
+cd = m["media"][0]
+ok("protection auto, no signature files: no /sf and the log says so",
+   rc == 0 and dic_log() == ["cd nosf offset none"] * 2
+   and "No copy protection files on the disc" in out, out)
+ok("protection auto, no signature files: the box choice and how the CD was read in the metadata",
+   m["box"].get("copy_protection_scan") == "auto" and "copy_protection_scan" not in cd
+   and cd["disc"].get("copy_protection_scan") == {"choice": "auto", "used": 0, "signature_files": ""}
+   and cd["disc"].get("drive_offset") == "unknown", json.dumps(m["box"]) + json.dumps(cd.get("disc")))
+
+rc, out = run("Protezione auto SafeDisc", 0, [], [""], ["-C", "1"], tpl=None, dic=["cd_good", "cd_good"],
+              env_extra=disc_env(DISC_SAFEDISC))
+cd = meta(bag("Protezione auto SafeDisc"))["media"][0]
+ok("protection auto, SafeDisc files: /sf for both reads",
+   rc == 0 and dic_log() == ["cd sf offset none"] * 2, out)
+ok("protection auto, SafeDisc files: the log names what it found",
+   "Found 00000001.TMP, clcd32.dll (SafeDisc): enabling the protection scan" in out
+   or "Found clcd32.dll, 00000001.TMP (SafeDisc): enabling the protection scan" in out, out)
+scan = cd["disc"].get("copy_protection_scan") or {}
+ok("protection auto, SafeDisc files: in the metadata",
+   scan.get("choice") == "auto" and scan.get("used") == 1 and "clcd32.dll" in scan.get("signature_files", "")
+   and scan["signature_files"].endswith("(SafeDisc)"), json.dumps(cd.get("disc")))
+
+rc, out = run("Protezione attiva", 0, [], [""], ["-C", "1", "--copy-protection=on"], tpl=None,
+              dic=["cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
+m = meta(bag("Protezione attiva"))
+ok("protection on: /sf without signature files, and the choice in the box",
+   rc == 0 and dic_log() == ["cd sf offset none"] * 2 and m["box"]["copy_protection_scan"] == "on"
+   and m["media"][0]["disc"]["copy_protection_scan"] == {"choice": "on", "used": 1, "signature_files": None}
+   and "Copy protection scan on, as chosen" in out, out + json.dumps(m["media"][0].get("disc")))
+
+rc, out = run("Protezione disattiva", 0, [], [""], ["-C", "1", "--copy-protection=off"], tpl=None,
+              dic=["cd_good", "cd_good"], env_extra=disc_env(DISC_SAFEDISC))
+m = meta(bag("Protezione disattiva"))
+ok("protection off: no /sf even with SafeDisc files",
+   rc == 0 and dic_log() == ["cd nosf offset none"] * 2 and m["box"]["copy_protection_scan"] == "off"
+   and "Found" not in out, out)
+
+rc, out = run("Protezione sbagliata", 0, [], [""], ["-C", "1", "--copy-protection=forse"], tpl=None)
+ok("protection: an unknown value gives the usage", rc == 2 and "--copy-protection=auto|on|off" in out, out)
+
+# the safety net: a read without /sf fails, the CD is asked again (with -r) and read with /sf
+rc, out = run("Protezione rete", 0, [], ["", ""], ["-C", "1", "-r"], tpl=None,
+              dic=["FAIL", "cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
+cd = meta(bag("Protezione rete"))["media"][0]
+ok("safety net: after a failed read without /sf the next ones use it",
+   rc == 0 and dic_log() == ["cd nosf offset none", "cd sf offset none", "cd sf offset none"]
+   and "The read of CD 1 without the copy protection scan failed: reading it again looks for protections" in out
+   and "Read CD 1 again, looking for copy protections" in out, out)
+ok("safety net: the disc keeps the scan on, the read says how it was made",
+   cd["status"] == "clean" and cd.get("copy_protection_scan") == "on"
+   and cd["disc"]["copy_protection_scan"]["used"] == 1 and cd["disc"]["copy_protection_scan"]["choice"] == "on",
+   json.dumps(cd))
+# reads with errors: proposed again, Skip keeps what there is
+rc, out = run("Protezione errori", 0, [], ["", "S"], ["-C", "1", "-r"], tpl=None,
+              dic=["cd_c2", "cd_c2"], env_extra=disc_env(DISC_PLAIN))
+cd = meta(bag("Protezione errori"))["media"][0]
+ok("safety net: errors without /sf, proposed again; S keeps the two reads",
+   rc == 0 and dic_log() == ["cd nosf offset none"] * 2
+   and "without the copy protection scan has errors" in out and "S to keep what was read" in out
+   and cd["status"] == "errors" and len(cd["reads"]) == 2, out + json.dumps(cd))
+rc, out = run("Protezione errori ancora", 0, [], ["", ""], ["-C", "1", "-r"], tpl=None,
+              dic=["cd_c2", "cd_c2", "cd_c2"], env_extra=disc_env(DISC_PLAIN))
+ok("safety net: the third read with /sf, then no more asking",
+   rc == 0 and dic_log() == ["cd nosf offset none"] * 2 + ["cd sf offset none"]
+   and out.count("looking for copy protections") == 1, out)
+# chosen off: the net does not turn it on
+rc, out = run("Protezione rete spenta", 0, [], ["", "S"], ["-C", "1", "-r", "--copy-protection=off"], tpl=None,
+              dic=["FAIL", "FAIL"], env_extra=disc_env(DISC_PLAIN))
+ok("safety net: not with the scan chosen off",
+   dic_log() == ["cd nosf offset none"] and "looks for protections" not in out
+   and "Insert CD 1 of 1" in out.split("read-failed")[1], out)
+
+# the drive resets itself with /sf (seen on the PC: UNIT_ATTENTION, timeouts): the read is
+# stopped after 3 resets and the CD read again without the scan
+t0 = time.time()
+rc, out = run("Protezione reset", 0, [], ["", ""], ["-C", "1", "-r", "--copy-protection=on"], tpl=None,
+              dic=["RESETS3 cd_good", "cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
+b = bag("Protezione reset")
+cd = meta(b)["media"][0]
+ok("resets with /sf: stopped at once, the CD read again without it",
+   rc == 0 and dic_log() == ["cd sf offset none", "cd nosf offset none", "cd nosf offset none"]
+   and "The drive was reset 3 times while DiscImageCreator looked for copy protections" in out
+   and "still resetting" in out and time.time() - t0 < 9
+   and "reading it again without it" in out and "without looking for copy protections" in out, out)
+ok("resets with /sf: the disc keeps the scan off, the stopped read set aside",
+   cd["status"] == "clean" and cd.get("copy_protection_scan") == "off"
+   and cd["disc"]["copy_protection_scan"]["used"] == 0
+   and os.path.isdir(os.path.join(b, "set-aside", "CD01.failed")), json.dumps(cd))
+# without /sf: resets are no reason to turn it on
+rc, out = run("Reset senza protezione", 0, [], ["", "S"], ["-C", "1", "-r"], tpl=None,
+              dic=["RESETS2 FAIL"], env_extra=disc_env(DISC_PLAIN))
+ok("resets without /sf: no scan proposed, the log says why",
+   dic_log() == ["cd nosf offset none"] and "the copy protection scan would not help" in out
+   and "looks for protections" not in out and "Insert CD 1 of 1" in out.split("read-failed")[1], out)
+
+# 31. the drive's read offset: DIC asks for it when it does not know the drive
+rc, out = run("Offset mancante", 0, [], ["", "S"], ["-C", "1", "-r"], tpl=None, dic=["cd_good"],
+              env_extra=disc_env(DISC_PLAIN, FAKE_DIC_ASK_OFFSET="1"))
+b = bag("Offset mancante")
+ok("offset not set: the read fails and the log says where to set it, with the model",
+   dic_log() == ["cd nosf offset failed"]
+   and "read offset is not set" in out and "for model ASUS DRW-08D6MT in" in out and "[Optical] DriveOffset" in out
+   and "looks for protections" not in out, out)
+ok("offset not set: DIC's logs set aside", os.path.isdir(os.path.join(b, "set-aside", "CD01.failed")),
+   str(os.listdir(b)))
+rc, out = run("Offset dato", 0, [], [""], ["-C", "1", "--drive-offset=+6"], tpl=None, dic=["cd_good", "cd_good"],
+              env_extra=disc_env(DISC_PLAIN, FAKE_DIC_ASK_OFFSET="1"))
+b = bag("Offset dato")
+cd = meta(b)["media"][0]
+ok("offset set: DIC reads it from its input", rc == 0 and dic_log() == ["cd nosf offset 6"] * 2, out)
+ok("offset set: in the metadata, and the input file is not in the package",
+   cd["disc"].get("drive_offset") == "+6"
+   and not os.path.exists(os.path.join(b, "data", "CD01", "dic-input.txt")), json.dumps(cd.get("disc")))
+rc, out = run("Offset dato senza domanda", 0, [], [""], ["-C", "1", "--drive-offset=-472"], tpl=None,
+              dic=["cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
+cd = meta(bag("Offset dato senza domanda"))["media"][0]
+ok("offset set but not asked: DIC does not read it, the metadata say what was given",
+   rc == 0 and dic_log() == ["cd nosf offset none"] * 2 and cd["disc"].get("drive_offset") == "-472", out)
+rc, out = run("Offset sbagliato", 0, [], [""], ["-C", "1", "--drive-offset=sei"], tpl=None)
+ok("offset: not a number gives the usage", rc == 2 and "--drive-offset=N" in out, out)
 
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))

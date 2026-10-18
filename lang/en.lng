@@ -55,6 +55,11 @@ setup.uilanguage=Program language
 setup.uilanguage.windows=Same as Windows
 setup.sounds=Windows sounds
 setup.auto=Automatic: reads each new disk by itself
+setup.copyprotection=Copy protection
+setup.copyprotection.auto=Automatic
+setup.copyprotection.on=On
+setup.copyprotection.off=Off
+setup.driveoffset.bad=[Optical] DriveOffset in RetroArchiver.ini is "%ls": it must be the drive's read offset in samples, for example +6 or -472 (AccurateRip or redump list). Fix it, or leave it empty.
 setup.archive=Archive
 setup.start=Start
 setup.resuming=Resuming “%ls”: press Start.
@@ -311,6 +316,11 @@ retry.text.floppy.auto=Check the disk and put it back in the drive: it starts by
 retry.text.floppy=Check the disk, put it back in the drive and press Retry (F5), or Skip (Alt+S).
 retry.text.why=%ls\nThen press Retry (F5), or Skip (Alt+S).
 retry.text.disc=Check the disc (the right type, clean), put it back in the drive and press Retry (F5), or Skip (Alt+S).
+retry.protection.title=%ls %d: read it again looking for copy protections
+retry.protection.failed=The read was made without the copy protection scan: Retry (F5) reads it again with the scan (DiscImageCreator /sf), Skip (Alt+S) goes on.
+retry.protection.errors=The read, made without the copy protection scan, has errors: a protection can cause them. Retry (F5) reads it again with the scan (DiscImageCreator /sf); Skip (Alt+S) keeps what was read.
+retry.protection.off.title=%ls %d: read it again without looking for copy protections
+retry.protection.off.text=With the copy protection scan (DiscImageCreator /sf) the drive reset itself (UNIT_ATTENTION, timeouts): the scan is the cause, not the disc. Retry (F5) reads it again without it, Skip (Alt+S) goes on.
 
 # the banners during the read
 start.title=Preparing the box...

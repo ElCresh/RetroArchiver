@@ -382,6 +382,10 @@ Function WriteIni
   !insertmacro INI_IF_MISSING "Floppy" "FileName" "FLOPPY{nn}"
   !insertmacro INI_IF_MISSING "Optical" "CDFileName" "CD{nn}"
   !insertmacro INI_IF_MISSING "Optical" "DVDFileName" "DVD{nn}"
+  ; empty: the CD drive's read offset (samples) for a drive DiscImageCreator
+  ; does not know; written empty so that it is there to fill in
+  !insertmacro INI_IF_MISSING "Optical" "DriveOffset" ""
+  !insertmacro INI_IF_MISSING "Box" "CopyProtection" "auto"
   ; the program's language: the one chosen at the start of this setup, also
   ; in an update (a user's own choice in the window still wins)
   WriteINIStr "$INSTDIR\${INI}" "General" "UILanguage" "$(L_UILANG)"
@@ -535,6 +539,8 @@ Section "RetroArchiver" SEC_RA
   File "${ROOT}/dskrun.exe"
   File "${ROOT}/dskdiff.exe"
   File "${TEXTS}/README.txt"
+  ; the copy protection signature files, read before each CD (Automatic)
+  File "${TEXTS}/protection-signatures.txt"
   ; the window's texts: lang\<code>.lng next to the program
   SetOutPath "$INSTDIR\lang"
   File "${TEXTS}/lang/*.lng"
@@ -783,6 +789,7 @@ Section "Uninstall"
   Delete "$INSTDIR\dskrun.exe"
   Delete "$INSTDIR\dskdiff.exe"
   Delete "$INSTDIR\README.txt"
+  Delete "$INSTDIR\protection-signatures.txt"
   Delete "$INSTDIR\${CHECK_FILE}"
   Delete "$INSTDIR\docs\setup.txt"
   Delete "$INSTDIR\docs\procedure.txt"

@@ -51,6 +51,11 @@ setup.uilanguage=Lingua del programma
 setup.uilanguage.windows=Come Windows
 setup.sounds=Suoni di Windows
 setup.auto=Automatico: legge da solo il disco nuovo
+setup.copyprotection=Protezioni anticopia
+setup.copyprotection.auto=Automatico
+setup.copyprotection.on=Attivo
+setup.copyprotection.off=Disattivo
+setup.driveoffset.bad=In RetroArchiver.ini [Optical] DriveOffset vale «%ls»: deve essere l'offset di lettura del lettore in campioni, per esempio +6 o -472 (elenco di AccurateRip o di redump). Correggilo, oppure lascialo vuoto.
 setup.archive=Archivio
 setup.start=Inizia
 setup.resuming=Riprendo «%ls»: premi Inizia.
@@ -307,6 +312,11 @@ retry.text.floppy.auto=Controlla il dischetto e rimettilo nel lettore: riparto d
 retry.text.floppy=Controlla il dischetto, rimettilo nel lettore e premi Riprova (F5), oppure Salta (Alt+S).
 retry.text.why=%ls\nPoi premi Riprova (F5), oppure Salta (Alt+S).
 retry.text.disc=Controlla il disco (il tipo giusto, pulito), rimettilo nel lettore e premi Riprova (F5), oppure Salta (Alt+S).
+retry.protection.title=%ls %d: rileggerlo cercando le protezioni anticopia
+retry.protection.failed=La lettura è stata fatta senza la ricerca delle protezioni anticopia: Riprova (F5) lo rilegge con la ricerca (DiscImageCreator /sf), Salta (Alt+S) passa oltre.
+retry.protection.errors=La lettura, fatta senza la ricerca delle protezioni anticopia, ha degli errori: una protezione può causarli. Riprova (F5) lo rilegge con la ricerca (DiscImageCreator /sf); Salta (Alt+S) tiene quello che è stato letto.
+retry.protection.off.title=%ls %d: rileggerlo senza cercare le protezioni anticopia
+retry.protection.off.text=Con la ricerca delle protezioni anticopia (DiscImageCreator /sf) il lettore si è resettato più volte (UNIT_ATTENTION, timeout): la causa è la ricerca, non il disco. Riprova (F5) lo rilegge senza, Salta (Alt+S) passa oltre.
 
 # the banners during the read
 start.title=Preparo il cofanetto...

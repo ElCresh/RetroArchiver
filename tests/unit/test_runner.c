@@ -1,6 +1,7 @@
 #include "unit.h"
 #include "core/runner.h"
 #include "core/strbuf.h"
+#include "core/fsu8.h"
 #include <time.h>
 
 typedef struct { char lines[8][64]; int n; } got_lines;
@@ -43,6 +44,40 @@ static void test_capture(void)
     CHECK(!runner_stopped());
 
     CHECK(runner_capture(nope, out, sizeof(out), 1000, &code) == RUNNER_NOSTART);
+}
+
+/* runner_run_tty_input: the program reads the answer from the file, and
+ * after its end it goes on as with NUL (DiscImageCreator's offset question) */
+static void test_input(void)
+{
+    got_lines g; int code = -1; FILE *f;
+#ifdef _WIN32
+    const char *ask[] = { "cmd.exe", "/c", "set /p X=& call echo got [%X%]", NULL };
+#else
+    const char *ask[] = { "sh", "-c", "read x; echo \"got [$x]\"; read y || echo eof", NULL };
+#endif
+    u8_mkdir("tmp_unit");
+    f = fopen("tmp_unit/input.txt", "wb");
+    CHECK(f != NULL);
+    if (!f) return;
+#ifdef _WIN32
+    fputs("+6\r\n", f);
+#else
+    fputs("+6\n", f);
+#endif
+    fclose(f);
+    memset(&g, 0, sizeof(g));
+    CHECK(runner_run_tty_input(ask, "tmp_unit/input.txt", grab, &g, &code) == RUNNER_DONE);
+    CHECK(g.n >= 1 && !strcmp(g.lines[0], "got [+6]"));
+#ifndef _WIN32
+    CHECK(g.n == 2 && !strcmp(g.lines[1], "eof"));
+#endif
+    /* no file: NUL, the question gets nothing */
+    memset(&g, 0, sizeof(g));
+    CHECK(runner_run_tty_input(ask, NULL, grab, &g, &code) == RUNNER_DONE);
+    /* cmd leaves an unset %X% as it is */
+    CHECK(g.n >= 1 && !strncmp(g.lines[0], "got [", 5) && !strstr(g.lines[0], "+6"));
+    remove("tmp_unit/input.txt");
 }
 
 void test_runner(void)
@@ -93,4 +128,5 @@ void test_runner(void)
     CHECK(code == 3);
     CHECK_STR(g.lines[0], "uno");
     test_capture();
+    test_input();
 }

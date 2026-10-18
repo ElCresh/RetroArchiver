@@ -36,6 +36,20 @@ int meta_kind_parse(const char *key)
     return -1;
 }
 
+static const char *const prot_keys[] = { "auto", "on", "off" };
+
+const char *meta_prot_key(int mode)
+{
+    return mode >= META_PROT_AUTO && mode <= META_PROT_OFF ? prot_keys[mode] : "auto";
+}
+
+int meta_prot_parse(const char *key)
+{
+    int k;
+    for (k = 0; key && k < 3; k++) if (!strcmp(key, prot_keys[k])) return k;
+    return -1;
+}
+
 void meta_set_counts(meta_box *b, int floppy, int cd, int dvd)
 {
     b->count[MEDIA_FLOPPY] = floppy;
@@ -200,6 +214,7 @@ static void write_disk(json_writer *w, const meta_disk *d, const char *datadir,
     jw_str(w, "status", d->status[0] ? d->status : ST_TO_READ);
     /* only when there is one: older readers do not know the field */
     if (d->duplicate_of > 0) jw_int(w, "duplicate_of", d->duplicate_of);
+    if (d->copy_protection) jw_str(w, "copy_protection_scan", meta_prot_key(d->copy_protection));
     opt(w, "master", d->master);
     opt(w, "scan", d->scan);
     jw_begin_arr(w, "reads");
@@ -261,6 +276,7 @@ int meta_save(const meta_box *b, const char *datadir, meta_tech_fn tech, void *c
     for (k = 0; k < MEDIA_KINDS; k++)
         if (c[k] && b->names[k][0]) jw_str(&w, meta_kind_key(k), b->names[k]);
     jw_end_obj(&w);
+    jw_str(&w, "copy_protection_scan", meta_prot_key(b->copy_protection));
     opt(&w, "started", b->started);
     opt(&w, "closed", b->closed);
     jw_end_obj(&w);
@@ -312,6 +328,8 @@ static void load_disk(meta_box *b, const jval *e)
     CP(d->status, meta_status_english(json_str(e, "status")));
     if (!strcmp(d->status, ST_TO_READ)) d->status[0] = 0;
     d->duplicate_of = (int)json_int(e, "duplicate_of", 0);     /* absent in older boxes */
+    d->copy_protection = meta_prot_parse(json_str(e, "copy_protection_scan"));
+    if (d->copy_protection < 0) d->copy_protection = META_PROT_AUTO;      /* the box decides */
     CP(d->master, json_str(e, "master"));
     CP(d->scan, json_str(e, "scan"));
     r = json_get(e, "reads");
@@ -378,6 +396,9 @@ int meta_load(meta_box *b, const char *datadir, strbuf *err)
     CP(b->notes, json_str(box, "notes"));
     CP(b->started, json_str(box, "started"));
     CP(b->closed, json_str(box, "closed"));
+    /* boxes made before the choice: the files on the disc decide */
+    b->copy_protection = meta_prot_parse(json_str(box, "copy_protection_scan"));
+    if (b->copy_protection < 0) b->copy_protection = META_PROT_AUTO;
     b->media_expected = (int)json_int(box, "media_expected", 0);
     /* retroarchiver-floppy-1: all floppies, and the names stay those of the files */
     if (old) meta_set_counts(b, b->media_expected, 0, 0);

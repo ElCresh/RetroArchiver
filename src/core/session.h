@@ -25,6 +25,11 @@ typedef struct {
     /* 0: reading is not available yet for this kind. Read and Skip
      * leave it to be read, Finish box makes it missing */
     int readable;
+    /* the last read of this disc failed or had errors, and it is read again
+     * at once: 1 with the copy protection scan (the read was made without),
+     * 2 without (with it the drive reset itself). The window says so, and
+     * Skip keeps what there is; 0 an ordinary turn */
+    int protection_retry;
 } disk_turn;
 
 typedef struct {
@@ -48,6 +53,9 @@ typedef struct {
     int forced_cyl;             /* 0 = automatic */
     int keepall;                /* keep all reads, even of clean disks */
     int start;                  /* first disk to ask for, usually 1 */
+    /* the box's copy protection scan for CDs, "auto" "on" "off"; NULL keeps
+     * the one the box was opened with (auto for a new box) */
+    const char *copy_protection;
     /* who reads each kind; NULL = reading not available yet */
     const media_ops *media[MEDIA_KINDS];
 } session_cfg;

@@ -143,12 +143,96 @@ static int cmp(const media_ops *m, const char *a, const char *b, const char *c, 
     return m->compare(imgs, n, 0, r);
 }
 
+static void touch(const char *path)
+{
+    FILE *f = u8_fopen(path, "wb");
+    if (f) fclose(f);
+}
+
+static int count_of(const char *s, const char *what)
+{
+    int n = 0;
+    while ((s = strstr(s, what)) != NULL) { n++; s += strlen(what); }
+    return n;
+}
+
+/* the copy protection signature files among the disc's files */
+static void test_signatures(void)
+{
+    char out[600], out2[600], line[200], pat[100], path[400]; FILE *f; int n = 0;
+
+    optical_set_signatures("tmp_unit/firme-che-non-esistono.txt");      /* the built-in list */
+    u8_mkdirs("tmp_unit/disco/GIOCO/DATI");
+    touch("tmp_unit/disco/LEGGIMI.TXT");
+    CHECK(optical_protection_files("tmp_unit/disco", out, sizeof(out)) == 0 && !out[0]);
+    CHECK(optical_protection_files("tmp_unit/disco-che-non-esiste", out, sizeof(out)) == -1);
+    /* in subfolders, any case, endings and folders */
+    touch("tmp_unit/disco/GIOCO/DATI/clcd32.dll");
+    touch("tmp_unit/disco/GIOCO/GIOCO.ICD");
+    touch("tmp_unit/disco/CMS_NT.DLL");
+    u8_mkdir("tmp_unit/disco/LaserLok");
+    CHECK(optical_protection_files("tmp_unit/disco", out, sizeof(out)) == 4);
+    CHECK(strstr(out, "clcd32.dll") && strstr(out, "GIOCO.ICD") && count_of(out, " (SafeDisc)") == 1);
+    CHECK(strstr(out, "CMS_NT.DLL (SecuROM)") && strstr(out, "LaserLok (LaserLock)"));
+    /* a file named like a signature folder is not one */
+    u8_mkdirs("tmp_unit/disco2");
+    touch("tmp_unit/disco2/LASERLOK");
+    touch("tmp_unit/disco2/SETUP.ICDX");
+    CHECK(optical_protection_files("tmp_unit/disco2", out, sizeof(out)) == 0);
+
+    /* a list of one's own: comments and spaces */
+    f = u8_fopen("tmp_unit/firme.txt", "wb");
+    if (f) { fputs("# prova\r\n\r\n  GIOCO/   Protezione di prova\r\nLEGGIMI.TXT\r\n", f); fclose(f); }
+    optical_set_signatures("tmp_unit/firme.txt");
+    CHECK(optical_protection_files("tmp_unit/disco", out, sizeof(out)) == 2);
+    CHECK(strstr(out, "GIOCO (Protezione di prova)") && strstr(out, "LEGGIMI.TXT (unknown protection)"));
+
+    /* the installed file and the built-in list say the same: one file per
+     * signature, and both find all of them with the same names */
+    f = u8_fopen("../installer/protection-signatures.txt", "rb");
+    CHECK(f != NULL);
+    u8_mkdirs("tmp_unit/firme-tutte");
+    while (f && fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || sscanf(line, "%99s", pat) != 1) continue;
+        if (pat[strlen(pat) - 1] == '/') {
+            pat[strlen(pat) - 1] = 0;
+            snprintf(path, sizeof(path), "tmp_unit/firme-tutte/d%d/%s", n, pat);
+            u8_mkdirs(path);
+        } else {
+            snprintf(path, sizeof(path), "tmp_unit/firme-tutte/d%d", n);
+            u8_mkdirs(path);
+            snprintf(path, sizeof(path), "tmp_unit/firme-tutte/d%d/%s", n, pat[0] == '*' ? "X" : "");
+            str_copy(path + strlen(path), sizeof(path) - strlen(path), pat[0] == '*' ? pat + 1 : pat);
+            touch(path);
+        }
+        n++;
+    }
+    if (f) fclose(f);
+    CHECK(n >= 20);
+    optical_set_signatures("../installer/protection-signatures.txt");
+    CHECK(optical_protection_files("tmp_unit/firme-tutte", out, sizeof(out)) == n);
+    optical_set_signatures("tmp_unit/firme-che-non-esistono.txt");
+    CHECK(optical_protection_files("tmp_unit/firme-tutte", out2, sizeof(out2)) == n);
+    CHECK_STR(out, out2);
+    optical_set_signatures("");
+
+    /* the drive's offset: a number of samples, as DIC reads it */
+    CHECK(optical_set_drive_offset("+6") == 0);
+    CHECK(optical_set_drive_offset(" -472 ") == 0);
+    CHECK(optical_set_drive_offset("0") == 0);
+    CHECK(optical_set_drive_offset("sei") == -1);
+    CHECK(optical_set_drive_offset("6 6") == -1);
+    CHECK(optical_set_drive_offset("1234567") == -1);
+    CHECK(optical_set_drive_offset("") == 0);
+}
+
 void test_optical(void)
 {
     compare_result r; strbuf msg; json_writer w; FILE *f; char p[600], date[40];
     const char *s;
 
     test_iso();
+    test_signatures();
     test_tree();
     test_progress();
     CHECK_STR(cd_media.name, "cd");
@@ -208,7 +292,7 @@ void test_optical(void)
         u8_mkdirs("tmp_unit/\xce\xa9mega");
         sb_clear(&msg);
         CHECK(optical_dic_path("tmp_unit\\\xce\xa9mega", "CD01.bin", out, sizeof(out), &msg) == -1);
-        CHECK(msg.s && strstr(msg.s, "nome corto 8.3") != NULL);
+        CHECK(msg.s && strstr(msg.s, "8.3 short name") != NULL);
         u8_rmtree("tmp_unit/\xce\xa9mega");
         sb_free(&msg);
 #endif

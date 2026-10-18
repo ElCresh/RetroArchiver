@@ -74,9 +74,25 @@ static void quote(strbuf *cmd, const char *a)
     sb_puts(cmd, "\"");
 }
 
-/* starts argv with stdin from NUL and stdout/stderr on a pipe, returning
- * its read end in *rd; 0 if it does not start */
-static int spawn(const char *const *argv, PROCESS_INFORMATION *pi, HANDLE *rd)
+/* the program's input, inheritable: the file path (UTF-8) or NUL, also
+ * when path is NULL, "" or cannot be opened */
+static HANDLE open_input(const char *path)
+{
+    SECURITY_ATTRIBUTES sa; HANDLE h = INVALID_HANDLE_VALUE; wchar_t *w = NULL; int n;
+    sa.nLength = sizeof(sa); sa.lpSecurityDescriptor = NULL; sa.bInheritHandle = TRUE;
+    if (path && *path && (n = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0)) > 0 &&
+        (w = (wchar_t *)malloc((size_t)n * sizeof(wchar_t))) != NULL &&
+        MultiByteToWideChar(CP_UTF8, 0, path, -1, w, n) > 0)
+        h = CreateFileW(w, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
+    free(w);
+    if (h == INVALID_HANDLE_VALUE)
+        h = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
+    return h;
+}
+
+/* starts argv with stdin from in (NULL: NUL) and stdout/stderr on a pipe,
+ * returning its read end in *rd; 0 if it does not start */
+static int spawn(const char *const *argv, PROCESS_INFORMATION *pi, HANDLE *rd, HANDLE in)
 {
     strbuf cmd; SECURITY_ATTRIBUTES sa; STARTUPINFOW si;
     HANDLE wr = NULL, nul; wchar_t *wcmd; int i, n, ok;
@@ -92,9 +108,8 @@ static int spawn(const char *const *argv, PROCESS_INFORMATION *pi, HANDLE *rd)
     sa.nLength = sizeof(sa); sa.lpSecurityDescriptor = NULL; sa.bInheritHandle = TRUE;
     if (!CreatePipe(rd, &wr, &sa, 0)) { free(wcmd); return 0; }
     SetHandleInformation(*rd, HANDLE_FLAG_INHERIT, 0);
-    nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
-                      OPEN_EXISTING, 0, NULL);
-    if (nul == INVALID_HANDLE_VALUE) {
+    nul = in ? NULL : open_input(NULL);
+    if (!in && nul == INVALID_HANDLE_VALUE) {
         CloseHandle(*rd); CloseHandle(wr); free(wcmd);
         return 0;
     }
@@ -104,20 +119,22 @@ static int spawn(const char *const *argv, PROCESS_INFORMATION *pi, HANDLE *rd)
     /* SW_HIDE: also the console that the runner_run_tty helper creates */
     si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
-    si.hStdInput = nul; si.hStdOutput = wr; si.hStdError = wr;
+    si.hStdInput = in ? in : nul; si.hStdOutput = wr; si.hStdError = wr;
     memset(pi, 0, sizeof(*pi));
     /* CREATE_NO_WINDOW: no console must flash from the GUI */
     ok = CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, pi);
     free(wcmd);
     CloseHandle(wr);
-    CloseHandle(nul);
+    if (nul) CloseHandle(nul);
     if (!ok) { CloseHandle(*rd); return 0; }
     return 1;
 }
 
 /* oem: the output is in the OEM code page (console programs) and must be
- * converted to UTF-8; 0 if it is already UTF-8 (the runner_run_tty helper) */
-static int run_pipe(const char *const *argv, runner_line_fn on_line, void *ctx, int *exit_code, int oem)
+ * converted to UTF-8; 0 if it is already UTF-8 (the runner_run_tty helper);
+ * in: the program's input, NULL for NUL */
+static int run_pipe(const char *const *argv, runner_line_fn on_line, void *ctx, int *exit_code, int oem,
+                    HANDLE in)
 {
     splitter sp; HANDLE rd = NULL;
     PROCESS_INFORMATION pi;
@@ -125,7 +142,7 @@ static int run_pipe(const char *const *argv, runner_line_fn on_line, void *ctx, 
     char buf[4096]; oem_fwd fw; HANDLE dup;
 
     if (canceled) return RUNNER_CANCELED;
-    if (!spawn(argv, &pi, &rd)) return RUNNER_NOSTART;
+    if (!spawn(argv, &pi, &rd, in)) return RUNNER_NOSTART;
     if (DuplicateHandle(GetCurrentProcess(), pi.hProcess, GetCurrentProcess(), &dup,
                         PROCESS_TERMINATE, FALSE, 0))
         InterlockedExchangePointer(&running, dup);
@@ -155,7 +172,7 @@ static int run_pipe(const char *const *argv, runner_line_fn on_line, void *ctx, 
 
 int runner_run(const char *const *argv, runner_line_fn on_line, void *ctx, int *exit_code)
 {
-    return run_pipe(argv, on_line, ctx, exit_code, 1);
+    return run_pipe(argv, on_line, ctx, exit_code, 1, NULL);
 }
 
 /* ---- runner_run_tty: the hidden console ----
@@ -244,7 +261,7 @@ static void to_pipe(void *c, const char *line)
 
 /* the program in the helper's console, inside a job: if the helper is
  * stopped ("Interrompi"), the job closes and stops it */
-static int tty_child(const char *const *argv, HANDLE pipe, PROCESS_INFORMATION *pi, HANDLE *job)
+static int tty_child(const char *const *argv, HANDLE pipe, HANDLE in0, PROCESS_INFORMATION *pi, HANDLE *job)
 {
     strbuf cmd; STARTUPINFOW si; wchar_t *wcmd; int i, n, ok;
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION li; SECURITY_ATTRIBUTES sa; HANDLE in, out;
@@ -260,9 +277,9 @@ static int tty_child(const char *const *argv, HANDLE pipe, PROCESS_INFORMATION *
     SetHandleInformation(pipe, HANDLE_FLAG_INHERIT, 0);
     sa.nLength = sizeof(sa); sa.lpSecurityDescriptor = NULL; sa.bInheritHandle = TRUE;
     /* input from NUL, as with runner_run: after an error DiscImageCreator
-     * waits for "Press any key to continue", and with NUL it goes on */
-    in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                     &sa, OPEN_EXISTING, 0, NULL);
+     * waits for "Press any key to continue", and with NUL it goes on. in0:
+     * the helper's own input (runner_run_tty_input's file), it ends the same way */
+    in = in0 ? in0 : open_input(NULL);
     out = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
                       &sa, OPEN_EXISTING, 0, NULL);
     memset(&si, 0, sizeof(si));
@@ -272,7 +289,7 @@ static int tty_child(const char *const *argv, HANDLE pipe, PROCESS_INFORMATION *
     memset(pi, 0, sizeof(*pi));
     ok = CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, CREATE_SUSPENDED, NULL, NULL, &si, pi);
     free(wcmd);
-    if (in != INVALID_HANDLE_VALUE) CloseHandle(in);
+    if (!in0 && in != INVALID_HANDLE_VALUE) CloseHandle(in);
     if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
     if (!ok) return 0;
     *job = CreateJobObjectW(NULL, NULL);
@@ -289,13 +306,18 @@ static int tty_child(const char *const *argv, HANDLE pipe, PROCESS_INFORMATION *
 int runner_tty_host(const char *const *argv)
 {
     HANDLE pipe = GetStdHandle(STD_OUTPUT_HANDLE);  /* before the console: the pipe */
-    HANDLE out, job = NULL; PROCESS_INFORMATION pi; DWORD code = 255;
+    HANDLE out, job = NULL, in = GetStdHandle(STD_INPUT_HANDLE), in0 = NULL;
+    PROCESS_INFORMATION pi; DWORD code = 255, mode;
     tty_state t; COORD size; HWND w; int rc;
+    /* the input the window gave (NUL or a file) goes to the program; a
+     * console handle would die with FreeConsole: then NUL */
+    if (in && in != INVALID_HANDLE_VALUE && !GetConsoleMode(in, &mode))
+        DuplicateHandle(GetCurrentProcess(), in, GetCurrentProcess(), &in0, 0, TRUE, DUPLICATE_SAME_ACCESS);
     /* a new console of our own: if we had one (launched from a console) we leave it */
     FreeConsole();
     if (!AllocConsole()) {
         /* no console: at least the normal output, without progress */
-        rc = runner_run(argv, to_pipe, pipe, (int *)&code);
+        rc = run_pipe(argv, to_pipe, pipe, (int *)&code, 1, in0);
         return rc == RUNNER_NOSTART ? TTY_NOSTART : (int)code;
     }
     /* the helper's startup info already asks for SW_HIDE; just to be safe */
@@ -305,7 +327,7 @@ int runner_tty_host(const char *const *argv)
     /* long rows without wrapping and enough rows not to scroll */
     size.X = TTY_COLS; size.Y = TTY_ROWS;
     if (out != INVALID_HANDLE_VALUE) SetConsoleScreenBufferSize(out, size);
-    if (!tty_child(argv, pipe, &pi, &job)) return TTY_NOSTART;
+    if (!tty_child(argv, pipe, in0, &pi, &job)) return TTY_NOSTART;
     memset(&t, 0, sizeof(t));
     while (WaitForSingleObject(pi.hProcess, 100) == WAIT_TIMEOUT)
         if (out != INVALID_HANDLE_VALUE) tty_poll(out, &t, to_pipe, pipe, 0);
@@ -316,22 +338,37 @@ int runner_tty_host(const char *const *argv)
     return (int)code;
 }
 
-int runner_run_tty(const char *const *argv, runner_line_fn on_line, void *ctx, int *exit_code)
+int runner_run_tty_input(const char *const *argv, const char *input,
+                         runner_line_fn on_line, void *ctx, int *exit_code)
 {
     const char **hv; int i, n, rc, code = 0;
+    /* the helper did not read it: the file is still at its start for the fallback */
+    HANDLE in = input && *input ? open_input(input) : NULL;
+    hv = NULL;
     /* whoever already has a console (dskrun) or has no helper uses the pipe */
-    if (!tty_helper[0] || GetConsoleWindow()) return runner_run(argv, on_line, ctx, exit_code);
-    for (n = 0; argv[n]; n++) ;
-    hv = (const char **)malloc((size_t)(n + 3) * sizeof(*hv));
-    if (!hv) return runner_run(argv, on_line, ctx, exit_code);
+    if (tty_helper[0] && !GetConsoleWindow()) {
+        for (n = 0; argv[n]; n++) ;
+        hv = (const char **)malloc((size_t)(n + 3) * sizeof(*hv));
+    }
+    if (!hv) {
+        rc = run_pipe(argv, on_line, ctx, exit_code, 1, in);
+        if (in && in != INVALID_HANDLE_VALUE) CloseHandle(in);
+        return rc;
+    }
     hv[0] = tty_helper; hv[1] = "--tty";
     for (i = 0; i <= n; i++) hv[i + 2] = argv[i];
-    rc = run_pipe(hv, on_line, ctx, &code, 0);
+    rc = run_pipe(hv, on_line, ctx, &code, 0, in);
     free(hv);
-    if (rc == RUNNER_NOSTART) return runner_run(argv, on_line, ctx, exit_code);
-    if (rc == RUNNER_DONE && code == TTY_NOSTART) return RUNNER_NOSTART;
-    if (exit_code) *exit_code = code;
+    if (rc == RUNNER_NOSTART) rc = run_pipe(argv, on_line, ctx, &code, 1, in);
+    else if (rc == RUNNER_DONE && code == TTY_NOSTART) rc = RUNNER_NOSTART;
+    if (in && in != INVALID_HANDLE_VALUE) CloseHandle(in);
+    if (rc != RUNNER_NOSTART && exit_code) *exit_code = code;
     return rc;
+}
+
+int runner_run_tty(const char *const *argv, runner_line_fn on_line, void *ctx, int *exit_code)
+{
+    return runner_run_tty_input(argv, NULL, on_line, ctx, exit_code);
 }
 
 void runner_cancel(void)
@@ -363,7 +400,7 @@ int runner_capture(const char *const *argv, char *out, size_t n, int timeout_ms,
 {
     PROCESS_INFORMATION pi; HANDLE rd; size_t len = 0; DWORD t0, code = 255; int rc = RUNNER_DONE;
     out[0] = 0;
-    if (!spawn(argv, &pi, &rd)) return RUNNER_NOSTART;
+    if (!spawn(argv, &pi, &rd, NULL)) return RUNNER_NOSTART;
     t0 = GetTickCount();
     for (;;) {
         drain(rd, out, n, &len);
@@ -393,7 +430,8 @@ int runner_capture(const char *const *argv, char *out, size_t n, int timeout_ms,
 static volatile pid_t running = 0;
 static volatile int canceled = 0;
 
-int runner_run(const char *const *argv, runner_line_fn on_line, void *ctx, int *exit_code)
+/* input: the file the program reads, NULL for /dev/null */
+static int run_in(const char *const *argv, const char *input, runner_line_fn on_line, void *ctx, int *exit_code)
 {
     int fd[2], ok[2], st = 0; pid_t pid; splitter sp; char buf[4096], c;
     ssize_t got, r;
@@ -409,7 +447,8 @@ int runner_run(const char *const *argv, runner_line_fn on_line, void *ctx, int *
         return RUNNER_NOSTART;
     }
     if (pid == 0) {
-        int nul = open("/dev/null", O_RDONLY);
+        int nul = open(input && *input ? input : "/dev/null", O_RDONLY);
+        if (nul < 0) nul = open("/dev/null", O_RDONLY);
         if (nul >= 0) {
             dup2(nul, 0);
             if (nul > 0) close(nul);
@@ -451,9 +490,20 @@ int runner_run(const char *const *argv, runner_line_fn on_line, void *ctx, int *
 
 void runner_set_tty_helper(const char *exe) { (void)exe; }
 
+int runner_run(const char *const *argv, runner_line_fn on_line, void *ctx, int *exit_code)
+{
+    return run_in(argv, NULL, on_line, ctx, exit_code);
+}
+
+int runner_run_tty_input(const char *const *argv, const char *input,
+                         runner_line_fn on_line, void *ctx, int *exit_code)
+{
+    return run_in(argv, input, on_line, ctx, exit_code);
+}
+
 int runner_run_tty(const char *const *argv, runner_line_fn on_line, void *ctx, int *exit_code)
 {
-    return runner_run(argv, on_line, ctx, exit_code);
+    return run_in(argv, NULL, on_line, ctx, exit_code);
 }
 
 void runner_cancel(void)

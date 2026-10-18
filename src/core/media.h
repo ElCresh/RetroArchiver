@@ -43,6 +43,15 @@ typedef struct {
     /* the image's volume label (FAT12, ISO 9660) in out, UTF-8; 1 if
      * there is one, 0 if not. Used when the user did not type a label */
     int (*volume_label)(const char *img, char *out, size_t n);
+    /* CD: the copy protection scan of the next read, META_PROT_AUTO (the
+     * files on the disc decide), _ON or _OFF; NULL if the medium has none */
+    void (*protection)(int mode);
+    /* after a read, also a failed one: 1 made with the protection scan, 0
+     * without; -1 it failed for a reason the scan cannot change (the drive's
+     * offset is not set, a disc of another type, no access, a drive that
+     * resets itself); 2 made with it, and the drive reset itself: the scan
+     * is the cause, to read again without */
+    int (*protection_used)(void);
 } media_ops;
 
 extern const media_ops floppy_media;
@@ -56,6 +65,18 @@ void optical_set_dic(const char *path);
 void optical_set_drive(const char *drive);
 /* folder where to look for the redump DATs (default: the program's) */
 void optical_set_datdir(const char *dir);
+/* the drive's read offset in samples ("+6", "-472"), given to DiscImageCreator
+ * when it asks for it; "" not set. -1 if it is not a number */
+int  optical_set_drive_offset(const char *samples);
+/* the list of the copy protection signature files (default: the program's
+ * protection-signatures.txt, or the built-in list if it is missing) */
+void optical_set_signatures(const char *path);
+/* tests: the disc's files are those of this folder, not of the drive */
+void optical_set_disc_root(const char *dir);
+/* the signature files of copy protections among the files under root
+ * (subfolders too, within limits): how many, with out = "CLCD32.DLL,
+ * 00000001.TMP (SafeDisc)"; -1 if root cannot be listed */
+int  optical_protection_files(const char *root, char *out, size_t n);
 /* the redump DAT that would be used and its date ("2026-10-01"); 0 if
  * there is none */
 int  optical_find_dat(char *path, size_t n, char *date, size_t dn);

@@ -67,7 +67,7 @@ enum {
     ID_TITLE = 100, ID_RESUME, ID_PLATFORM, ID_COUNT, ID_PUBLISHER, ID_YEAR,
     ID_LANGUAGE, ID_EDITION, ID_NOTES, ID_MEDIA, ID_CD, ID_DVD, ID_ICFLOP, ID_ICCD, ID_ICDVD,
     ID_HINT, ID_DIR, ID_BROWSE, ID_MAXREAD, ID_SAMDISK, ID_SOURCE, ID_DIC, ID_DRIVE, ID_SOUNDS, ID_AUTO, ID_BAGPATH,
-    ID_UILANG, ID_BACK, ID_START,
+    ID_UILANG, ID_PROT, ID_BACK, ID_START,
     /* session */
     ID_BANNER = 200, ID_PILLS, ID_LABEL, ID_NOTE, ID_READ, ID_SKIP, ID_FINISH,
     ID_STOP, ID_LIST, ID_LOG, ID_NEW, ID_OPEN, ID_BOXBAR, ID_BOXTXT,
@@ -506,6 +506,27 @@ static const wchar_t *platforms[] = {
     L"Amstrad CPC", L"ZX Spectrum", L"MSX", L"Apple II", L"Macintosh", NULL
 };
 
+/* the box's copy protection scan, META_PROT_...: the last choice, from the
+ * ini, or the resumed box's */
+static int g_prot = META_PROT_AUTO;
+
+/* the menu in the current language, in the order of META_PROT_... */
+static void prot_fill(void)
+{
+    HWND cb = GetDlgItem(g_wnd, ID_PROT);
+    SendMessageW(cb, CB_RESETCONTENT, 0, 0);
+    SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)tr(T_SETUP_PROT_AUTO));
+    SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)tr(T_SETUP_PROT_ON));
+    SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)tr(T_SETUP_PROT_OFF));
+    SendMessageW(cb, CB_SETCURSEL, g_prot, 0);
+}
+
+static int prot_chosen(void)
+{
+    int k = (int)SendDlgItemMessageW(g_wnd, ID_PROT, CB_GETCURSEL, 0, 0);
+    return k >= META_PROT_AUTO && k <= META_PROT_OFF ? k : META_PROT_AUTO;
+}
+
 /* setup controls: ids from ID_TITLE to ID_START, labels + LBL.
  * Positions are those at 640 points; layout_setup widens the long fields */
 static void build_setup(void)
@@ -556,6 +577,10 @@ static void build_setup(void)
 
     make_t(L"BUTTON", T_SETUP_SOUNDS, WS_TABSTOP | BS_AUTOCHECKBOX, 12, 428, 140, 20, ID_SOUNDS);
     make_t(L"BUTTON", T_SETUP_AUTO, WS_TABSTOP | BS_AUTOCHECKBOX, 160, 428, 260, 20, ID_AUTO);
+    /* the box's copy protection scan, under Automatico */
+    make_t(L"STATIC", T_SETUP_PROT, 0, 160, 457, 125, 18, ID_PROT + LBL);
+    make(L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 289, 454, 130, 200, ID_PROT);
+    prot_fill();
     make_t(L"BUTTON", T_SETUP_ARCHIVE, WS_TABSTOP, 426, 423, 100, 28, ID_BACK);
     make_t(L"BUTTON", T_SETUP_START, WS_TABSTOP | BS_DEFPUSHBUTTON, 534, 423, 100, 28, ID_START);
 }
@@ -1344,6 +1369,8 @@ static void layout_setup(int W, int H)
     (void)H;
     put(ID_SOUNDS, 12, 411, 140, 20);
     put(ID_AUTO, 160, 411, 260, 20);
+    put(ID_PROT + LBL, 160, 440, 125, 18);
+    put(ID_PROT, 289, 437, 130, 200);
     put(ID_BACK, W - 6 - 100 - 8 - 100, 407, 100, 28);
     put(ID_START, W - 6 - 100, 407, 100, 28);
 }
@@ -1557,6 +1584,7 @@ static void tool_fallback(int id, const wchar_t *rel)
 static void ini_load(void)
 {
     wchar_t cur[512], v[512];
+    char prot_key[16];
     int i;
     set_init(&g_set);
     for (i = 0; ini_keys[i].key; i++) {
@@ -1572,6 +1600,11 @@ static void ini_load(void)
                    set_int(&g_set, SEC_GENERAL, KEY_SOUNDS, 0) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(g_wnd, ID_AUTO,
                    set_int(&g_set, SEC_AUTO, KEY_ENABLED, 0) ? BST_CHECKED : BST_UNCHECKED);
+    /* the copy protection scan: auto, on, off */
+    set_get(&g_set, SEC_BOX, KEY_COPYPROT, L"auto", v, 512);
+    to_u8(v, prot_key, sizeof(prot_key));
+    g_prot = meta_prot_parse(prot_key) < 0 ? META_PROT_AUTO : meta_prot_parse(prot_key);
+    SendDlgItemMessageW(g_wnd, ID_PROT, CB_SETCURSEL, g_prot, 0);
     /* the file names are not in the window: they change only here */
     for (i = 0; i < MEDIA_KINDS; i++) {
         set_get(&g_set, name_secs[i], name_keys[i], name_defaults[i], v, 512);
@@ -1596,6 +1629,9 @@ static void ini_save(void)
              IsDlgButtonChecked(g_wnd, ID_SOUNDS) == BST_CHECKED ? L"1" : L"0");
     set_save(&g_set, SEC_AUTO, KEY_ENABLED, L"0",
              IsDlgButtonChecked(g_wnd, ID_AUTO) == BST_CHECKED ? L"1" : L"0");
+    g_prot = prot_chosen();
+    to_w(meta_prot_key(g_prot), v, 512);
+    set_save(&g_set, SEC_BOX, KEY_COPYPROT, L"auto", v);
     /* the names change only by hand in the ini: one that differs from the default stays */
     for (i = 0; i < MEDIA_KINDS; i++) {
         to_w(g_ini_names[i], v, 512);
@@ -3082,6 +3118,9 @@ static void fill_from(const meta_box *b)
     set_u8(ID_LANGUAGE, b->language);
     set_u8(ID_EDITION, b->edition);
     set_u8(ID_NOTES, b->notes);
+    /* the box keeps its choice: changed here, it changes for the rest of the box */
+    g_prot = b->copy_protection;
+    SendDlgItemMessageW(g_wnd, ID_PROT, CB_SETCURSEL, g_prot, 0);
     to_w(b->title, t, 300);
     _snwprintf(w, 400, tr(T_RESUME_HINT), t); w[399] = 0;
     SetDlgItemTextW(g_wnd, ID_HINT, w);
@@ -3311,6 +3350,21 @@ static void start(void)
         _snwprintf(g_drive_w, 8, L"%c:", *q ? (wchar_t)toupper((unsigned char)*q) : L'D');
         g_drive_w[7] = 0;
     }
+    {   /* the CD drive's read offset, for DIC's question when it does not
+         * know the drive: in the ini only, no field in the window yet */
+        wchar_t off[64], w[600];
+        set_get(&g_set, SEC_OPTICAL, KEY_DRIVEOFFSET, L"", off, 64);
+        to_u8(off, buf, sizeof(buf));
+        if (optical_set_drive_offset(buf)) {
+            optical_set_drive_offset("");
+            if (c[MEDIA_CD]) {
+                _snwprintf(w, 600, tr(T_OFFSET_BAD), off);
+                w[599] = 0;
+                MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
+                return;
+            }
+        }
+    }
 
     memset(&g_cfg, 0, sizeof(g_cfg));
     g_cfg.box = g_box;
@@ -3321,6 +3375,7 @@ static void start(void)
     g_cfg.media[MEDIA_FLOPPY] = &floppy_media;
     g_cfg.media[MEDIA_CD] = &cd_media;
     g_cfg.media[MEDIA_DVD] = &dvd_media;
+    g_cfg.copy_protection = meta_prot_key(g_prot);
     /* copies for the window: while the session runs g_box belongs to the worker thread */
     str_copy(g_title, sizeof(g_title), g_box->title);
     session_bagdir(g_bagdir, sizeof(g_bagdir), g_outdir, g_box->title);
@@ -4122,7 +4177,8 @@ static void notice(const char *s)
         if (g_pcur >= 0) { pills_future(); repaint(g_pills); }
         work_banner();
     } else if (starts(s, "The drive does not hold a ") || starts(s, "DiscImageCreator stopped") ||
-               starts(s, "DiscImageCreator cannot open") || starts(s, "DiscImageCreator finished")) {
+               starts(s, "DiscImageCreator cannot open") || starts(s, "DiscImageCreator finished") ||
+               starts(s, "The drive's read offset is not set") || starts(s, "The drive was reset ")) {
         /* why a CD read failed (optical.c): it goes into the Riprova banner */
         to_w(s, g_why, 600);
     }
@@ -4271,8 +4327,27 @@ static void wait_unreadable(const disk_turn *t)
 }
 
 /* the turn being waited for is a retry: 0 no, 1 failed read, 2 interrupted,
- * 3 duplicate of another disk */
+ * 3 duplicate of another disk, 4 again with the copy protection scan */
 static int g_retry;
+
+/* the core proposes to read the CD again with the copy protection scan
+ * (the last read, made without it, failed or has errors) or without it
+ * (with it the drive reset itself); the reason from DIC when it failed */
+static void wait_protection(void)
+{
+    wchar_t w[160], text[900];
+    const char *st = g_cur >= 1 && g_cur <= META_MAXDISK ? g_disk[g_cur].status : "";
+    int off = g_turn.protection_retry == 2;    /* with the scan the drive reset itself */
+    _snwprintf(w, 160, tr(off ? T_PROTOFF_TITLE : T_PROT_TITLE), kind_name(g_turn.kind, KN_CAP), g_turn.num);
+    w[159] = 0;
+    if (!strcmp(st, ST_FAILED))
+        _snwprintf(text, 900, L"%ls%ls%ls", g_why, g_why[0] ? L"\n" : L"",
+                   tr(off ? T_PROTOFF_TEXT : T_PROT_TEXT_FAILED));
+    else
+        _snwprintf(text, 900, L"%ls", tr(off ? T_PROTOFF_TEXT : T_PROT_TEXT_ERRORS));
+    text[899] = 0;
+    banner(B_ORANGE, NULL, ICON_DISC, w, text);
+}
 
 /* the yellow banner while waiting, or the orange one of a retry */
 static void wait_banner(void)
@@ -4283,6 +4358,8 @@ static void wait_banner(void)
     int autom = g_auto_state != AUTO_OFF, again = g_turn.kind == MEDIA_FLOPPY ? g_fd_used : g_opt_used;
     if (!g_turn.readable) {
         wait_unreadable(&g_turn);
+    } else if (g_retry == 4) {
+        wait_protection();
     } else if (g_retry == 3) {
         wchar_t who[32], other[64], text[500];
         const wchar_t *what = tr(g_turn.kind == MEDIA_FLOPPY ? T_NOUN_DISKETTE : T_NOUN_DISC);
@@ -4337,6 +4414,7 @@ static void on_wait(void)
     const char *last = (n >= 1 && n <= META_MAXDISK) ? g_disk[n].status : "";
     int retry = (n == g_last_done) &&
                 (!strcmp(last, ST_FAILED) || !strcmp(last, ST_INTERRUPTED) || !strcmp(last, ST_DUPLICATE));
+    int prot = g_turn_in.protection_retry;
 
     /* close confirmed between the check in host_wait and the PostMessage:
      * answer at once, the core's label and note stay */
@@ -4344,7 +4422,8 @@ static void on_wait(void)
     g_turn = g_turn_in;
     if (total > 0 && total != g_total) { g_total = total; list_rebuild(); box_progress(); }
     g_cur = n;
-    g_retry = !retry ? 0 : !strcmp(last, ST_INTERRUPTED) ? 2 : !strcmp(last, ST_DUPLICATE) ? 3 : 1;
+    g_retry = prot ? 4 : !retry ? 0 : !strcmp(last, ST_INTERRUPTED) ? 2 : !strcmp(last, ST_DUPLICATE) ? 3 : 1;
+    retry = retry || prot;
     /* Salta is the Enter button when Leggi is absent */
     SendDlgItemMessageW(g_wnd, ID_READ, BM_SETSTYLE, g_turn.readable ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON, TRUE);
     SendDlgItemMessageW(g_wnd, ID_SKIP, BM_SETSTYLE, g_turn.readable ? BS_PUSHBUTTON : BS_DEFPUSHBUTTON, TRUE);
@@ -4609,6 +4688,7 @@ static void lang_refresh(void)
     search_cue();
     uilang_fill();
     platforms_fill();
+    prot_fill();
     archive_fill(pick_dir());           /* the dates and the platform filter */
     bagpath_update();
     view(g_view);                       /* title, layout, status bar */

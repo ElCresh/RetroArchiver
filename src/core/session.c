@@ -26,6 +26,8 @@ typedef struct {
     int stuck;                  /* a leftover in data/ cannot be removed */
     const media_ops *mcur;      /* who is reading: its lines can open a phase */
     char phase[64];             /* the last announced phase */
+    int prot_retry;             /* the disk to read again at once, with or without the scan */
+    int prot_retry_on;          /* 1 with the copy protection scan, 0 without */
     strbuf msg;
 } run_ctx;
 
@@ -286,6 +288,39 @@ static void keep_failed(run_ctx *r, const meta_disk *d, const char *file, const 
     u8_rmtree(path);
 }
 
+/* The safety net of the copy protection scan, after a read that failed or
+ * has errors:
+ * - made without the scan (the files on the disc said nothing): a
+ *   protection without signature files can do that, the disc is read again
+ *   with it. Not if the box turned it off: that is the user's choice;
+ * - made with it, and the drive reset itself over and over (seen on the PC:
+ *   UNIT_ATTENTION, timeouts, a minute's wait each): the scan is the cause,
+ *   the disc is read again without it.
+ * The choice stays on the disk from then on. A read without the scan where
+ * the drive reset itself gets nothing: the scan would make it worse */
+static void protection_net(run_ctx *r, meta_disk *d, const char *who)
+{
+    const media_ops *m = r->cfg->media[d->kind];
+    int failed = !strcmp(d->status, ST_FAILED), used;
+    if (!m->protection || !m->protection_used) return;
+    if (!failed && strcmp(d->status, ST_ERRORS)) return;
+    used = m->protection_used();
+    if (used == 2 && d->copy_protection != META_PROT_OFF) {
+        d->copy_protection = META_PROT_OFF;
+        r->prot_retry = d->n;
+        r->prot_retry_on = 0;
+        ev(r, EV_LINE, d->n, "The copy protection scan made the drive reset itself while reading %s: "
+                             "reading it again without it.", who);
+        return;
+    }
+    if (used != 0 || r->cfg->box->copy_protection == META_PROT_OFF || d->copy_protection) return;
+    d->copy_protection = META_PROT_ON;
+    r->prot_retry = d->n;
+    r->prot_retry_on = 1;
+    ev(r, EV_LINE, d->n, "The read of %s without the copy protection scan %s: reading it again looks "
+                         "for protections (DiscImageCreator /sf).", who, failed ? "failed" : "has errors");
+}
+
 static int process(run_ctx *r, meta_disk *d)
 {
     const session_cfg *c = r->cfg; const media_ops *m = c->media[d->kind];
@@ -294,6 +329,7 @@ static int process(run_ctx *r, meta_disk *d)
 
     runner_clear();                         /* the user has just said Read */
     CP(before, d->status);
+    r->prot_retry = 0;
 
     disk_base(r, d->kind, d->num, base);
     meta_disk_name(d->kind, d->num, who, sizeof(who));
@@ -337,6 +373,7 @@ static int process(run_ctx *r, meta_disk *d)
         u8_rmtree(path);                    /* unrecorded leftover of an interruption */
 
         ev(r, EV_PHASE, d->n, "Read %d", d->nreads + 1);
+        if (m->protection) m->protection(d->copy_protection ? d->copy_protection : c->box->copy_protection);
         rc = m->read(path, on_line, r);
         if (rc == MEDIA_NOTOOL) {
             if (m->careful) m->careful(0);
@@ -385,6 +422,7 @@ static int process(run_ctx *r, meta_disk *d)
         ev(r, EV_LINE, d->n, "%s was read only once: not verified by a comparison.", who);
     }
     label_from_disk(r, d, who);
+    protection_net(r, d, who);
 
     if ((!strcmp(d->status, ST_CLEAN) || !strcmp(d->status, ST_REDUMP)) && !c->keepall)
         keep_master_only(r, d);
@@ -774,10 +812,12 @@ static int ask_and_do(run_ctx *r, meta_disk *d, int *cmd, char *bye, size_t blen
     t.n = d->n; t.total = r->cfg->box->media_expected;
     t.kind = d->kind; t.num = d->num; t.count = meta_count(r->cfg->box, d->kind);
     t.readable = r->cfg->media[d->kind] != NULL;
+    t.protection_retry = r->prot_retry != d->n ? 0 : r->prot_retry_on ? 1 : 2;
     CP(label, d->label);
     CP(note, d->note);
     r->cur = d->n;
     *cmd = host->wait_disk(host->ctx, &t, label, sizeof(label), note, sizeof(note));
+    if (*cmd != CMD_READ) r->prot_retry = 0;
     CP(d->label, label);
     CP(d->note, note);
     if (*cmd == CMD_QUIT)   return DISK_QUIT;
@@ -805,12 +845,13 @@ static int ask_and_do(run_ctx *r, meta_disk *d, int *cmd, char *bye, size_t blen
     return DISK_NEXT;
 }
 
-/* read but not successful: with ask_again it is asked for again right away */
+/* read but not successful, or to read again with the copy protection scan:
+ * with ask_again it is asked for again right away */
 static int retry_wanted(const run_ctx *r, const meta_disk *d, int cmd)
 {
     return r->host->ask_again && cmd == CMD_READ
         && (!strcmp(d->status, ST_FAILED) || !strcmp(d->status, ST_INTERRUPTED)
-            || !strcmp(d->status, ST_DUPLICATE));
+            || !strcmp(d->status, ST_DUPLICATE) || r->prot_retry == d->n);
 }
 
 /* after a read: did the user ask to stop? */
@@ -859,7 +900,7 @@ static void still_to_read(const run_ctx *r, char *bye, size_t blen)
 int session_run(const session_cfg *cfg, const session_host *host)
 {
     run_ctx r; meta_box *box = cfg->box;
-    int n, cmd, quit = 0, finish = 0, bad = 0, rc = SESSION_ERROR, act;
+    int n, cmd, quit = 0, finish = 0, bad = 0, rc = SESSION_ERROR, act, cp;
     char bye[400] = "";
 
     memset(&r, 0, sizeof(r));
@@ -873,7 +914,15 @@ int session_run(const session_cfg *cfg, const session_host *host)
     session_bagdir(r.bagdir, sizeof(r.bagdir), cfg->outroot, box->title);
     u8_join(r.datadir, sizeof(r.datadir), r.bagdir, "data");
     if (names_collide(&r)) goto out;
+    cp = cfg->copy_protection ? meta_prot_parse(cfg->copy_protection) : -1;
+    if (cp >= 0) box->copy_protection = cp;
     if (open_bag(&r)) goto out;
+    /* resumed: the choice made now wins over the one the box was opened with */
+    if (cp >= 0 && box->copy_protection != cp) {
+        ev(&r, EV_LINE, 0, "Copy protection scan of the CDs: %s (the box had %s).", meta_prot_key(cp),
+           meta_prot_key(box->copy_protection));
+        box->copy_protection = cp;
+    }
     session_settle_names(box, cfg->names);
     if (names_collide(&r)) goto out;        /* resumed with other media or other names */
 

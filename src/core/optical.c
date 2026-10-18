@@ -14,7 +14,7 @@
  * fingerprints.
  *
  * DIC options (version 20260101, Doc and README.md of the package):
- *   cd  <drive> <file.bin> <speed> /c2 20 /sf /q
+ *   cd  <drive> <file.bin> <speed> /c2 20 [/sf] /q
  *       /c2 20: rereads sectors with C2 errors up to 20 times;
  *       /sf: looks for protections in the files (SafeDisc, LaserLock...)
  *       and does not insist on their intentional errors; /q: no beeps,
@@ -22,7 +22,19 @@
  *   dvd <drive> <file.iso> <speed> /q
  *   ls  <drive>: the drive responds (0) or not (1, "Access is denied")
  * DIC launched without arguments or after an error stops on "Press any
- * key": runner gives it NUL as input and it goes on by itself. */
+ * key": runner gives it NUL as input and it goes on by itself.
+ *
+ * /sf only when needed: to look at the files DIC reads 64 sectors at a
+ * time, and on the IDE controller of the XP PC that failed ("GetLastError:
+ * 87" in ReadDirectoryRecordDetail) on a disc without protections. The box
+ * chooses (auto, on, off); with auto the files on the mounted disc decide:
+ * a signature file of a known protection (protection-signatures.txt next
+ * to the program) turns /sf on.
+ *
+ * A drive missing from DIC's driveOffset.txt makes it ask for the read
+ * offset on its input ("Please input drive offset(Samples): ", read with
+ * scanf): with [Optical] DriveOffset set the answer comes from a file
+ * instead of NUL, otherwise the question fails and the read with it. */
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,12 +61,49 @@
 #define ENTRY_NOT_FOUND ((int)0xC0000139)
 #define INIT_FAILED ((int)0xC0000142)
 
+/* the lines RetroArchiver adds to dic-console.txt before DIC's: how the read
+ * was made, for the technical data of metadata.json */
+#define PROT_MARK   "RetroArchiver: copy protection scan: "
+#define FILES_MARK  "RetroArchiver: copy protection files: "
+#define OFFSET_MARK "RetroArchiver: drive offset given: "
+/* DIC asks for the offset of a drive it does not know */
+#define ASK_OFFSET  "This drive doesn't define in driveOffset.txt"
+#define INPUT_FILE  "dic-input.txt"
+#define RESET_STOP  3            /* drive resets during a read with /sf before stopping it */
+#define SIG_FILE    "protection-signatures.txt"
+
 static char dic[512] = "DiscImageCreator";
 static char drive[2] = "D";
 static char datdir[512] = "";
+static char offset[16] = "";            /* "" = not set */
+static char sigpath[512] = "", disc_root[512] = "";
+static int prot_mode = META_PROT_AUTO;  /* for the next read */
+static int prot_used = 0;               /* of the last read */
 
 void optical_set_dic(const char *path) { str_copy(dic, sizeof(dic), path); }
 void optical_set_datdir(const char *dir) { str_copy(datdir, sizeof(datdir), dir); }
+void optical_set_signatures(const char *path) { str_copy(sigpath, sizeof(sigpath), path); }
+void optical_set_disc_root(const char *dir) { str_copy(disc_root, sizeof(disc_root), dir); }
+static void set_protection(int mode) { prot_mode = mode; }
+static int protection_used(void) { return prot_used; }
+
+int optical_set_drive_offset(const char *s)
+{
+    const char *p = s; long v;
+    while (*p == ' ') p++;
+    if (!*p) { offset[0] = 0; return 0; }
+    if (*p == '+' || *p == '-') p++;
+    if (!isdigit((unsigned char)*p)) return -1;
+    while (isdigit((unsigned char)*p)) p++;
+    while (*p == ' ') p++;
+    if (*p) return -1;
+    v = atol(s);
+    /* DIC reads at most 6 characters */
+    if (v < -99999 || v > 99999) return -1;
+    if (v) snprintf(offset, sizeof(offset), "%+ld", v);
+    else str_copy(offset, sizeof(offset), "0");
+    return 0;
+}
 
 void optical_set_drive(const char *d)
 {
@@ -107,6 +156,12 @@ static int ends_with_ci(const char *s, const char *tail)
     for (i = 0; i < b; i++)
         if (tolower((unsigned char)s[a - b + i]) != tolower((unsigned char)tail[i])) return 0;
     return 1;
+}
+
+static int same_ci(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return 0;
+    return *a == *b;
 }
 
 static void trim_eol(char *s)
@@ -177,6 +232,11 @@ typedef struct {
     FILE *f; runner_line_fn fn; void *ctx;
     int wrong;          /* "Wrong command. The disc isn't CD" */
     int denied;         /* "GetLastError: 5" */
+    int ask_offset;     /* DIC asked for the drive's read offset */
+    int sf;             /* the read looks for copy protections */
+    int resets;         /* "UNIT_ATTENTION" (the drive was reset) and "GetLastError: 121" (timeout) */
+    int unit_att;       /* the resets alone: they stop a read with /sf */
+    int stopped;        /* stopped by RetroArchiver after RESET_STOP of them, with /sf */
     char last[300];     /* the last meaningful line: it goes into the error message */
 } tee;
 
@@ -194,6 +254,16 @@ static void tee_line(void *c, const char *line)
     tee *t = (tee *)c;
     if (strstr(line, "Wrong command")) t->wrong = 1;
     if (strstr(line, "GetLastError: 5,")) t->denied = 1;
+    if (strstr(line, ASK_OFFSET)) t->ask_offset = 1;
+    /* seen on the PC with /sf: "GetLastError: 121" (semaphore timeout), then
+     * "SenseData 06-29-00 = UNIT_ATTENTION - POWER ON, RESET..." and "Please
+     * wait for 40000 milliseconds": the scan resets the drive over and over,
+     * for an hour. After RESET_STOP of them it is stopped */
+    if (strstr(line, "UNIT_ATTENTION") || strstr(line, "GetLastError: 121,")) {
+        t->resets++;
+        if (strstr(line, "UNIT_ATTENTION")) t->unit_att++;
+        if (t->sf && t->unit_att >= RESET_STOP && !t->stopped) { t->stopped = 1; runner_cancel(); }
+    }
     if (!boring(line)) str_copy(t->last, sizeof(t->last), line);
     /* "Remains 3 c2 error. Rereading times: 20/ 20" is also a result */
     if (t->f && (!optical_progress(line, NULL, NULL) || strstr(line, "error"))) fprintf(t->f, "%s\n", line);
@@ -350,6 +420,175 @@ static int scan(const char *out_txt, runner_line_fn on_line, void *ctx)
     write_toc(t.f, on_line, ctx);
     fclose(t.f);
     return 0;
+}
+
+/* ---- copy protections: the signature files on the disc ---- */
+
+/* The names come from BinaryObjectScanner (SabreTools, the path checks in
+ * Protection/Macrovision.SafeDisc.cs, SecuROM.cs, LaserLok.cs,
+ * CDDVDCops.cs). Used when protection-signatures.txt is missing; the file
+ * has the same format: the name, "*" at the start for an ending, "/" at
+ * the end for a folder, then the protection */
+static const char *const builtin_sigs[] = {
+    "00000001.TMP SafeDisc", "00000002.TMP SafeDisc", "CLCD16.DLL SafeDisc", "CLCD32.DLL SafeDisc",
+    "CLOKSPL.EXE SafeDisc", "DPLAYERX.DLL SafeDisc", "DRVMGT.DLL SafeDisc", "SECDRV.SYS SafeDisc",
+    "*.ICD SafeDisc",
+    "CMS16.DLL SecuROM", "CMS_95.DLL SecuROM", "CMS_NT.DLL SecuROM", "CMS32_95.DLL SecuROM",
+    "CMS32_NT.DLL SecuROM",
+    "LASERLOK.IN LaserLock", "LASERLOK/ LaserLock",
+    "CDCOPS.DLL CD-Cops", "*.GZ_ CD-Cops", "*.QZ_ CD-Cops", "*.W_X CD-Cops",
+    NULL
+};
+
+#define MAXSIG    128
+#define WALK_DEPTH 8            /* the disc's folders: deeper ones are not looked at */
+#define WALK_FILES 20000        /* nor more files than these (a CD of clip art) */
+#define MAXHIT    24            /* the names written in the log */
+
+typedef struct { char pat[64], prot[48]; } sig;
+
+typedef struct {
+    sig s[MAXSIG]; int ns;
+    char hit[MAXHIT][64]; int hprot[MAXHIT], nhit, count;   /* names kept, files found */
+    int files, depth;
+    char dir[1024];
+} sig_walk;
+
+/* "NAME   Protection" (or "# comment"); 0 if the line has none */
+static int parse_sig(const char *line, sig *s)
+{
+    const char *p = line, *e;
+    while (*p == ' ' || *p == '\t') p++;
+    if (!*p || *p == '#' || *p == ';') return 0;
+    for (e = p; *e && *e != ' ' && *e != '\t'; e++) ;
+    if (e == p || (size_t)(e - p) >= sizeof(s->pat)) return 0;
+    snprintf(s->pat, sizeof(s->pat), "%.*s", (int)(e - p), p);
+    while (*e == ' ' || *e == '\t') e++;
+    str_copy(s->prot, sizeof(s->prot), *e ? e : "unknown protection");
+    trim_eol(s->prot);
+    return 1;
+}
+
+static void load_sigs(sig_walk *w)
+{
+    char path[700], dir[600], line[200]; FILE *f; int i;
+    if (sigpath[0]) str_copy(path, sizeof(path), sigpath);
+    else { exe_dir(dir, sizeof(dir)); u8_join(path, sizeof(path), dir, SIG_FILE); }
+    w->ns = 0;
+    if ((f = u8_fopen(path, "rb")) != NULL) {
+        while (fgets(line, sizeof(line), f) && w->ns < MAXSIG) {
+            trim_eol(line);
+            if (parse_sig(line, &w->s[w->ns])) w->ns++;
+        }
+        fclose(f);
+    }
+    /* no file, or nothing in it: the built-in list */
+    if (!w->ns)
+        for (i = 0; builtin_sigs[i] && w->ns < MAXSIG; i++)
+            if (parse_sig(builtin_sigs[i], &w->s[w->ns])) w->ns++;
+}
+
+static int sig_match(const sig *s, const char *name, int isdir)
+{
+    size_t k = strlen(s->pat);
+    if (s->pat[k - 1] == '/') {
+        char d[64];
+        snprintf(d, sizeof(d), "%.*s", (int)(k - 1), s->pat);
+        return isdir && same_ci(name, d);
+    }
+    if (isdir) return 0;
+    if (s->pat[0] == '*') return ends_with_ci(name, s->pat + 1);
+    return same_ci(name, s->pat);
+}
+
+static void walk_one(void *c, const char *name, int isdir)
+{
+    sig_walk *w = (sig_walk *)c; int i; size_t len; char sub[1100];
+    if (w->files >= WALK_FILES) return;
+    w->files++;
+    for (i = 0; i < w->ns; i++)
+        if (sig_match(&w->s[i], name, isdir)) {
+            w->count++;
+            if (w->nhit < MAXHIT) {
+                str_copy(w->hit[w->nhit], sizeof(w->hit[0]), name);
+                w->hprot[w->nhit++] = i;
+            }
+            break;
+        }
+    if (!isdir || w->depth >= WALK_DEPTH) return;
+    len = strlen(w->dir);
+    u8_join(sub, sizeof(sub), w->dir, name);
+    if (strlen(sub) + 1 >= sizeof(w->dir)) return;
+    str_copy(w->dir, sizeof(w->dir), sub);
+    w->depth++;
+    u8_listdir(w->dir, walk_one, w);
+    w->depth--;
+    w->dir[len] = 0;
+}
+
+int optical_protection_files(const char *root, char *out, size_t n)
+{
+    sig_walk *w = (sig_walk *)calloc(1, sizeof(sig_walk));
+    strbuf b; int i, k, rc;
+#ifdef _WIN32
+    UINT old = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);  /* no "insert a disk" box */
+#endif
+    if (n) out[0] = 0;
+    if (!w) return -1;
+    load_sigs(w);
+    str_copy(w->dir, sizeof(w->dir), root);
+    rc = u8_listdir(root, walk_one, w);
+#ifdef _WIN32
+    SetErrorMode(old);
+#endif
+    if (rc) { free(w); return -1; }
+    /* "A, B (SafeDisc), C (SecuROM)": the names grouped by protection */
+    sb_init(&b);
+    for (i = 0; i < w->nhit; i++) {
+        const char *p = w->s[w->hprot[i]].prot;
+        for (k = 0; k < i && strcmp(w->s[w->hprot[k]].prot, p); k++) ;
+        if (k < i) continue;                /* already written with its group */
+        for (k = i; k < w->nhit; k++) {
+            if (strcmp(w->s[w->hprot[k]].prot, p)) continue;
+            sb_printf(&b, "%s%s", b.len ? ", " : "", w->hit[k]);
+        }
+        sb_printf(&b, " (%s)", p);
+    }
+    if (b.s) str_copy(out, n, b.s);
+    sb_free(&b);
+    rc = w->count;
+    free(w);
+    return rc;
+}
+
+/* auto: the files on the mounted disc decide. Says what it found, on screen
+ * and in the read's log; 1 if the read uses /sf */
+static int choose_sf(FILE *con, runner_line_fn on_line, void *ctx)
+{
+    char root[600], found[600], line[900]; int k;
+    const char *env = getenv("RETROARCHIVER_DISC_ROOT");    /* tests only */
+    if (prot_mode != META_PROT_AUTO) {
+        int on = prot_mode == META_PROT_ON;
+        if (con) fprintf(con, PROT_MARK "%s, %s\n", on ? "on" : "off", meta_prot_key(prot_mode));
+        say(on_line, ctx, on ? "Copy protection scan on, as chosen: DiscImageCreator looks for protections (/sf)."
+                             : "Copy protection scan off, as chosen.");
+        return on;
+    }
+    if (disc_root[0]) str_copy(root, sizeof(root), disc_root);
+    else if (env && *env) str_copy(root, sizeof(root), env);
+    else snprintf(root, sizeof(root), "%c:\\", drive[0]);
+    k = optical_protection_files(root, found, sizeof(found));
+    if (k > 0) snprintf(line, sizeof(line), "Found %s: enabling the protection scan (DiscImageCreator /sf).", found);
+    else if (k == 0) str_copy(line, sizeof(line), "No copy protection files on the disc: reading without the "
+                                                  "protection scan.");
+    else snprintf(line, sizeof(line), "Cannot list the files on %s (is the disc mounted?): reading without "
+                                      "the protection scan.", root);
+    if (con) {
+        fprintf(con, PROT_MARK "%s, auto\n", k > 0 ? "on" : "off");
+        if (k >= 0) fprintf(con, FILES_MARK "%s\n", k > 0 ? found : "none");
+    }
+    say(on_line, ctx, line);
+    return k > 0;
 }
 
 /* ---- read: the DIC read into a folder ---- */
@@ -526,15 +765,69 @@ static void stop_message(char *p, size_t n, int code, const tee *t, const char *
              code, last, drive, dir, avail >= 0 ? avail / MB : -1LL);
 }
 
+/* the drive's model from DIC's BASE_drive.txt, "ASUS DRW-08D6MT", with_rev
+ * with the firmware revision too ("ASUS DRW-08D6MT 1.00"); "" if not there */
+static void drive_model(const char *dir, const char *base, int with_rev, char *out, size_t n)
+{
+    char p[1100], name[200], line[1000], vendor[40] = "", product[40] = "", rev[40] = ""; FILE *f;
+    out[0] = 0;
+    snprintf(name, sizeof(name), "%s_drive.txt", base);
+    u8_join(p, sizeof(p), dir, name);
+    if (!(f = u8_fopen(p, "rb"))) return;
+    while (fgets(line, sizeof(line), f)) {
+        char *q = line, *v;
+        trim_eol(line);
+        while (*q == ' ' || *q == '\t') q++;
+        if (!(v = strchr(q, ':'))) continue;
+        *v++ = 0;
+        while (*v == ' ') v++;
+        if (!strcmp(q, "VendorId") && !vendor[0]) str_copy(vendor, sizeof(vendor), v);
+        else if (!strcmp(q, "ProductId") && !product[0]) str_copy(product, sizeof(product), v);
+        else if (!strcmp(q, "ProductRevisionLevel") && !rev[0]) str_copy(rev, sizeof(rev), v);
+    }
+    fclose(f);
+    if (!with_rev) rev[0] = 0;
+    snprintf(out, n, "%s%s%s%s%s", vendor, vendor[0] ? " " : "", product, rev[0] ? " " : "", rev);
+}
+
+/* DIC asked for the offset and nobody answered */
+static void offset_message(char *p, size_t n, const char *dir, const char *base)
+{
+    char model[120], what[160];
+    drive_model(dir, base, 0, model, sizeof(model));
+    if (model[0]) snprintf(what, sizeof(what), "model %s", model);
+    else str_copy(what, sizeof(what), "this drive's model (see the _drive.txt log of the read)");
+    snprintf(p, n, "The drive's read offset is not set, and DiscImageCreator does not know this drive: "
+                   "look it up for %s in the AccurateRip or redump list and set [Optical] DriveOffset "
+                   "in RetroArchiver.ini (dskrun: --drive-offset), then read it again.", what);
+}
+
+/* with the offset set, DIC's question gets it from a file in the read's
+ * folder (removed after the read); without, input stays NUL */
+static void cd_input(const char *out_dir, char *input, size_t n, FILE *con)
+{
+    FILE *f;
+    input[0] = 0;
+    if (con) fprintf(con, OFFSET_MARK "%s\n", offset[0] ? offset : "not set");
+    if (!offset[0]) return;
+    u8_join(input, n, out_dir, INPUT_FILE);
+    /* binary: DIC's C runtime reads the console's CRLF too */
+    if (!(f = u8_fopen(input, "wb"))) { input[0] = 0; return; }
+    fprintf(f, "%s\r\n", offset);
+    fclose(f);
+}
+
 static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void *ctx)
 {
     char base[96], img[1100], cue[1100], dat[1100], con[1100], arg[1100], parent[1100], *sep;
     const char *cd_argv[] = { dic, "cd", drive, arg, CD_SPEED, "/c2", C2_REREAD, "/sf", "/q", NULL };
     const char *dvd_argv[] = { dic, "dvd", drive, arg, DVD_SPEED, "/q", NULL };
-    tee t; int code = 0, rc, have;
-    char p[1600];
+    tee t; int code = 0, rc, have, sf = 0;
+    char p[1600], input[1100] = "";
     strbuf why;
     long long need = need_bytes(dvd);
+
+    prot_used = -1;             /* until DIC starts: no room, no folder */
 
     str_copy(base, sizeof(base), base_of(out_dir));
     /* before 30 minutes of reading: is there room, and is the file system fine? */
@@ -572,16 +865,26 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
 
     memset(&t, 0, sizeof(t));
     t.f = u8_fopen(con, "wb"); t.fn = on_line; t.ctx = ctx;
+    if (!dvd) {
+        sf = choose_sf(t.f, on_line, ctx);
+        t.sf = sf;
+        prot_used = sf;
+        if (!sf) { cd_argv[7] = "/q"; cd_argv[8] = NULL; }
+        cd_input(out_dir, input, sizeof(input), t.f);
+    }
     /* in a hidden console: on a pipe DIC's C runtime buffers its output in
      * blocks, so the progress lines ("Creating .scm (LBA) 1234/300000")
      * arrived only in bursts or at the end and the bar stood still
      * (seen on the XP VM: 0 bytes in 60 s on a pipe, at once on a console) */
-    rc = runner_run_tty(dvd ? dvd_argv : cd_argv, tee_line, &t, &code);
+    rc = runner_run_tty_input(dvd ? dvd_argv : cd_argv, input, tee_line, &t, &code);
+    if (input[0]) u8_remove(input);     /* not part of the read */
     if (rc == RUNNER_NOSTART || (rc == RUNNER_DONE && dll_missing(code))) {
         if (t.f) fclose(t.f);
         u8_rmtree(out_dir);
         return no_tool(rc == RUNNER_NOSTART ? 0 : code, on_line, ctx);
     }
+    /* stopped here, not by the user: a failed read, with DIC's logs */
+    if (rc == RUNNER_CANCELED && t.stopped) { runner_clear(); rc = RUNNER_DONE; if (!code) code = 1; }
     if (rc == RUNNER_CANCELED) { if (t.f) fclose(t.f); u8_rmtree(out_dir); return 1; }
     /* the .dat is the last thing DIC writes: if it is there with the .cue
      * (or the .iso) the read is complete, even if DIC exits with an error.
@@ -590,6 +893,9 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
     have = u8_filesize(dat) > 0 && (dvd ? u8_filesize(img) > 0 : u8_filesize(cue) > 0);
     if (have && code != 0 && t.f) fprintf(t.f, EXIT_MARK "%d\n", code);
     if (t.f) fclose(t.f);
+    /* the drive was reset during the read: with /sf the scan is the cause
+     * (read it again without), without /sf the scan is not the remedy */
+    if (t.resets) prot_used = t.sf ? 2 : -1;
     if (have) {
         if (code != 0) {
             snprintf(p, sizeof(p), "DiscImageCreator exited with error %d, but the read is complete: "
@@ -598,7 +904,14 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
         }
         return 0;
     }
-    if (t.wrong)
+    if (t.wrong || t.denied || (t.ask_offset && !offset[0])) prot_used = -1;    /* /sf would not help */
+    if (t.stopped)
+        snprintf(p, sizeof(p), "The drive was reset %d times while DiscImageCreator looked for copy "
+                               "protections (/sf): stopped it, it would go on like this for an hour. Read the "
+                               "CD again without the protection scan (Copy protection: Off).", t.unit_att);
+    else if (t.ask_offset && !offset[0])
+        offset_message(p, sizeof(p), out_dir, base);
+    else if (t.wrong)
         snprintf(p, sizeof(p), "The drive does not hold a %s: DiscImageCreator says the disc is of "
                                "another type. Check the disc, or the contents of the box.",
                  dvd ? "DVD" : "CD");
@@ -610,6 +923,9 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
     else
         snprintf(p, sizeof(p), "DiscImageCreator finished but %.200s is missing: the read is incomplete.",
                  u8_filesize(dat) > 0 ? base_of(dvd ? img : cue) : base_of(dat));
+    if (t.resets && !t.sf && strlen(p) + 200 < sizeof(p))
+        strcat(p, " The drive was reset during the read (UNIT_ATTENTION, timeouts): the copy protection "
+                  "scan would not help, it makes the drive reset even more.");
     say(on_line, ctx, p);
     /* the .dat or the image is missing: it is not a read. The folder stays,
      * with DIC's logs: the session sets it aside to explain the failure */
@@ -636,6 +952,12 @@ typedef struct {
     int dic_exit;                   /* DIC exited with an error but the read is complete (0 = no) */
     char protection[160];
     char tool[64], command[300], drive[120];
+    int prot_scan;                  /* read with /sf: 1, 0, -1 not recorded (older reads, DVD) */
+    char prot_choice[8];            /* "auto" "on" "off" */
+    int prot_listed;                /* the disc's files were looked at */
+    char prot_files[600];           /* the signature files found, "" none */
+    char offset_given[16];          /* the offset RetroArchiver gave DIC, "" none */
+    char offset_dic[16];            /* the drive offset DIC used, from its log */
 } dump;
 
 typedef struct { char name[200], mode[16]; } cue_file;
@@ -682,6 +1004,33 @@ static int last_number(const char *s)
     return atoi(s);
 }
 
+/* RetroArchiver's lines on how the read was made, and the offset DIC used:
+ * "	-         Drive Offset(Byte)   2832, (Samples)   708" */
+static void how_read(const char *line, dump *d)
+{
+    const char *q;
+    if (!strncmp(line, PROT_MARK, strlen(PROT_MARK))) {
+        q = line + strlen(PROT_MARK);
+        d->prot_scan = !strncmp(q, "on", 2);
+        if ((q = strchr(q, ',')) != NULL) {
+            while (*++q == ' ') ;
+            str_copy(d->prot_choice, sizeof(d->prot_choice), q);
+        }
+    } else if (!strncmp(line, FILES_MARK, strlen(FILES_MARK))) {
+        q = line + strlen(FILES_MARK);
+        d->prot_listed = 1;
+        str_copy(d->prot_files, sizeof(d->prot_files), strcmp(q, "none") ? q : "");
+    } else if (!strncmp(line, OFFSET_MARK, strlen(OFFSET_MARK))) {
+        q = line + strlen(OFFSET_MARK);
+        str_copy(d->offset_given, sizeof(d->offset_given), strcmp(q, "not set") ? q : "");
+    } else if (!d->offset_dic[0] && (q = strstr(line, "Drive Offset(Byte)")) != NULL &&
+               (q = strstr(q, "(Samples)")) != NULL) {
+        int v = atoi(q + 9);
+        if (v) snprintf(d->offset_dic, sizeof(d->offset_dic), "%+d", v);
+        else str_copy(d->offset_dic, sizeof(d->offset_dic), "0");
+    }
+}
+
 /* the lines that matter in DIC's logs */
 static void scan_logs(const char *dir, dump *d)
 {
@@ -689,6 +1038,7 @@ static void scan_logs(const char *dir, dump *d)
     const char *logs[] = { CONSOLE, "_disc.txt", NULL };
     int i;
     d->c2 = d->edc = d->readerr = -1;
+    d->prot_scan = -1;
     for (i = 0; logs[i]; i++) {
         if (logs[i][0] == '_') snprintf(name, sizeof(name), "%s%s", d->base, logs[i]);
         else str_copy(name, sizeof(name), logs[i]);
@@ -711,6 +1061,7 @@ static void scan_logs(const char *dir, dump *d)
             }
             if (strstr(line, "=> SecuROM") && !d->protection[0])
                 str_copy(d->protection, sizeof(d->protection), strstr(line, "=> SecuROM") + 3);
+            how_read(line, d);
         }
         fclose(f);
     }
@@ -722,26 +1073,7 @@ static void scan_logs(const char *dir, dump *d)
         while (fgets(line, sizeof(line), f)) if (strstr(line, "Read error")) d->readerr++;
         fclose(f);
     }
-    /* the program and the command: "CD01_20260101T233129.txt" holds the command */
-    snprintf(name, sizeof(name), "%s_drive.txt", d->base);
-    u8_join(p, sizeof(p), dir, name);
-    if ((f = u8_fopen(p, "rb")) != NULL) {
-        char vendor[40] = "", product[40] = "", rev[40] = "";
-        while (fgets(line, sizeof(line), f)) {
-            char *q = line, *v;
-            trim_eol(line);
-            while (*q == ' ' || *q == '\t') q++;
-            if (!(v = strchr(q, ':'))) continue;
-            *v++ = 0;
-            while (*v == ' ') v++;
-            if (!strcmp(q, "VendorId") && !vendor[0]) str_copy(vendor, sizeof(vendor), v);
-            else if (!strcmp(q, "ProductId") && !product[0]) str_copy(product, sizeof(product), v);
-            else if (!strcmp(q, "ProductRevisionLevel") && !rev[0]) str_copy(rev, sizeof(rev), v);
-        }
-        fclose(f);
-        snprintf(d->drive, sizeof(d->drive), "%s%s%s%s%s", vendor, vendor[0] ? " " : "", product,
-                 rev[0] ? " " : "", rev);
-    }
+    drive_model(dir, d->base, 1, d->drive, sizeof(d->drive));
 }
 
 typedef struct { dump *d; const char *dir; } edc_ctx;
@@ -882,12 +1214,6 @@ int optical_find_dat(char *path, size_t n, char *date, size_t dn)
         found = 1;
     }
     return found;
-}
-
-static int same_ci(const char *a, const char *b)
-{
-    for (; *a && *b; a++, b++) if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return 0;
-    return *a == *b;
 }
 
 /* all the disc's tracks, and no others, in a single game of the DAT */
@@ -1193,6 +1519,24 @@ static void count_or_null(json_writer *w, const char *key, int v)
     if (v >= 0) jw_int(w, key, v); else jw_null(w, key);
 }
 
+/* how a CD was read: the copy protection scan and the drive's offset.
+ * Reads made before this have neither: null and "unknown" */
+static void tech_cd_read(const dump *d, json_writer *w)
+{
+    if (d->prot_scan >= 0) {
+        jw_begin_obj(w, "copy_protection_scan");
+        jw_str(w, "choice", d->prot_choice[0] ? d->prot_choice : NULL);
+        jw_int(w, "used", d->prot_scan);
+        /* null: not looked at (on or off as chosen, or the disc not mounted) */
+        jw_str(w, "signature_files", d->prot_listed ? d->prot_files : NULL);
+        jw_end_obj(w);
+    } else {
+        jw_null(w, "copy_protection_scan");
+    }
+    /* what DIC says it used wins over what it was given */
+    jw_str(w, "drive_offset", d->offset_dic[0] ? d->offset_dic : d->offset_given[0] ? d->offset_given : "unknown");
+}
+
 static void tech(void *ctx, const char *img, json_writer *w)
 {
     dump *d = (dump *)calloc(1, sizeof(dump));
@@ -1236,6 +1580,7 @@ static void tech(void *ctx, const char *img, json_writer *w)
     jw_int(w, "c2_check", !d->no_c2);           /* 0: the drive does not report C2 errors */
     if (d->dic_exit) jw_int(w, "dic_exit_code", d->dic_exit);
     jw_str(w, "protection", d->protection[0] ? d->protection : NULL);
+    if (!ends_with_ci(d->t[0].name, ".iso")) tech_cd_read(d, w);
     if (redump_cached(img, d, &hit) == 1) {
         jw_begin_obj(w, "redump");
         jw_str(w, "game", hit.game);
@@ -1284,7 +1629,8 @@ static int volume_label(const char *img, char *out, size_t n)
 
 const media_ops cd_media = {
     "cd", "", check, scan, read_cd, compare_cd, tech, NULL, NULL,
-    "DiscImageCreator", "TOC", 1, phase_of, volume_label
+    "DiscImageCreator", "TOC", 1, phase_of, volume_label,
+    set_protection, protection_used
 };
 
 const media_ops dvd_media = {

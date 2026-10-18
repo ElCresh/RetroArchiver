@@ -70,6 +70,19 @@ static void test_meta_mixed(void)
     CHECK_STR(c->disk[0].label, "NTWKS40_IT");
     CHECK(c->disk[1].kind == MEDIA_DVD && c->disk[1].num == 1);
 
+    /* the copy protection scan: the box's choice, and a disk forced on */
+    CHECK_STR(meta_prot_key(META_PROT_OFF), "off");
+    CHECK(meta_prot_parse("on") == META_PROT_ON && meta_prot_parse("forse") == -1 && meta_prot_parse(NULL) == -1);
+    b->copy_protection = META_PROT_OFF;
+    meta_disk_get(b, 4)->copy_protection = META_PROT_ON;
+    meta_disk_get(b, 5)->copy_protection = META_PROT_OFF;
+    CHECK(meta_save(b, "tmp_unit/meta_misto", NULL, NULL, &err) == 0);
+    text = slurp_test("tmp_unit/meta_misto/metadata.json");
+    CHECK(text && strstr(text, "\"copy_protection_scan\": \"off\"") != NULL);
+    CHECK(meta_load(c, "tmp_unit/meta_misto", &err) == 0);
+    CHECK(c->copy_protection == META_PROT_OFF);
+    CHECK(c->disk[0].copy_protection == META_PROT_ON && c->disk[1].copy_protection == META_PROT_OFF);
+
     /* a schema it does not know: it comes from a newer version */
     put_text("tmp_unit/meta_misto/metadata.json", "{\"schema\": \"retroarchiver-4\"}");
     sb_clear(&err);
@@ -101,8 +114,10 @@ static void test_meta_old(void)
         "    {\"n\": 2, \"label\": \"\", \"note\": \"\", \"status\": \"da leggere\",\n"
         "     \"master\": null, \"scan\": null, \"reads\": [], \"compare\": null}\n"
         "  ]\n}\n");
+    b->copy_protection = META_PROT_ON;
     CHECK(meta_load(b, "tmp_unit/meta_vecchio", &err) == 0);
     CHECK(b->media_expected == 5 && b->count[MEDIA_FLOPPY] == 5 && b->count[MEDIA_CD] == 0);
+    CHECK(b->copy_protection == META_PROT_AUTO);        /* before the choice existed: auto */
     meta_composition(b, t, sizeof(t));
     CHECK_STR(t, "5 floppy");
     CHECK(b->ndisk == 2 && b->disk[0].kind == MEDIA_FLOPPY && b->disk[0].num == 1);

@@ -161,7 +161,14 @@ static int wait_disk(void *ctx, const disk_turn *t, char *label, size_t llen, ch
     beep2();
     say("\n");
     say("  ============================================================\n");
-    if (t->readable) {
+    if (t->readable && t->protection_retry) {
+        if (t->protection_retry == 1)
+            say("    Read %s %d again, looking for copy protections (/sf)\n", kind, t->num);
+        else
+            say("    Read %s %d again, without looking for copy protections\n", kind, t->num);
+        say("    ENTER to read it again, S to keep what was read\n");
+        say("    F finish the box   -   Q quit and resume later\n");
+    } else if (t->readable) {
         say("    Insert %s %d of %d\n", kind, t->num, t->count);
         say("    ENTER to read it (or type the label and ENTER)\n");
         say("    S skip   -   F finish the box   -   Q quit and resume later\n");
@@ -205,7 +212,13 @@ static void usage(void)
     say("    -a SRC     where to read from: drive or image file (default a:)\n");
     say("    -X FILE    DiscImageCreator program    (default DiscImageCreator)\n");
     say("    -d DRIVE   CD and DVD drive            (default d:)\n");
-    say("    -R DIR     folder of the redump DATs   (default the dskrun folder)\n\n");
+    say("    -R DIR     folder of the redump DATs   (default the dskrun folder)\n");
+    say("    --copy-protection=auto|on|off\n");
+    say("               look for CD copy protections (DiscImageCreator /sf); auto:\n");
+    say("               only if the disc has files of a known protection (default)\n");
+    say("    --drive-offset=N\n");
+    say("               the CD drive's read offset in samples, for a drive that\n");
+    say("               DiscImageCreator does not know (AccurateRip or redump list)\n\n");
     say("  Pattern placeholders:\n");
     say("    {n} {nn} {nnn}   floppy number, with leading zeros\n");
     say("    {set}            the title\n");
@@ -252,6 +265,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-R") && i + 1 < argc) to_utf8(argv[++i], dats, sizeof(dats), ARG_CP);
         else if (!strcmp(argv[i], "-k"))                 cfg.keepall = 1;
         else if (!strcmp(argv[i], "-r"))                 host.ask_again = 1;
+        else if (!strncmp(argv[i], "--copy-protection=", 18)) {
+            if (meta_prot_parse(argv[i] + 18) < 0) { usage(); return 2; }
+            cfg.copy_protection = argv[i] + 18;
+        } else if (!strncmp(argv[i], "--drive-offset=", 15)) {
+            if (optical_set_drive_offset(argv[i] + 15)) { usage(); return 2; }
+        }
         else if (argv[i][0] != '-')                      tot = atoi(argv[i]);
     }
     if (cfg.maxread < 2) cfg.maxread = 2;

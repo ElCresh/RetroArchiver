@@ -85,6 +85,26 @@ int main(int argc, char **argv)
     rc = runner_run_tty(cmd, on_line, &s, &code);
     ok("console: missing program = RUNNER_NOSTART", rc == RUNNER_NOSTART);
 
+    /* the answer to a question (DiscImageCreator's drive offset) from a
+     * file, through the hidden console */
+    {
+        const char *ask[] = { "cmd.exe", "/c", "set /p X=& call echo got [%X%]", NULL };
+        char in[MAX_PATH + 16];
+        GetTempPathA(MAX_PATH, in);
+        strncat(in, "tty_input.txt", sizeof(in) - strlen(in) - 1);
+        if ((f = fopen(in, "wb")) != NULL) { fputs("+6\r\n", f); fclose(f); }
+        memset(&s, 0, sizeof(s));
+        rc = runner_run_tty_input(ask, in, on_line, &s, &code);
+        if (rc != RUNNER_DONE || s.lines < 1 || strcmp(s.first[0], "got [+6]")) show(&s, "input", rc, code);
+        ok("console: the program reads its answer from the file", rc == RUNNER_DONE && s.lines >= 1 &&
+           !strcmp(s.first[0], "got [+6]"));
+        memset(&s, 0, sizeof(s));
+        rc = runner_run_tty(ask, on_line, &s, &code);
+        ok("console: without a file the input is NUL", rc == RUNNER_DONE && s.lines >= 1 &&
+           !strncmp(s.first[0], "got [", 5) && !strstr(s.first[0], "+6"));
+        DeleteFileA(in);
+    }
+
     /* on the VM: the real SAMdisk (argument 3) with "scan SOURCE" (argument 4),
      * which surely writes, and with "copy SOURCE" (on a: it writes "Cyl") */
     if (argc >= 5) {

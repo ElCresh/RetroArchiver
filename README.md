@@ -57,10 +57,29 @@ each difference to its cylinder, so the real problems stand out.
 ### CDs and DVDs
 
 Optical discs are read with DiscImageCreator (`cd` with C2 error
-re-reading and protection detection, or `dvd`). If the track checksums
-match a **redump.org DAT** placed next to the program, one read is
-enough: the disc is identical to the one other archivists verified.
-Otherwise two reads are compared.
+re-reading and, when needed, protection detection, or `dvd`). If the
+track checksums match a **redump.org DAT** placed next to the program,
+one read is enough: the disc is identical to the one other archivists
+verified. Otherwise two reads are compared.
+
+**Copy protection.** DiscImageCreator's `/sf` looks for protections in
+the disc's files, reading 64 sectors at a time, which failed on a real
+IDE controller with an unprotected disc. So it is a choice of the box:
+*Automatic* (the default) turns it on only when the mounted disc has a
+signature file of a known protection (SafeDisc, SecuROM, LaserLock,
+CD-Cops: the list is `protection-signatures.txt` next to the program,
+from the names BinaryObjectScanner checks); *On* and *Off* force it
+(`dskrun --copy-protection=auto|on|off`). A read made without it that
+fails or has errors is offered again with the scan on. If with the scan
+the drive keeps resetting itself (UNIT_ATTENTION, timeouts), the read is
+stopped at the third reset and offered again without it.
+
+**Drive offset.** For a drive missing from DiscImageCreator's
+`driveOffset.txt`, set its read offset in samples (AccurateRip or redump
+list) in `[Optical] DriveOffset` of `RetroArchiver.ini`, or
+`dskrun --drive-offset=N`: it is given to DiscImageCreator as the answer
+to its question. Both choices, and the offset used, are recorded in
+`metadata.json`.
 
 ### Mixed boxes
 

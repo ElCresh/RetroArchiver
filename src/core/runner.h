@@ -22,11 +22,18 @@ int  runner_run(const char *const *argv, runner_line_fn on_line, void *ctx, int 
  * ending with a count, "(LBA) 1234/300000"). Input comes from NUL.
  * Otherwise (dskrun already has its console, Linux) it is runner_run */
 int  runner_run_tty(const char *const *argv, runner_line_fn on_line, void *ctx, int *exit_code);
+/* runner_run_tty with the program's input read from the file input instead
+ * of NUL: the answers to the questions it asks (DiscImageCreator asks for
+ * the drive's read offset). After the end of the file it behaves as with
+ * NUL. input NULL or "" is NUL, as in runner_run_tty */
+int  runner_run_tty_input(const char *const *argv, const char *input,
+                          runner_line_fn on_line, void *ctx, int *exit_code);
 /* the runner_run_tty helper: a program that, launched with
  * "--tty PROGRAM ARG...", calls runner_tty_host (the window itself) */
 void runner_set_tty_helper(const char *exe);
 /* Windows only: the helper's job. argv is the program to launch with its
- * arguments; returns its exit code */
+ * arguments; returns its exit code. The program reads the helper's own
+ * input: NUL, or runner_run_tty_input's file */
 int  runner_tty_host(const char *const *argv);
 /* from another thread: stops the running program */
 void runner_cancel(void);
