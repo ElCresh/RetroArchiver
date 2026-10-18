@@ -14,6 +14,8 @@ the DISC prefix that the fake replaces with the name of the read.
     fixtures/dic/cd_c2fixed/    like cd_good, with C2 errors fixed on rereads
     fixtures/dic/cd_noc2/       like cd_good, with a drive that does not report C2
     fixtures/dic/cd_brokendat/  .dat and .cue exist, but the .dat lists no tracks
+    fixtures/dic/data_good/     data CD of one track read with the data command
+    fixtures/dic/data_edc/      the same, with 2 sectors with bad EDC/ECC
     fixtures/dic/dvd_good/      DVD-ROM: the .iso and the logs
     fixtures/redump/            a test redump DAT with cd_good and
                                 dvd_good, and DIC's default.dat
@@ -299,6 +301,47 @@ def cd_variant(name, iso_raw, aud, c2=0, protection="", c2_mode="", no_tracks=Fa
     write(d, "console.txt", "\n".join(con) + "\n")
 
 
+def data_variant(name, iso_raw, edc=0):
+    """a data CD of one track read with DIC's data command, as on the PC
+    with the ASUS DRW-08D6MT that cannot read the lead-in: the .bin and the
+    logs, no .cue and no .dat; LBA -1 fails (Reread NG) and is not part of
+    the .bin. edc: sectors with bad EDC/ECC"""
+    d = os.path.join(FIX, "dic", name)
+    os.makedirs(d)
+    n = len(iso_raw) // 2352
+    write(d, "DISC.bin", iso_raw)
+    write(d, "DISC.sub", b"\x00" * 96 * n)
+    write(d, "DISC.c2", b"\x00" * 294 * n)
+    write(d, "DISC.toc", bytes([0, 18, 1, 1]) + b"\x00" * 14)
+    write(d, "DISC_interleave.sub", b"\x00" * 96 * n)
+    write(d, "DISC_20260101T233129.txt", "data d DISC.bin 16 0 %d /c2 20 /q \r\n" % n)
+    write(d, "DISC_disc.txt", "========== TOC ==========\r\n"
+                              "\t  Data Track  1, LBA        0 -      %d, Length      %d\r\n"
+                              "\t                                          Total       %d\r\n"
+                              "========== FULL TOC ==========\r\n"
+                              "\tFirstCompleteSession: 1\r\n\t LastCompleteSession: 1\r\n"
+                              "\t  Data Track  1, LBA        0 -      %d, Length      %d\r\n"
+                              "\t                                          Total       %d\r\n"
+                              % (n - 1, n, n, n - 1, n, n))
+    write(d, "DISC_mainError.txt", "LBA[-00001, 0xffffffff]: Read error. padding [2352 bytes]\r\n"
+                                   "LBA[-00001, 0xffffffff] Reread NG\r\n")
+    write(d, "DISC_mainInfo.txt", "========== LBA[000016, 0x00010]: Main Channel ==========\r\n")
+    for log in ("_subReadable", "_volDesc"):
+        write(d, "DISC%s.txt" % log, "")
+    write(d, "DISC_c2Error.txt", "No C2 errors\r\n")
+    write(d, "DISC_EccEdc.txt",
+          "[NO ERROR] User data vs. ecc/edc match all\r\nTotal errors: 0\r\nTotal warnings: 0\r\n" if not edc else
+          "[ERROR] Number of sector(s) where user data doesn't match the expected ECC/EDC: %d\r\n"
+          "Total errors: %d\r\nTotal warnings: 0\r\n" % (edc, edc))
+    con = ["AppVersion", "\t32 bit, AnsiBuild, 20260101T233129", "StartTime: 2026-10-18T10:00:00+0200",
+           "Set OpCode: 0xbe, SubCode: 1(Raw)", "LBA[-00001, 0xffffffff] Reread NG"]
+    con += ["Creating .bin from 0 to %d (LBA) %6d" % (n, k) for k in range(0, n, 60)] + \
+           ["Creating .bin from 0 to %d (LBA) %6d" % (n, n - 1)]
+    con += ["No C2 errors", "Exec \"EccEdc.exe\" check \"DISC.bin\"", "Checking sectors: %6d/%6d" % (n, n),
+            "EndTime: 2026-10-18T10:04:00+0200"]
+    write(d, "console.txt", "\n".join(con) + "\n")
+
+
 def dvd_variant(name, iso):
     d = os.path.join(FIX, "dic", name)
     os.makedirs(d)
@@ -334,6 +377,8 @@ def main():
     cd_variant("cd_c2fixed", raw, good, c2_mode="fixed")
     cd_variant("cd_noc2", raw, good, c2_mode="nodrive")
     cd_variant("cd_brokendat", raw, good, no_tracks=True)
+    data_variant("data_good", raw)
+    data_variant("data_edc", raw, edc=2)
     dvd_variant("dvd_good", iso)
     dvd_variant("dvd_joliet", jiso)
 

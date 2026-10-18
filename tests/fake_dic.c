@@ -1,6 +1,7 @@
 /* fake_dic - fake DiscImageCreator to test optical.c, dskrun and the
- * GUI without an optical drive. Understands "ls X", "cd X FILE.bin ..." and
- * "dvd X FILE.iso ...", and with no arguments (or with /v) prints the
+ * GUI without an optical drive. Understands "ls X", "cd X FILE.bin ...",
+ * "data X FILE.bin SPEED START END ..." and "dvd X FILE.iso ...", and
+ * with no arguments (or with /v) prints the
  * version like the real one. A read copies a folder from tests/fixtures/dic
  * (gen_dic.py) next to FILE, with the DISC prefix replaced by the name
  * of FILE, and echoes its console.txt.
@@ -11,8 +12,11 @@
  *                     (error), WRONG (disc of the other type) or
  *                     SLOW folder (5 seconds first) or EXITn folder
  *                     (complete read but exit code n), RESETSn folder (n
- *                     drive resets first, then the folder or FAIL); without a script
- *                     cd_good or dvd_good
+ *                     drive resets first, then the folder or FAIL), LEADIN
+ *                     [folder] (a drive that cannot read the lead-in: the read
+ *                     fails, leaving the folder's _disc.txt with its TOC);
+ *                     without a script cd_good, data_good or dvd_good. A
+ *                     data read fails if END is not the folder's DISC.bin end
  *   FAKE_DIC_NODRIVE  if defined, "ls" fails as with a wrong drive
  *   FAKE_DIC_PACE     milliseconds to pause after each line printed (the
  *                     window can be seen reading, for screenshots)
@@ -21,8 +25,8 @@
  *                     as DIC 20260101 does (scanf, then a character): with
  *                     NUL it fails with "GetLastError: 6"
  *   FAKE_DIC_LOG      file where each read appends one line: "cd sf" or
- *                     "cd nosf", then "offset N", "offset failed" or
- *                     "offset none" (not asked)
+ *                     "cd nosf" ("data 0-300 nosf" for data), then "offset
+ *                     N", "offset failed" or "offset none" (not asked)
  *
  * The position in the script is kept in SCRIPT.pos, as in the fake SAMdisk. */
 #include <stdio.h>
@@ -160,7 +164,8 @@ static void replay(const char *src_dir, const char *base)
         line[strcspn(line, "\r\n")] = 0;
         rename_to(line, base, fixed, sizeof(fixed));
         k = strlen(fixed);
-        printf("%s%s", fixed, k && fixed[k - 1] >= '0' && fixed[k - 1] <= '9' && strchr(fixed, '/') ? "\r" : "\n");
+        printf("%s%s", fixed, k && fixed[k - 1] >= '0' && fixed[k - 1] <= '9' &&
+                              (strchr(fixed, '/') || strstr(fixed, "(LBA)")) ? "\r" : "\n");
         if (ms > 0) { fflush(stdout); pause_ms(ms); }
     }
     printf("\n");
@@ -182,20 +187,42 @@ static int ask_offset(int *v)
     return 1;
 }
 
+enum { CD, DVD, DATA };
+static long data_start, data_end;
+
 /* FAKE_DIC_LOG: how the read was asked for */
-static void log_read(int dvd, int sf, const char *off)
+static void log_read(int kind, int sf, const char *off)
 {
     const char *p = getenv("FAKE_DIC_LOG"); FILE *f;
     if (!p || !(f = fopen(p, "a"))) return;
-    fprintf(f, "%s %s offset %s\n", dvd ? "dvd" : "cd", sf ? "sf" : "nosf", off);
+    if (kind == DATA) fprintf(f, "data %ld-%ld", data_start, data_end);
+    else fprintf(f, "%s", kind == DVD ? "dvd" : "cd");
+    fprintf(f, " %s offset %s\n", sf ? "sf" : "nosf", off);
     fclose(f);
 }
 
-static int dump(int dvd, const char *file, int sf)
+/* data: the end must be the disc's lead-out, as in the folder's TOC */
+static int data_range_ok(const char *src)
+{
+    char p[1100]; FILE *f; long size;
+    snprintf(p, sizeof(p), "%s/DISC.bin", src);
+    if (!(f = fopen(p, "rb"))) { printf("fake_dic: %s has no DISC.bin for data\n", src); return 0; }
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fclose(f);
+    if (data_start != 0 || data_end * 2352 != size) {
+        printf("fake_dic: data %ld-%ld, but the disc has %ld sectors\n", data_start, data_end, size / 2352);
+        return 0;
+    }
+    return 1;
+}
+
+static int dump(int kind, const char *file, int sf)
 {
     char line[256], dir[1024], base[256], src[1024], p[1400], off[16] = "none";
     const char *script = getenv("FAKE_DIC_SCRIPT"), *fix = getenv("FAKE_DIC_DIR");
-    const char *what = dvd ? "dvd_good" : "cd_good";
+    int dvd = kind == DVD;
+    const char *what = kind == DVD ? "dvd_good" : kind == DATA ? "data_good" : "cd_good";
     int code = 0, asked = 0, have_offset = 0;
     FILE *f;
 
@@ -211,11 +238,11 @@ static int dump(int dvd, const char *file, int sf)
         fclose(f);
     }
     if (getenv("FAKE_DIC_ASK_OFFSET") && !dvd) {
-        if (!ask_offset(&asked)) { log_read(dvd, sf, "failed"); return 1; }
+        if (!ask_offset(&asked)) { log_read(kind, sf, "failed"); return 1; }
         snprintf(off, sizeof(off), "%d", asked);
         have_offset = 1;
     }
-    log_read(dvd, sf, off);
+    log_read(kind, sf, off);
     if (script) {
         if (next_line(script, line, sizeof(line))) { printf("fake_dic: script finished\n"); return 1; }
         what = line;
@@ -246,8 +273,13 @@ static int dump(int dvd, const char *file, int sf)
         printf("Wrong command. The disc isn't CD, CD-R, CD-RW, GD\n");
         return 1;
     }
-    /* a drive that cannot read the lead-in, as the ASUS DRW-08D6MT on the PC */
-    if (!strcmp(what, "LEADIN")) {
+    /* a drive that cannot read the lead-in, as the ASUS DRW-08D6MT on the PC;
+     * "LEADIN data_good": the TOC DIC wrote before stopping is that disc's */
+    if (!strncmp(what, "LEADIN", 6)) {
+        if (what[6] == ' ') {
+            snprintf(src, sizeof(src), "%s/%s", fix ? fix : "fixtures/dic", what + 7);
+            copy_one(src, "DISC_disc.txt", dir, base);
+        }
         printf("This drive can't read the lead-in\nSet OpCode: 0xbe, SubCode: 1(Raw)\n"
                "LBA[-00001, 0xffffffff]: [F:ReadCDAll][L:1114]\n\tOpcode: 0xbe\n"
                "\tScsiStatus: 0x02 = CHECK_CONDITION\n"
@@ -268,6 +300,7 @@ static int dump(int dvd, const char *file, int sf)
         what = sp ? sp + 1 : (dvd ? "dvd_good" : "cd_good");
     }
     snprintf(src, sizeof(src), "%s/%s", fix ? fix : "fixtures/dic", what);
+    if (kind == DATA && !data_range_ok(src)) return 1;
     if (copy_dir(src, dir, base)) { printf("fake_dic: cannot copy %s to %s\n", src, dir); return 1; }
     replay(src, base);
     /* DIC writes the offset it used in _disc.txt */
@@ -312,7 +345,16 @@ int main(int argc, char **argv)
     {
         int i, sf = 0;
         for (i = 5; i < argc; i++) if (!strcmp(argv[i], "/sf")) sf = 1;
-        return dump(!strcmp(argv[1], "dvd"), argv[3], sf);
+        return dump(!strcmp(argv[1], "dvd") ? DVD : CD, argv[3], sf);
+    }
+    /* data <DriveLetter> <Filename> <DriveSpeed(0-72)> <StartLBA> <EndLBA+1> */
+    if (argc >= 7 && !strcmp(argv[1], "data"))
+    {
+        int i, sf = 0;
+        for (i = 7; i < argc; i++) if (!strcmp(argv[i], "/sf")) sf = 1;
+        data_start = atol(argv[5]);
+        data_end = atol(argv[6]);
+        return dump(DATA, argv[3], sf);
     }
     printf("fake_dic: unexpected command\n");
     return 2;

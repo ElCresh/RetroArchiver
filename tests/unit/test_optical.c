@@ -120,6 +120,36 @@ static void test_progress(void)
     CHECK(cd_media.phase_of("No C2 errors") != NULL);
     CHECK(cd_media.phase_of("/c2 val2 was omitted. set [8]") == NULL);
     CHECK(cd_media.phase_of("Creating .scm (LBA)   1234/ 300000") == NULL);
+    /* the data command counts the LBA without a total */
+    CHECK(optical_progress("Creating .bin from 0 to 208949 (LBA)   1234", &a, &b) && a == 1234 && b == 208949);
+    CHECK(optical_progress("Creating .bin from -1 to 300 (LBA)     99", &a, &b) && a == 100 && b == 301);
+    CHECK(!optical_progress("Creating .bin from 0 to 0 (LBA) 5", NULL, NULL));
+    CHECK(cd_media.phase_of("LBA[-00001, 0xffffffff] Reread NG") == NULL);
+}
+
+/* the TOC in DIC's _disc.txt, and the drives without lead-in */
+static void test_toc(void)
+{
+    optical_toc t; char list[200] = "";
+    CHECK(optical_toc_file("fixtures/dic/data_good/DISC_disc.txt", &t) == 0);
+    CHECK(t.n == 1 && t.data[0] == 1 && t.start[0] == 0 && t.end == 300 && t.sessions == 1 && !t.pregap);
+    CHECK(optical_toc_file("fixtures/dic/cd_good/DISC_disc.txt", &t) == 0);
+    CHECK(t.n == 2 && t.data[0] == 1 && t.data[1] == 0 && t.start[1] == 300 && t.end == 420);
+    CHECK(optical_toc_file("fixtures/dic/dvd_good/DISC_disc.txt", &t) == -1 && t.n == 0);
+    CHECK(optical_toc_file("fixtures/non-esiste.txt", &t) == -1);
+
+    CHECK(optical_list_add(list, sizeof(list), "ASUS    DRW-08D6MT      A101 ") == 1);
+    CHECK_STR(list, "ASUS DRW-08D6MT A101");
+    CHECK(optical_list_add(list, sizeof(list), "asus DRW-08D6MT A101") == 0);       /* already there */
+    CHECK(optical_list_add(list, sizeof(list), "PLEXTOR DVDR   PX-716A 1.11") == 1);
+    CHECK_STR(list, "ASUS DRW-08D6MT A101; PLEXTOR DVDR PX-716A 1.11");
+    /* Windows and DIC split vendor and product each their way */
+    CHECK(optical_drive_listed(list, "ASUSDRW-08D6MT A101"));
+    CHECK(optical_drive_listed(list, "PLEXTOR DVDR PX-716A 1.11"));
+    CHECK(!optical_drive_listed(list, "ASUS DRW-08D6MT A102"));
+    CHECK(!optical_drive_listed(list, "ASUS DRW-08D6MT"));
+    CHECK(!optical_drive_listed(list, "") && !optical_drive_listed("", "ASUS"));
+    CHECK(optical_list_add(list, 30, "LITE-ON LTR-52327S QS0C") == 0);              /* no room */
 }
 
 static const char *jread(json_writer *w, const media_ops *m, const char *dir)
@@ -235,6 +265,7 @@ void test_optical(void)
     test_signatures();
     test_tree();
     test_progress();
+    test_toc();
     CHECK_STR(cd_media.name, "cd");
     CHECK_STR(dvd_media.name, "dvd");
     CHECK_STR(cd_media.ext, "");

@@ -34,7 +34,17 @@
  * A drive missing from DIC's driveOffset.txt makes it ask for the read
  * offset on its input ("Please input drive offset(Samples): ", read with
  * scanf): with [Optical] DriveOffset set the answer comes from a file
- * instead of NUL, otherwise the question fails and the read with it. */
+ * instead of NUL, otherwise the question fails and the read with it.
+ *
+ * Drives that cannot read the lead-in or the lead-out (seen on the PC:
+ * ASUS DRW-08D6MT, LBA -1 refused) make cd fail. A data CD of a single
+ * track is then read with
+ *   data <drive> <file.bin> <speed> 0 <lead-out LBA> /c2 20 [/sf] /q
+ * which writes only the .bin, its .c2/.sub and the logs: RetroArchiver
+ * writes the .cue and the .dat. The read is checked by EDC/ECC (every
+ * sector carries its own); it is not a redump-grade dump. The drive's model
+ * is remembered ([Optical] NoLeadInDrives in the window's ini): its next
+ * data CDs go straight to data. Audio and mixed CDs need cd. */
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +53,7 @@
 #include "meta.h"
 #include "fsu8.h"
 #include "iso9660.h"
+#include "romhash.h"
 #include "sha256.h"
 
 #define CD_SPEED  "16"          /* slow enough for a reliable C2 check */
@@ -66,6 +77,8 @@
 #define PROT_MARK   "RetroArchiver: copy protection scan: "
 #define FILES_MARK  "RetroArchiver: copy protection files: "
 #define OFFSET_MARK "RetroArchiver: drive offset given: "
+/* "data 0-208949 (why)": read with the data command, not with cd */
+#define METHOD_MARK "RetroArchiver: read method: "
 /* DIC asks for the offset of a drive it does not know */
 #define ASK_OFFSET  "This drive doesn't define in driveOffset.txt"
 #define INPUT_FILE  "dic-input.txt"
@@ -79,8 +92,17 @@ static char offset[16] = "";            /* "" = not set */
 static char sigpath[512] = "", disc_root[512] = "";
 static int prot_mode = META_PROT_AUTO;  /* for the next read */
 static int prot_used = 0;               /* of the last read */
+static char noleadin[2048] = "";        /* the drives that cannot read the lead-in, ";" between them */
+static void (*learned_fn)(void *, const char *);
+static void *learned_ctx;
 
 void optical_set_dic(const char *path) { str_copy(dic, sizeof(dic), path); }
+void optical_set_noleadin_drives(const char *list) { str_copy(noleadin, sizeof(noleadin), list ? list : ""); }
+void optical_on_drive_learned(void (*fn)(void *ctx, const char *model), void *ctx)
+{
+    learned_fn = fn;
+    learned_ctx = ctx;
+}
 void optical_set_datdir(const char *dir) { str_copy(datdir, sizeof(datdir), dir); }
 void optical_set_signatures(const char *path) { str_copy(sigpath, sizeof(sigpath), path); }
 void optical_set_disc_root(const char *dir) { str_copy(disc_root, sizeof(disc_root), dir); }
@@ -210,7 +232,15 @@ static int xml_text(const char *line, const char *tag, char *out, size_t n)
  * .scm (LBA)  1234/300000"); it does not go into the logs, only to the bar */
 int optical_progress(const char *line, long *done, long *total)
 {
-    const char *p = line + strlen(line), *slash;
+    const char *p = line + strlen(line), *slash, *from;
+    long a, b, n;
+    /* the data command counts the LBA: "Creating .bin from 0 to 208949 (LBA)   1234" */
+    if ((from = strstr(line, " from ")) != NULL && strstr(from, "(LBA)") &&
+        sscanf(from, " from %ld to %ld (LBA) %ld", &a, &b, &n) == 3 && b > a) {
+        if (done) *done = n - a;
+        if (total) *total = b - a;
+        return 1;
+    }
     while (p > line && p[-1] == ' ') p--;
     if (p == line || !isdigit((unsigned char)p[-1])) return 0;
     while (p > line && isdigit((unsigned char)p[-1])) p--;
@@ -238,7 +268,7 @@ typedef struct {
     int unit_att;       /* the resets alone: they stop a read with /sf */
     int stopped;        /* stopped by RetroArchiver after RESET_STOP of them, with /sf */
     char last[300];     /* the last meaningful line: it goes into the error message */
-    int leadin;         /* the drive cannot read the lead-in (LBA -1) */
+    int leadin;         /* the drive cannot read the lead-in (1, LBA -1) or the lead-out (2) */
 } tee;
 
 /* DIC housekeeping lines that do not explain an error */
@@ -258,8 +288,11 @@ static void tee_line(void *c, const char *line)
     if (strstr(line, ASK_OFFSET)) t->ask_offset = 1;
     /* seen on the PC (ASUS DRW-08D6MT): "This drive can't read the lead-in",
      * then a raw read of LBA -1 refused with ILLEGAL_REQUEST, and DIC stops
-     * with error 1. The cd command needs it; /sf has nothing to do with it */
+     * with error 1. The cd command needs it; /sf has nothing to do with it.
+     * Which of the two DIC checks depends on the sign of the disc's
+     * combined offset: the same drive may say lead-out on another disc */
     if (strstr(line, "can't read the lead-in") || strstr(line, "LBA[-00001")) t->leadin = 1;
+    else if (strstr(line, "can't read the lead-out") && !t->leadin) t->leadin = 2;
     /* seen on the PC with /sf: "GetLastError: 121" (semaphore timeout), then
      * "SenseData 06-29-00 = UNIT_ATTENTION - POWER ON, RESET..." and "Please
      * wait for 40000 milliseconds": the scan resets the drive over and over,
@@ -338,6 +371,60 @@ static int check(strbuf *msg)
 /* the disc's sectors according to the last TOC read (-1 = unknown): the
  * estimate of the space the read needs */
 static long toc_sectors = -1;
+/* the TOC of the disc in the drive, from the scan; n 0 if unknown */
+static optical_toc g_toc;
+
+/* DIC's _disc.txt: "\t  Data Track  1, LBA        0 -   208948, Length   208949"
+ * up to "Total", once in the TOC and again in the FULL TOC (the last one
+ * wins: it has the last session's lead-out), "Pregap Track   , LBA" when
+ * track 1 does not start at 0, "LastCompleteSession: 2" */
+int optical_toc_file(const char *path, optical_toc *t)
+{
+    FILE *f = u8_fopen(path, "rb"); char line[400], kind[16]; optical_toc cur;
+    int num; long a, b, len; const char *q;
+    memset(t, 0, sizeof(*t));
+    memset(&cur, 0, sizeof(cur));
+    if (!f) return -1;
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, "==========")) { cur.n = 0; cur.pregap = 0; continue; }
+        if ((q = strstr(line, "LastCompleteSession:")) != NULL) t->sessions = atoi(q + 20);
+        if (strstr(line, "Pregap Track")) cur.pregap = 1;
+        else if (sscanf(line, " %15s Track %d, LBA %ld - %ld, Length %ld", kind, &num, &a, &b, &len) == 5) {
+            if (cur.n < MAXTRK) {
+                cur.data[cur.n] = !strcmp(kind, "Data");
+                cur.start[cur.n++] = a;
+                cur.end = b + 1;
+            }
+        } else if (strstr(line, "Total") && cur.n) {
+            int s = t->sessions;
+            *t = cur;
+            t->sessions = s;
+        }
+    }
+    fclose(f);
+    return t->n ? 0 : -1;
+}
+
+/* 1 if the data command can read the whole disc: a single data track from
+ * LBA 0, in one session. 0 with the reason, for the messages */
+static int data_only(const optical_toc *t, char *why, size_t n)
+{
+    int i, audio = 0;
+    for (i = 0; i < t->n; i++) audio += !t->data[i];
+    if (!t->n)
+        str_copy(why, n, "the disc's TOC is not known, so it cannot be told whether it is a data CD");
+    else if (audio)
+        snprintf(why, n, "this CD has %d audio track%s of %d, which only the cd command reads as they are",
+                 audio, audio == 1 ? "" : "s", t->n);
+    else if (t->n > 1 || t->sessions > 1)
+        snprintf(why, n, "this data CD has %d tracks in %d session%s, and the data command reads only a CD "
+                         "of a single track", t->n, t->sessions > 1 ? t->sessions : 1, t->sessions > 1 ? "s" : "");
+    else if (t->pregap || t->start[0] != 0 || t->end <= 0)
+        str_copy(why, n, "its data track does not start at the beginning of the disc");
+    else
+        return 1;
+    return 0;
+}
 
 #ifdef _WIN32
 /* IOCTL_CDROM_READ_TOC: TOC in MSF, as the drive's driver returns it */
@@ -374,6 +461,8 @@ static void write_toc(FILE *f, runner_line_fn on_line, void *ctx)
     say(on_line, ctx, line);
     for (i = 0; i < n; i++) {
         long a = msf_lba(toc.t[i].addr), b = msf_lba(toc.t[i + 1].addr);
+        g_toc.data[i] = (toc.t[i].control_adr & 4) != 0;
+        g_toc.start[i] = a;
         snprintf(line, sizeof(line), "  Track %2d  %-5s  LBA %7ld  %7ld sectors (%02ld:%02ld)",
                  toc.t[i].track, (toc.t[i].control_adr & 4) ? "data" : "audio", a, b - a,
                  (b - a) / 75 / 60, (b - a) / 75 % 60);
@@ -383,6 +472,10 @@ static void write_toc(FILE *f, runner_line_fn on_line, void *ctx)
     if (n) {
         long end = msf_lba(toc.t[n].addr);
         toc_sectors = end;
+        /* the plain TOC does not tell the sessions: with more than one there
+         * is more than one track, and the data command is not used anyway */
+        g_toc.n = n;
+        g_toc.end = end;
         snprintf(line, sizeof(line), "  Total %ld sectors (%ld MB of user data)%s", end,
                  end * 2048L / 1048576L, end > 405000 ? ": longer than a CD, maybe it is a DVD" : "");
         fprintf(f, "%s\n", line);
@@ -390,9 +483,18 @@ static void write_toc(FILE *f, runner_line_fn on_line, void *ctx)
     }
 }
 #else
+/* tests only: RETROARCHIVER_TOC is a _disc.txt of DIC with the disc's TOC */
 static void write_toc(FILE *f, runner_line_fn on_line, void *ctx)
 {
     const char *line = "TOC: reading it directly from the drive works only on Windows";
+    const char *env = getenv("RETROARCHIVER_TOC");
+    char text[200];
+    if (env && *env && !optical_toc_file(env, &g_toc)) {
+        snprintf(text, sizeof(text), "TOC of the disc: %d track%s, lead-out at LBA %ld", g_toc.n,
+                 g_toc.n == 1 ? "" : "s", g_toc.end);
+        line = text;
+        toc_sectors = g_toc.end;
+    }
     fprintf(f, "%s\n", line);
     say(on_line, ctx, line);
 }
@@ -403,6 +505,7 @@ static int scan(const char *out_txt, runner_line_fn on_line, void *ctx)
     const char *argv[] = { dic, "ls", drive, NULL };
     tee t; int code = 0, rc;
     toc_sectors = -1;
+    memset(&g_toc, 0, sizeof(g_toc));
     memset(&t, 0, sizeof(t));
     t.f = u8_fopen(out_txt, "wb"); t.fn = on_line; t.ctx = ctx;
     if (!t.f) return -1;
@@ -795,6 +898,106 @@ static void drive_model(const char *dir, const char *base, int with_rev, char *o
     snprintf(out, n, "%s%s%s%s%s", vendor, vendor[0] ? " " : "", product, rev[0] ? " " : "", rev);
 }
 
+/* ---- the drives that cannot read the lead-in ---- */
+
+/* the words of a model with single spaces: "DVDR   PX-716A " -> "DVDR PX-716A" */
+static void model_words(const char *in, char *out, size_t n)
+{
+    size_t k = 0;
+    for (; *in && k + 1 < n; in++) {
+        if (*in == ' ' || *in == '\t') {
+            if (k && out[k - 1] != ' ') out[k++] = ' ';
+        } else if (*in != ';') {
+            out[k++] = *in;
+        }
+    }
+    while (k && out[k - 1] == ' ') k--;
+    out[k] = 0;
+}
+
+/* the same model whatever the spaces between vendor, product and firmware:
+ * DIC's _drive.txt and Windows split the inquiry data each their way */
+static int same_model(const char *a, const char *b, size_t blen)
+{
+    const char *e = b + blen;
+    for (;;) {
+        while (*a == ' ' || *a == '\t') a++;
+        while (b < e && (*b == ' ' || *b == '\t')) b++;
+        if (!*a || b == e) return !*a && b == e;
+        if (toupper((unsigned char)*a) != toupper((unsigned char)*b)) return 0;
+        a++; b++;
+    }
+}
+
+int optical_drive_listed(const char *list, const char *model)
+{
+    const char *p = list, *e;
+    if (!model || !*model || !list) return 0;
+    while (*p) {
+        for (e = p; *e && *e != ';'; e++) ;
+        if (e > p && same_model(model, p, (size_t)(e - p))) return 1;
+        p = *e ? e + 1 : e;
+    }
+    return 0;
+}
+
+int optical_list_add(char *list, size_t n, const char *model)
+{
+    char m[200]; size_t k = strlen(list);
+    model_words(model, m, sizeof(m));
+    if (!m[0] || optical_drive_listed(list, m)) return 0;
+    if (k + strlen(m) + 3 > n) return 0;
+    snprintf(list + k, n - k, "%s%s", k ? "; " : "", m);
+    return 1;
+}
+
+#ifdef _WIN32
+/* IOCTL_STORAGE_QUERY_PROPERTY: the inquiry data Windows keeps for the drive,
+ * without opening it for reading (no disc needed) */
+int optical_drive_model(char letter, char *out, size_t n)
+{
+    wchar_t dev[16]; HANDLE h; STORAGE_PROPERTY_QUERY q; DWORD got = 0;
+    unsigned char buf[1024]; STORAGE_DEVICE_DESCRIPTOR *d = (STORAGE_DEVICE_DESCRIPTOR *)buf;
+    char raw[200]; size_t k = 0; DWORD offs[3]; int i;
+    const char *env = getenv("RETROARCHIVER_DRIVE_MODEL");      /* tests only */
+    if (n) out[0] = 0;
+    if (env && *env) { model_words(env, out, n); return out[0] != 0; }
+    _snwprintf(dev, 16, L"\\\\.\\%c:", (wchar_t)toupper((unsigned char)letter));
+    dev[15] = 0;
+    h = CreateFileW(dev, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    memset(&q, 0, sizeof(q));
+    q.PropertyId = StorageDeviceProperty;
+    q.QueryType = PropertyStandardQuery;
+    memset(buf, 0, sizeof(buf));
+    if (!DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, &q, sizeof(q), buf, sizeof(buf) - 1, &got, NULL) ||
+        got < sizeof(STORAGE_DEVICE_DESCRIPTOR)) {
+        CloseHandle(h);
+        return 0;
+    }
+    CloseHandle(h);
+    offs[0] = d->VendorIdOffset; offs[1] = d->ProductIdOffset; offs[2] = d->ProductRevisionOffset;
+    for (i = 0; i < 3; i++) {
+        const char *s;
+        if (!offs[i] || offs[i] >= got) continue;
+        for (s = (const char *)buf + offs[i]; *s && k + 2 < sizeof(raw); s++) raw[k++] = *s;
+        raw[k++] = ' ';
+    }
+    raw[k] = 0;
+    model_words(raw, out, n);
+    return out[0] != 0;
+}
+#else
+int optical_drive_model(char letter, char *out, size_t n)
+{
+    const char *env = getenv("RETROARCHIVER_DRIVE_MODEL");      /* tests only */
+    (void)letter;
+    if (n) out[0] = 0;
+    if (env && *env) model_words(env, out, n);
+    return n && out[0] != 0;
+}
+#endif
+
 /* DIC asked for the offset and nobody answered */
 static void offset_message(char *p, size_t n, const char *dir, const char *base)
 {
@@ -820,6 +1023,209 @@ static void cd_input(const char *out_dir, char *input, size_t n, FILE *con)
     if (!(f = u8_fopen(input, "wb"))) { input[0] = 0; return; }
     fprintf(f, "%s\r\n", offset);
     fclose(f);
+}
+
+/* why DIC stopped, when it is not the lead-in: missing names what a
+ * complete read would have */
+static void fail_text(char *p, size_t n, int dvd, int code, const tee *t, const char *out_dir,
+                      const char *base, const char *missing)
+{
+    if (t->stopped)
+        snprintf(p, n, "The drive was reset %d times while DiscImageCreator looked for copy "
+                       "protections (/sf): stopped it, it would go on like this for an hour. Read the "
+                       "CD again without the protection scan (Copy protection: Off).", t->unit_att);
+    else if (t->ask_offset && !offset[0])
+        offset_message(p, n, out_dir, base);
+    else if (t->wrong)
+        snprintf(p, n, "The drive does not hold a %s: DiscImageCreator says the disc is of "
+                       "another type. Check the disc, or the contents of the box.",
+                 dvd ? "DVD" : "CD");
+    else if (t->denied)
+        snprintf(p, n, "DiscImageCreator cannot open drive %s: (access denied): run the program "
+                       "as an administrator.", drive);
+    else if (code != 0)
+        stop_message(p, n, code, t, out_dir);
+    else
+        snprintf(p, n, "DiscImageCreator finished but %.200s is missing: the read is incomplete.", missing);
+    if (t->resets && !t->sf && strlen(p) + 200 < n)
+        strcat(p, " The drive was reset during the read (UNIT_ATTENTION, timeouts): the copy protection "
+                  "scan would not help, it makes the drive reset even more.");
+}
+
+/* ---- the data command: a data CD on a drive without lead-in ---- */
+
+static const char *edge_name(int leadin)
+{
+    return leadin == 2 ? "lead-out" : "lead-in";
+}
+
+static void xml_escaped(FILE *f, const char *s)
+{
+    for (; *s; s++) {
+        if (*s == '&') fputs("&amp;", f);
+        else if (*s == '<') fputs("&lt;", f);
+        else if (*s == '>') fputs("&gt;", f);
+        else if (*s == '"') fputs("&quot;", f);
+        else fputc(*s, f);
+    }
+}
+
+/* data writes only the .bin: the .cue and the .dat with its fingerprints
+ * are written here, in DIC's formats, so that the verification and the
+ * redump lookup treat the read like one of cd. The .dat comes last, as
+ * with DIC: with it the read is complete */
+static int write_cue_dat(const char *dir, const char *base, const char *bin, runner_line_fn on_line, void *ctx)
+{
+    char p[1100], name[200], line[700]; romhash h; unsigned char sec[16]; FILE *f; int mode = 1, bad;
+    snprintf(line, sizeof(line), "Computing the fingerprints of %s.bin (CRC32, MD5, SHA-1) for the .dat.", base);
+    say(on_line, ctx, line);
+    if (romhash_file(bin, &h)) {
+        snprintf(line, sizeof(line), "Cannot read back %s.bin, just written: check the destination drive.", base);
+        say(on_line, ctx, line);
+        return -1;
+    }
+    /* the mode is in the header of the first sector, after sync and address */
+    if ((f = u8_fopen(bin, "rb")) != NULL) {
+        if (fread(sec, 1, 16, f) == 16 && sec[15] == 2) mode = 2;
+        fclose(f);
+    }
+    snprintf(name, sizeof(name), "%s.cue", base);
+    u8_join(p, sizeof(p), dir, name);
+    if ((f = u8_fopen(p, "wb")) != NULL) {
+        fprintf(f, "FILE \"%s.bin\" BINARY\r\n  TRACK 01 MODE%d/2352\r\n    INDEX 01 00:00:00\r\n", base, mode);
+        bad = ferror(f);
+        if (fclose(f) || bad) f = NULL; else f = (FILE *)1;
+    }
+    if (f) {
+        snprintf(name, sizeof(name), "%s.dat", base);
+        u8_join(p, sizeof(p), dir, name);
+        if ((f = u8_fopen(p, "wb")) != NULL) {
+            fputs("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE datafile PUBLIC \"-//Logiqx//DTD ROM "
+                  "Management Datafile//EN\" \"http://www.logiqx.com/Dats/datafile.dtd\">\n<datafile>\n"
+                  "\t<header>\n\t\t<name>-insert name-</name>\n\t\t<description>-insert description-"
+                  "</description>\n\t</header>\n\t<game name=\"", f);
+            xml_escaped(f, base);
+            fputs("\">\n\t\t<description>", f);
+            xml_escaped(f, base);
+            fputs("</description>\n\t\t<rom name=\"", f);
+            xml_escaped(f, base);
+            fprintf(f, ".bin\" size=\"%lld\" crc=\"%s\" md5=\"%s\" sha1=\"%s\" />\n\t</game>\n</datafile>\n",
+                    h.size, h.crc, h.md5, h.sha1);
+            bad = ferror(f);
+            if (fclose(f) || bad) { u8_remove(p); f = NULL; }
+        }
+    }
+    if (!f) {
+        snprintf(line, sizeof(line), "Cannot write the .cue and the .dat of %s: check the destination drive.", base);
+        say(on_line, ctx, line);
+        return -1;
+    }
+    return 0;
+}
+
+typedef struct { char names[64][200]; int n; } name_list;
+
+static void add_name(void *c, const char *name, int isdir)
+{
+    name_list *l = (name_list *)c;
+    if (!isdir && strcmp(name, CONSOLE) && l->n < 64) str_copy(l->names[l->n++], sizeof(l->names[0]), name);
+}
+
+/* before the data read: the logs of the failed cd go, so that they are not
+ * taken for the new read's; what DIC printed stays in dic-console.txt */
+static void drop_attempt(const char *dir)
+{
+    name_list *l = (name_list *)calloc(1, sizeof(name_list));
+    char p[1100]; int i;
+    if (!l) return;
+    u8_listdir(dir, add_name, l);
+    for (i = 0; i < l->n; i++) {
+        u8_join(p, sizeof(p), dir, l->names[i]);
+        u8_remove(p);
+    }
+    free(l);
+}
+
+/* the cd failure taught that the drive cannot read the lead-in: remembered
+ * by model (from DIC's _drive.txt), and the caller is told */
+static char learned_model[160], learned_letter;
+
+static void learn_drive(const char *dir, const char *base, int leadin, runner_line_fn on_line, void *ctx)
+{
+    char model[160], p[500];
+    drive_model(dir, base, 1, model, sizeof(model));
+    if (!model[0]) return;
+    /* the model of this letter, for when Windows does not say it */
+    str_copy(learned_model, sizeof(learned_model), model);
+    learned_letter = drive[0];
+    if (!optical_list_add(noleadin, sizeof(noleadin), model)) return;
+    snprintf(p, sizeof(p), "Drive %s cannot read the %s: remembered, its next data CDs are read with the "
+                           "data command straight away.", model, edge_name(leadin));
+    say(on_line, ctx, p);
+    if (learned_fn) learned_fn(learned_ctx, model);
+}
+
+/* a drive already known not to read the lead-in, and a data CD: no cd first */
+static int known_noleadin(runner_line_fn on_line, void *ctx)
+{
+    char model[160], why[300], p[700];
+    if (!optical_drive_model(drive[0], model, sizeof(model)) && learned_letter == drive[0])
+        str_copy(model, sizeof(model), learned_model);
+    if (!noleadin[0] || !model[0] || !optical_drive_listed(noleadin, model)) return 0;
+    if (data_only(&g_toc, why, sizeof(why))) return 1;
+    snprintf(p, sizeof(p), "Drive %s cannot read the lead-in, but %s: trying the cd command anyway.", model, why);
+    say(on_line, ctx, p);
+    return 0;
+}
+
+/* data from sector 0 to the lead-out, with the same speed, C2 check, scan
+ * and offset as cd. con is the read's dic-console.txt, closed here */
+static int read_data(const char *out_dir, const char *base, const char *arg, int sf, FILE *con,
+                     const char *why, runner_line_fn on_line, void *ctx)
+{
+    char end[16], input[1100], name[200], bin[1100], p[1600];
+    const char *argv[] = { dic, "data", drive, arg, CD_SPEED, "0", end, "/c2", C2_REREAD, "/sf", "/q", NULL };
+    tee t; int code = 0, rc, have; long long size;
+
+    snprintf(end, sizeof(end), "%ld", g_toc.end);
+    if (!sf) { argv[9] = "/q"; argv[10] = NULL; }
+    if (con) fprintf(con, METHOD_MARK "data 0-%ld (%s)\n", g_toc.end, why);
+    snprintf(p, sizeof(p), "Reading the CD with DiscImageCreator data, sectors 0 to %ld: %s. Every sector is "
+                           "checked with its EDC/ECC; it is not a redump-grade dump.", g_toc.end, why);
+    say(on_line, ctx, p);
+    memset(&t, 0, sizeof(t));
+    t.f = con; t.fn = on_line; t.ctx = ctx; t.sf = sf;
+    cd_input(out_dir, input, sizeof(input), con);
+    rc = runner_run_tty_input(argv, input, tee_line, &t, &code);
+    if (input[0]) u8_remove(input);
+    if (rc == RUNNER_NOSTART || (rc == RUNNER_DONE && dll_missing(code))) {
+        if (con) fclose(con);
+        u8_rmtree(out_dir);
+        return no_tool(rc == RUNNER_NOSTART ? 0 : code, on_line, ctx);
+    }
+    if (rc == RUNNER_CANCELED && t.stopped) { runner_clear(); rc = RUNNER_DONE; if (!code) code = 1; }
+    if (rc == RUNNER_CANCELED) { if (con) fclose(con); u8_rmtree(out_dir); return 1; }
+    snprintf(name, sizeof(name), "%s.bin", base);
+    u8_join(bin, sizeof(bin), out_dir, name);
+    size = u8_filesize(bin);
+    /* every sector up to the lead-out: complete even if DIC exits with an
+     * error, and the verification will tell */
+    have = size >= (long long)g_toc.end * 2352 || (code == 0 && size > 0 && size % 2352 == 0);
+    if (have && code != 0 && con) fprintf(con, EXIT_MARK "%d\n", code);
+    if (con) fclose(con);
+    prot_used = t.resets ? (t.sf ? 2 : -1) : sf;
+    if (t.wrong || t.denied || (t.ask_offset && !offset[0])) prot_used = -1;
+    if (!have) {
+        fail_text(p, sizeof(p), 0, code, &t, out_dir, base, name);
+        say(on_line, ctx, p);
+        return -1;
+    }
+    if (code != 0) {
+        snprintf(p, sizeof(p), "DiscImageCreator exited with error %d, but the read is complete: "
+                               "keeping it, the verification will tell whether it is good.", code);
+        say(on_line, ctx, p);
+    }
+    return write_cue_dat(out_dir, base, bin, on_line, ctx);
 }
 
 static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void *ctx)
@@ -875,6 +1281,8 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
         t.sf = sf;
         prot_used = sf;
         if (!sf) { cd_argv[7] = "/q"; cd_argv[8] = NULL; }
+        if (known_noleadin(on_line, ctx))
+            return read_data(out_dir, base, arg, sf, t.f, "the drive is known not to read the lead-in", on_line, ctx);
         cd_input(out_dir, input, sizeof(input), t.f);
     }
     /* in a hidden console: on a pipe DIC's C runtime buffers its output in
@@ -910,32 +1318,33 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
         return 0;
     }
     if (t.wrong || t.denied || t.leadin || (t.ask_offset && !offset[0])) prot_used = -1;    /* /sf would not help */
-    if (t.stopped)
-        snprintf(p, sizeof(p), "The drive was reset %d times while DiscImageCreator looked for copy "
-                               "protections (/sf): stopped it, it would go on like this for an hour. Read the "
-                               "CD again without the protection scan (Copy protection: Off).", t.unit_att);
-    else if (t.ask_offset && !offset[0])
-        offset_message(p, sizeof(p), out_dir, base);
-    else if (t.leadin && !dvd)
-        snprintf(p, sizeof(p), "This drive cannot read the lead-in (the sector before the start of the "
-                               "disc, LBA -1), which DiscImageCreator's cd command needs: it stopped there. "
-                               "The copy protection scan would not help. Use a drive that can (DiscImageCreator "
-                               "recommends PLEXTOR drives), or skip this CD for now.");
-    else if (t.wrong)
-        snprintf(p, sizeof(p), "The drive does not hold a %s: DiscImageCreator says the disc is of "
-                               "another type. Check the disc, or the contents of the box.",
-                 dvd ? "DVD" : "CD");
-    else if (t.denied)
-        snprintf(p, sizeof(p), "DiscImageCreator cannot open drive %s: (access denied): run the program "
-                               "as an administrator.", drive);
-    else if (code != 0)
-        stop_message(p, sizeof(p), code, &t, out_dir);
-    else
-        snprintf(p, sizeof(p), "DiscImageCreator finished but %.200s is missing: the read is incomplete.",
-                 u8_filesize(dat) > 0 ? base_of(dvd ? img : cue) : base_of(dat));
-    if (t.resets && !t.sf && strlen(p) + 200 < sizeof(p))
-        strcat(p, " The drive was reset during the read (UNIT_ATTENTION, timeouts): the copy protection "
-                  "scan would not help, it makes the drive reset even more.");
+    if (t.leadin && !dvd && !t.stopped && !(t.ask_offset && !offset[0])) {
+        /* the TOC DIC read before stopping is the full one (sessions too) */
+        optical_toc toc; char why2[300], tocp[1100];
+        snprintf(p, sizeof(p), "%s_disc.txt", base);
+        u8_join(tocp, sizeof(tocp), out_dir, p);
+        if (!optical_toc_file(tocp, &toc)) g_toc = toc;
+        learn_drive(out_dir, base, t.leadin, on_line, ctx);
+        if (data_only(&g_toc, why2, sizeof(why2))) {
+            snprintf(p, sizeof(p), "This drive cannot read the %s, which DiscImageCreator's cd command needs: "
+                                   "reading this data CD again with the data command, which does without it.",
+                     edge_name(t.leadin));
+            say(on_line, ctx, p);
+            drop_attempt(out_dir);
+            snprintf(p, sizeof(p), "the drive cannot read the %s", edge_name(t.leadin));
+            return read_data(out_dir, base, arg, sf, u8_fopen(con, "ab"), p, on_line, ctx);
+        }
+        snprintf(p, sizeof(p), "This drive cannot read the %s (%s), which DiscImageCreator's cd command needs: "
+                               "it stopped there. The copy protection scan would not help, and the data command, "
+                               "which does without it, cannot be used: %s. Use a drive that can read the lead-in "
+                               "and the lead-out (DiscImageCreator recommends PLEXTOR drives), or skip this CD "
+                               "for now.", edge_name(t.leadin),
+                 t.leadin == 2 ? "the sectors after the end of the disc" : "the sector before the start of the disc, LBA -1",
+                 why2);
+    } else {
+        fail_text(p, sizeof(p), dvd, code, &t, out_dir, base,
+                  u8_filesize(dat) > 0 ? base_of(dvd ? img : cue) : base_of(dat));
+    }
     say(on_line, ctx, p);
     /* the .dat or the image is missing: it is not a read. The folder stays,
      * with DIC's logs: the session sets it aside to explain the failure */
@@ -968,6 +1377,8 @@ typedef struct {
     char prot_files[600];           /* the signature files found, "" none */
     char offset_given[16];          /* the offset RetroArchiver gave DIC, "" none */
     char offset_dic[16];            /* the drive offset DIC used, from its log */
+    int data_read;                  /* read with the data command, not cd */
+    char data_why[160];             /* why: "the drive cannot read the lead-in" */
 } dump;
 
 typedef struct { char name[200], mode[16]; } cue_file;
@@ -1019,7 +1430,14 @@ static int last_number(const char *s)
 static void how_read(const char *line, dump *d)
 {
     const char *q;
-    if (!strncmp(line, PROT_MARK, strlen(PROT_MARK))) {
+    if (!strncmp(line, METHOD_MARK, strlen(METHOD_MARK))) {
+        q = line + strlen(METHOD_MARK);
+        d->data_read = !strncmp(q, "data", 4);
+        if ((q = strchr(q, '(')) != NULL) {
+            str_copy(d->data_why, sizeof(d->data_why), q + 1);
+            if (strrchr(d->data_why, ')')) *strrchr(d->data_why, ')') = 0;
+        }
+    } else if (!strncmp(line, PROT_MARK, strlen(PROT_MARK))) {
         q = line + strlen(PROT_MARK);
         d->prot_scan = !strncmp(q, "on", 2);
         if ((q = strchr(q, ',')) != NULL) {
@@ -1079,8 +1497,17 @@ static void scan_logs(const char *dir, dump *d)
     snprintf(name, sizeof(name), "%s_mainError.txt", d->base);
     u8_join(p, sizeof(p), dir, name);
     if ((f = u8_fopen(p, "rb")) != NULL) {
+        long sectors = d->n ? (long)(d->t[0].size / 2352) : 0;
         d->readerr = 0;
-        while (fgets(line, sizeof(line), f)) if (strstr(line, "Read error")) d->readerr++;
+        while (fgets(line, sizeof(line), f)) {
+            char *q = strstr(line, "LBA[");
+            long lba = q ? atol(q + 4) : 0;
+            if (!strstr(line, "Read error")) continue;
+            /* data reads LBA -1 (or the lead-out) for the offset: a drive
+             * without lead-in fails there, outside the disc's sectors */
+            if (d->data_read && q && (lba < 0 || lba >= sectors)) continue;
+            d->readerr++;
+        }
         fclose(f);
     }
     drive_model(dir, d->base, 1, d->drive, sizeof(d->drive));
@@ -1345,6 +1772,16 @@ static void describe(strbuf *o, const char *what, const dump *d)
     if (d->protection[0]) sb_printf(o, "    protection detected by DiscImageCreator: %s\n", d->protection);
     if (d->no_c2) sb_puts(o, "    C2 check not available on this drive: C2 errors were not looked for\n");
     if (d->dic_exit) sb_printf(o, "    DiscImageCreator exited with error %d, but the read is complete\n", d->dic_exit);
+    if (d->data_read)
+        sb_printf(o, "    read with the data command (%s): not a redump-grade dump\n",
+                  d->data_why[0] ? d->data_why : "the drive cannot read the lead-in");
+}
+
+/* a data read whose sectors all pass their EDC/ECC, with no C2 errors and
+ * none unreadable: every sector proves itself, one read is enough */
+static int edc_verified(const dump *d)
+{
+    return d->data_read && d->edc == 0 && d->c2 == 0 && d->readerr <= 0 && !d->dic_exit;
 }
 
 static int same_tracks(const dump *a, const dump *b)
@@ -1398,6 +1835,13 @@ static int compare_media(const char *what, const char *const *imgs, int n, compa
         }
         if (m < 0) sb_printf(o, "  Redump: no redump DAT in %s.\n", dir[0] ? dir : "(the program's folder)");
         else sb_printf(o, "  Redump: not found in %d DATs in %s.\n", dats, dir);
+        if (edc_verified(&d[0])) {
+            sb_printf(o, "  Every sector matches its EDC/ECC and there are no C2 errors: the data are\n"
+                         "  verified with one read. It is not a redump-grade dump (read with the data\n"
+                         "  command, without lead-in and lead-out).\n");
+            free(d);
+            return finish(r, 0, ST_CLEAN, "edc-ecc");
+        }
         if (errors_of(&d[0]))
             sb_printf(o, "  The read has %d errors: a second read will tell whether they are on the disc.\n", errors_of(&d[0]));
         sb_printf(o, "  A single read is not verified: a second read is needed to compare.\n");
@@ -1545,6 +1989,14 @@ static void tech_cd_read(const dump *d, json_writer *w)
     }
     /* what DIC says it used wins over what it was given */
     jw_str(w, "drive_offset", d->offset_dic[0] ? d->offset_dic : d->offset_given[0] ? d->offset_given : "unknown");
+    jw_str(w, "read_method", d->data_read ? "dic-data" : "dic-cd");
+    if (d->data_read) {
+        char note[300];
+        snprintf(note, sizeof(note), "DiscImageCreator data command from sector 0 to the lead-out (%s): "
+                                     "checked by EDC/ECC, not redump-grade",
+                 d->data_why[0] ? d->data_why : "the drive cannot read the lead-in");
+        jw_str(w, "read_note", note);
+    }
 }
 
 static void tech(void *ctx, const char *img, json_writer *w)
@@ -1609,6 +2061,8 @@ static void tech(void *ctx, const char *img, json_writer *w)
 
 static const char *phase_of(const char *line)
 {
+    /* "LBA[-00001, 0xffffffff] Reread NG": the data command reading before the disc */
+    if (strstr(line, "LBA[-")) return NULL;
     if (strstr(line, "C2 error") || strstr(line, "c2 error") || strstr(line, "(c2)") ||
         strstr(line, "Reread") || strstr(line, "reread sector") || strstr(line, "EccEdc") ||
         strstr(line, "Checking sectors"))

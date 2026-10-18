@@ -169,6 +169,20 @@ installed by hand.
    mode, the lead-in and the lead-out, which full dumps and copy
    protections need. With other drives DIC works with the `swap` command
    or with limits. DIC reports your drive's model at the first test.
+
+   A drive that cannot read the lead-in or the lead-out (for example the
+   ASUS DRW-08D6MT) makes DIC's `cd` command fail at LBA -1. RetroArchiver
+   then reads a **data CD of a single track** again by itself with DIC's
+   `data` command, from sector 0 to the lead-out, and writes the `.cue`
+   and the `.dat` that `data` does not write. Every sector of such a read
+   carries its own EDC/ECC: if they all match and there are no C2 errors,
+   one read is enough (outcome "clean", `"read_method": "dic-data"` in
+   `metadata.json`); otherwise a second read is compared as usual. It is a
+   faithful copy of the data, but not a redump-grade dump. The window
+   remembers the drive in the user's `RetroArchiver.ini`
+   (`[Optical] NoLeadInDrives`, vendor, product and firmware) and from then
+   on reads its data CDs with `data` straight away; the status bar says so.
+   Audio and mixed-mode CDs still need a drive that reads the lead-in.
 2. **Visual C++ Redistributable 2015-2019, version 14.27.29114, x86** (in
    the setup, which installs it only if missing). It is the last version
    that installs on XP; newer ones do not (and Microsoft's "latest

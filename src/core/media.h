@@ -95,6 +95,32 @@ long long optical_free_bytes(const char *dir);     /* -1 if unknown */
 int  optical_dic_path(const char *dir, const char *file, char *out, size_t n, strbuf *why);
 /* a name read from DIC's .cue or .dat (ANSI code page) into UTF-8 */
 void optical_name_utf8(char *s, size_t n);
+/* a CD's TOC: the tracks (data or audio, first LBA) and the lead-out */
+typedef struct {
+    int n;                      /* tracks, 0 = unknown */
+    int data[100];              /* 1 data track, 0 audio */
+    long start[100];
+    long end;                   /* the lead-out: the first LBA after the last track */
+    int sessions;               /* 0 = not said */
+    int pregap;                 /* track 1 does not start at LBA 0 */
+} optical_toc;
+/* the TOC from DiscImageCreator's _disc.txt; 0 ok, -1 none in it */
+int  optical_toc_file(const char *path, optical_toc *t);
+/* The CD drives that cannot read the lead-in or the lead-out, which
+ * DiscImageCreator's cd command needs: "ASUS DRW-08D6MT A101; ..." (vendor,
+ * product, firmware). Their single-track data CDs are read with the data
+ * command straight away */
+void optical_set_noleadin_drives(const char *list);
+/* called (from the reading thread) when a read finds out that the drive
+ * cannot read them, with its model: the caller remembers it */
+void optical_on_drive_learned(void (*fn)(void *ctx, const char *model), void *ctx);
+/* 1 if model is in list (spaces and case do not count) */
+int  optical_drive_listed(const char *list, const char *model);
+/* adds model to list, of n bytes; 1 if added, 0 if already there or no room */
+int  optical_list_add(char *list, size_t n, const char *model);
+/* the model of the drive at that letter, as Windows knows it ("ASUS
+ * DRW-08D6MT A101"); 0 if unknown */
+int  optical_drive_model(char letter, char *out, size_t n);
 /* program to launch instead of "samdisk" (tests, different folder) */
 void floppy_set_samdisk(const char *path);
 /* source of the read: "a:" (default) or an image file */

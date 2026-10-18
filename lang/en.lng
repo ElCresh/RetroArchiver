@@ -123,6 +123,8 @@ dat.ok.brief=redump DAT %.10ls
 dat.ok=redump DAT of %.10ls
 dic.wait=Still checking DiscImageCreator: try again in a moment.
 dic.fix=%ls.\n\nIn the DiscImageCreator field write the full path of DiscImageCreator.exe (for example C:\\DIC\\DiscImageCreator.exe), or copy it next to RetroArchiver.exe with its DLLs. Windows XP needs the Visual C++ 2015-2019 x86 runtime, version 14.27.
+dic.noleadin.brief=%ls without lead-in: data CDs with data
+dic.noleadin=drive %ls cannot read the lead-in: its data CDs are read with the data command (checked by EDC/ECC, not redump-grade)
 
 # the archive
 archive.folder=Archive
@@ -350,6 +352,7 @@ log.box.done=Box %ls: package closed and verified.
 log.box.complete=complete
 log.box.incomplete=incomplete
 log.error=ERROR: %ls
+log.noleadin=Drive %ls cannot read the lead-in or the lead-out: saved in RetroArchiver.ini ([Optical] NoLeadInDrives). From now on its data CDs are read with DiscImageCreator data straight away; audio and mixed CDs need another drive.
 banner.error=Error
 
 # the end of the box

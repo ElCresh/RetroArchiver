@@ -81,6 +81,19 @@ list) in `[Optical] DriveOffset` of `RetroArchiver.ini`, or
 to its question. Both choices, and the offset used, are recorded in
 `metadata.json`.
 
+**Drives that cannot read the lead-in.** DiscImageCreator's `cd` command
+needs the lead-in or the lead-out; on a drive that cannot read them it
+stops at LBA -1. When the TOC says the CD is a single data track,
+RetroArchiver reads it again by itself with DiscImageCreator's `data`
+command, from sector 0 to the lead-out, and writes the `.cue` and the
+`.dat` that `data` does not write. If every sector matches its EDC/ECC
+and there are no C2 errors, one read is enough (outcome *clean*,
+`"read_method": "dic-data"` in `metadata.json`: a faithful copy of the
+data, not a redump-grade dump); otherwise a second read is compared. The
+window remembers the drive in `[Optical] NoLeadInDrives` and reads its
+next data CDs with `data` straight away. Audio and mixed-mode CDs still
+need a drive that reads the lead-in.
+
 ### Mixed boxes
 
 A box can contain floppies and optical discs together (Windows NT 4.0:

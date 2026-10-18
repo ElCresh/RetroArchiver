@@ -119,6 +119,8 @@ dat.ok.brief=DAT redump %.10ls
 dat.ok=DAT di redump del %.10ls
 dic.wait=Sto ancora controllando DiscImageCreator: riprova fra un attimo.
 dic.fix=%ls.\n\nNel campo DiscImageCreator scrivi il percorso completo di DiscImageCreator.exe (per esempio C:\\DIC\\DiscImageCreator.exe), oppure copialo accanto a RetroArchiver.exe con le sue DLL. Su Windows XP servono i runtime di Visual C++ 2015-2019 x86, versione 14.27.
+dic.noleadin.brief=%ls senza lead-in: CD di dati con data
+dic.noleadin=il lettore %ls non legge il lead-in: i suoi CD di dati si leggono con il comando data (controllati con EDC/ECC, non come redump)
 
 # the archive
 archive.folder=Archivio
@@ -346,6 +348,7 @@ log.box.done=Cofanetto %ls: pacchetto chiuso e verificato.
 log.box.complete=completo
 log.box.incomplete=incompleto
 log.error=ERRORE: %ls
+log.noleadin=Il lettore %ls non legge il lead-in o il lead-out: salvato in RetroArchiver.ini ([Optical] NoLeadInDrives). D'ora in poi i suoi CD di dati si leggono subito con il comando data di DiscImageCreator; per i CD audio e misti serve un altro lettore.
 banner.error=Errore
 
 # the end of the box

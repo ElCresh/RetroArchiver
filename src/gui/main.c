@@ -45,6 +45,7 @@
 #define WM_APP_FLOPPY (WM_APP + 10) /* wParam: generation, lParam: fd_result* */
 #define WM_APP_LABEL (WM_APP + 11)  /* wParam: generation, lParam: lb_result* */
 #define WM_APP_DISKIN (WM_APP + 12) /* wParam: generation, lParam: FP_... from the floppy watcher */
+#define WM_APP_NOLEADIN (WM_APP + 13) /* lParam: malloc'd model of a drive that cannot read the lead-in */
 #define OPT_MAX   1000              /* disk bar for CDs and DVDs: thousandths */
 
 #define TIMER_ID  1
@@ -126,6 +127,9 @@ static int      g_bag_closed, g_bag_complete, g_reread, g_fragile;
 static int      g_aside_n;              /* files set aside in the closed bag */
 static wchar_t  g_phase_name[128], g_last_err[600];
 static wchar_t  g_drive_w[8];           /* the CD and DVD drive, "D:", for the texts */
+/* the CD drive's model, as Windows knows it, and the drives that cannot
+ * read the lead-in ([Optical] NoLeadInDrives, learned by the reads) */
+static char     g_drive_model[160], g_noleadin[2048];
 static wchar_t  g_why[600];             /* why DiscImageCreator did not read the disc */
 static DWORD    g_t_sess, g_t_phase;
 
@@ -1605,6 +1609,11 @@ static void ini_load(void)
     to_u8(v, prot_key, sizeof(prot_key));
     g_prot = meta_prot_parse(prot_key) < 0 ? META_PROT_AUTO : meta_prot_parse(prot_key);
     SendDlgItemMessageW(g_wnd, ID_PROT, CB_SETCURSEL, g_prot, 0);
+    {   /* not in the window: written by the reads (on_noleadin) */
+        wchar_t list[2048];
+        set_get(&g_set, SEC_OPTICAL, KEY_NOLEADIN, L"", list, 2048);
+        to_u8(list, g_noleadin, sizeof(g_noleadin));
+    }
     /* the file names are not in the window: they change only here */
     for (i = 0; i < MEDIA_KINDS; i++) {
         set_get(&g_set, name_secs[i], name_keys[i], name_defaults[i], v, 512);
@@ -2421,8 +2430,8 @@ static void on_media_removal(const DEV_BROADCAST_HDR *h)
 
 enum { DIC_CHECKING, DIC_OK, DIC_NOTFOUND, DIC_NODLL, DIC_NOTDIC };
 
-typedef struct { LONG gen; wchar_t cmd[600]; } dic_job;
-typedef struct { int state; wchar_t ver[32], dat[40]; int has_dat; } dic_result;
+typedef struct { LONG gen; wchar_t cmd[600]; char letter; } dic_job;
+typedef struct { int state; wchar_t ver[32], dat[40]; int has_dat; char model[160]; } dic_result;
 
 static volatile LONG g_dic_gen;
 static int     g_dic_state = DIC_CHECKING, g_has_dat;
@@ -2458,6 +2467,7 @@ static DWORD WINAPI dic_worker(LPVOID p)
         }
         r->has_dat = optical_find_dat(NULL, 0, date, sizeof(date));
         to_w(date, r->dat, 40);
+        optical_drive_model(job->letter, r->model, sizeof(r->model));
         if (!PostMessageW(g_wnd, WM_APP_DIC, (WPARAM)job->gen, (LPARAM)r)) free(r);
     }
     free(job);
@@ -2483,6 +2493,12 @@ static void dic_check(void)
     if (!v[0]) wcscpy(v, L"DiscImageCreator");
     _snwprintf(job->cmd, 600, L"\"%ls\" /v", v); job->cmd[599] = 0;
     job->gen = g_dic_gen;
+    {   /* the drive letter: its model says whether it reads the lead-in */
+        const wchar_t *q = v;
+        GetDlgItemTextW(g_wnd, ID_DRIVE, v, 512);
+        while (*q && !iswalpha(*q)) q++;
+        job->letter = *q ? (char)towupper(*q) : 'D';
+    }
     th = CreateThread(NULL, 0, dic_worker, job, 0, NULL);
     if (th) CloseHandle(th);
     else free(job);
@@ -2495,6 +2511,7 @@ static void on_dic(WPARAM gen, dic_result *r)
         wcscpy(g_dic_ver, r->ver);
         g_has_dat = r->has_dat;
         wcscpy(g_dat_date, r->dat);
+        str_copy(g_drive_model, sizeof(g_drive_model), r->model);
         if (g_view == V_SETUP || g_view == V_ARCHIVE) sbar_update();
     }
     free(r);
@@ -2528,6 +2545,40 @@ static void dic_text(wchar_t *out, int n, int brief)
     dat[119] = 0;
     _snwprintf(out, n, tr(T_DIC_OK), g_dic_ver, dat);
     out[n - 1] = 0;
+    /* a drive already known not to read the lead-in: its data CDs go to data */
+    if (optical_drive_listed(g_noleadin, g_drive_model)) {
+        wchar_t m[160], w[300]; size_t k = wcslen(out);
+        to_w(g_drive_model, m, 160);
+        _snwprintf(w, 300, tr(brief ? T_DIC_NOLEADIN_B : T_DIC_NOLEADIN), m);
+        w[299] = 0;
+        if (k + 3 < (size_t)n) _snwprintf(out + k, n - k, L", %ls", w);
+        out[n - 1] = 0;
+    }
+}
+
+/* the reading thread found a drive that cannot read the lead-in: into the
+ * user's ini, so that the next sessions know it too */
+static void noleadin_learned(void *ctx, const char *model)
+{
+    char *copy = (char *)malloc(strlen(model) + 1);
+    (void)ctx;
+    if (!copy) return;
+    strcpy(copy, model);
+    if (!PostMessageW(g_wnd, WM_APP_NOLEADIN, 0, (LPARAM)copy)) free(copy);
+}
+
+static void on_noleadin(char *model)
+{
+    wchar_t w[2048], m[160], line[600];
+    if (optical_list_add(g_noleadin, sizeof(g_noleadin), model)) {
+        to_w(g_noleadin, w, 2048);
+        set_put(&g_set, SEC_OPTICAL, KEY_NOLEADIN, w);
+    }
+    to_w(model, m, 160);
+    _snwprintf(line, 600, tr(T_LOG_NOLEADIN), m);
+    line[599] = 0;
+    log_append(line);
+    free(model);
 }
 
 /* the programs needed: SAMdisk for floppies, DIC for CDs and DVDs */
@@ -3365,6 +3416,9 @@ static void start(void)
             }
         }
     }
+
+    optical_set_noleadin_drives(g_noleadin);
+    optical_on_drive_learned(noleadin_learned, NULL);
 
     memset(&g_cfg, 0, sizeof(g_cfg));
     g_cfg.box = g_box;
@@ -4734,7 +4788,7 @@ static int on_command(HWND h, WPARAM wp)
             samdisk_pending();
             SetTimer(h, TIMER_SAMDISK, 600, NULL);
         }
-        if (id == ID_DIC) {
+        if (id == ID_DIC || id == ID_DRIVE) {
             dic_pending();
             SetTimer(h, TIMER_DIC, 600, NULL);
         }
@@ -4847,6 +4901,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         return 0;
     case WM_APP_DIC:
         on_dic(wp, (dic_result *)lp);
+        return 0;
+    case WM_APP_NOLEADIN:
+        on_noleadin((char *)lp);
         return 0;
     case WM_APP_LABEL:
         on_label(wp, (lb_result *)lp);

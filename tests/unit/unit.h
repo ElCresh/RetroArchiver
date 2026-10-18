@@ -19,6 +19,7 @@ void test_strbuf(void);
 void test_fsu8(void);
 void test_compare(void);
 void test_sha256(void);
+void test_romhash(void);
 void test_json(void);
 void test_fat12(void);
 void test_meta(void);

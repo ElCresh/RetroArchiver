@@ -42,6 +42,10 @@
 #define KEY_CDNAME     L"CDFileName"       /* Optical: CD{nn} */
 #define KEY_DVDNAME    L"DVDFileName"      /* Optical: DVD{nn} */
 #define KEY_DRIVEOFFSET L"DriveOffset"     /* Optical: the CD drive's read offset in samples, "" = not set */
+/* Optical: the drives that cannot read the lead-in or the lead-out, "ASUS
+ * DRW-08D6MT A101; ...": learned by the reads, their data CDs are read
+ * with DiscImageCreator data straight away */
+#define KEY_NOLEADIN   L"NoLeadInDrives"
 #define KEY_ENABLED    L"Enabled"          /* Automatic */
 #define KEY_PLATFORM   L"Platform"         /* Box */
 #define KEY_LANGUAGE   L"Language"         /* Box: the box's language, not the program's */

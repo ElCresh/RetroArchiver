@@ -9,6 +9,7 @@ int main(void)
     test_fsu8();
     test_compare();
     test_sha256();
+    test_romhash();
     test_json();
     test_fat12();
     test_meta();

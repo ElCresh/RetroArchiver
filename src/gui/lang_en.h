@@ -117,6 +117,8 @@ T(T_DAT_OK_B,           "dat.ok.brief",         L"redump DAT %.10ls")
 T(T_DAT_OK,             "dat.ok",               L"redump DAT of %.10ls")
 T(T_DIC_WAIT,           "dic.wait",             L"Still checking DiscImageCreator: try again in a moment.")
 T(T_DIC_FIX,            "dic.fix",              L"%ls.\n\nIn the DiscImageCreator field write the full path of DiscImageCreator.exe (for example C:\\DIC\\DiscImageCreator.exe), or copy it next to RetroArchiver.exe with its DLLs. Windows XP needs the Visual C++ 2015-2019 x86 runtime, version 14.27.")
+T(T_DIC_NOLEADIN_B,     "dic.noleadin.brief",   L"%ls without lead-in: data CDs with data")
+T(T_DIC_NOLEADIN,       "dic.noleadin",         L"drive %ls cannot read the lead-in: its data CDs are read with the data command (checked by EDC/ECC, not redump-grade)")
 
 /* the archive */
 T(T_ARC_FOLDER,         "archive.folder",       L"Archive")
@@ -344,6 +346,7 @@ T(T_LOG_BOX_DONE,       "log.box.done",         L"Box %ls: package closed and ve
 T(T_LOG_BOX_COMPLETE,   "log.box.complete",     L"complete")
 T(T_LOG_BOX_INCOMPLETE, "log.box.incomplete",   L"incomplete")
 T(T_LOG_ERROR,          "log.error",            L"ERROR: %ls")
+T(T_LOG_NOLEADIN,       "log.noleadin",         L"Drive %ls cannot read the lead-in or the lead-out: saved in RetroArchiver.ini ([Optical] NoLeadInDrives). From now on its data CDs are read with DiscImageCreator data straight away; audio and mixed CDs need another drive.")
 T(T_BANNER_ERROR,       "banner.error",         L"Error")
 
 /* the end of the box */

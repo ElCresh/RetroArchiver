@@ -956,6 +956,66 @@ ok("offset set but not asked: DIC does not read it, the metadata say what was gi
 rc, out = run("Offset sbagliato", 0, [], [""], ["-C", "1", "--drive-offset=sei"], tpl=None)
 ok("offset: not a number gives the usage", rc == 2 and "--drive-offset=N" in out, out)
 
+# 32. a drive that cannot read the lead-in (ASUS DRW-08D6MT on the PC)
+dic_log()
+# a data CD on that drive: read again with the data command, verified by EDC/ECC with one read
+rc, out = run("CD dati senza lead-in", 0, [], [""], ["-C", "1", "--drive-offset=+6"], tpl=None,
+              dic=["LEADIN data_good", "data_good"], env_extra=disc_env(DISC_PLAIN, FAKE_DIC_ASK_OFFSET="1"))
+b = bag("CD dati senza lead-in")
+cd = meta(b)["media"][0]
+ok("no lead-in, data CD: read again with data, from 0 to the lead-out, with the offset",
+   rc == 0 and dic_log() == ["cd nosf offset 6", "data 0-300 nosf offset 6"]
+   and "reading this data CD again with the data command" in out
+   and "Reading the CD with DiscImageCreator data, sectors 0 to 300" in out, out)
+ok("no lead-in, data CD: one read, clean, verified by EDC/ECC and said so",
+   cd["status"] == "clean" and len(cd["reads"]) == 1 and cd["compare"]["verdict"] == "edc-ecc"
+   and check_bag.check(b, PROFILE) == []
+   and (cd.get("disc") or {}).get("read_method") == "dic-data"
+   and "not redump-grade" in cd["disc"].get("read_note", "")
+   and cd["disc"].get("read_errors") == 0 and cd["disc"].get("edc_errors") == 0, json.dumps(cd) + out)
+ok("no lead-in, data CD: .cue and .dat written by RetroArchiver, the file system read",
+   os.path.isfile(os.path.join(b, "data", "CD01", "CD01.cue"))
+   and os.path.isfile(os.path.join(b, "data", "CD01", "CD01.dat"))
+   and [t["mode"] for t in cd["disc"]["tracks"]] == ["MODE1/2352"] and cd["disc"]["sectors"] == 300
+   and (cd.get("filesystem") or {}).get("volume_label") == "PROVA_CD", json.dumps(cd))
+with open(os.path.join(b, "data", "CD01", "dic-console.txt"), encoding="utf-8") as f:
+    con = f.read()
+ok("no lead-in, data CD: the failed cd attempt stays in the console log, its other logs do not",
+   "can't read the lead-in" in con and "RetroArchiver: read method: data 0-300" in con
+   and not os.path.exists(os.path.join(b, "set-aside", "CD01.failed")), con)
+ok("no lead-in, data CD: the drive is remembered", "Drive ASUS DRW-08D6MT 1.00 cannot read the lead-in: "
+   "remembered" in out, out)
+
+# a mixed CD: no data command, the reason is said
+rc, out = run("CD misto senza lead-in", 0, [], [""], ["-C", "1"], tpl=None, dic=["LEADIN cd_good"],
+              env_extra=disc_env(DISC_PLAIN))
+cd = meta(bag("CD misto senza lead-in"))["media"][0]
+ok("no lead-in, mixed CD: no data read, a drive that reads the lead-in is needed",
+   rc == 1 and cd["status"] == "read-failed" and dic_log() == ["cd nosf offset none"]
+   and "this CD has 1 audio track of 2" in out and "Use a drive that can read the lead-in" in out, out)
+
+# EDC/ECC errors: not verified by one read, the second read (data straight away) compares
+rc, out = run("CD dati errori EDC", 0, [], [""], ["-C", "1"], tpl=None,
+              dic=["LEADIN data_edc", "data_edc", "data_edc"], env_extra=disc_env(DISC_PLAIN))
+cd = meta(bag("CD dati errori EDC"))["media"][0]
+reads = dic_log()
+ok("no lead-in, EDC/ECC errors: a second read with data, no cd before it",
+   reads[:3] == ["cd nosf offset none", "data 0-300 nosf offset none", "data 0-300 nosf offset none"]
+   and "Read 2" in out and "known not to read the lead-in" in out, out + str(reads))
+ok("no lead-in, EDC/ECC errors: errors status, two reads",
+   cd["status"] == "errors" and len(cd["reads"]) >= 2 and cd["disc"]["edc_errors"] == 2, json.dumps(cd))
+
+# the drive known from the first CD: the second goes straight to data
+model_env = disc_env(DISC_PLAIN, RETROARCHIVER_DRIVE_MODEL="ASUS  DRW-08D6MT 1.00",
+                     RETROARCHIVER_TOC=os.path.join(FIX, "dic", "data_good", "DISC_disc.txt"))
+rc, out = run("Due CD senza lead-in", 0, [], ["", ""], ["-C", "2"], tpl=None,
+              dic=["LEADIN data_good", "data_good", "data_good"], env_extra=model_env)
+m = meta(bag("Due CD senza lead-in"))
+ok("remembered drive: the second CD skips cd",
+   rc == 0 and dic_log() == ["cd nosf offset none"] + ["data 0-300 nosf offset none"] * 2
+   and "the drive is known not to read the lead-in" in out
+   and [d["status"] for d in m["media"]] == ["clean", "clean"], out)
+
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))
 sys.exit(1 if fails else 0)
