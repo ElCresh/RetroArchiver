@@ -30,9 +30,90 @@ static void write_defaults(const wchar_t *path)
     DWORD w; static const unsigned char bom[2] = { 0xFF, 0xFE };
     WriteFile(h, bom, 2, &w, NULL);
     CloseHandle(h);
+    WritePrivateProfileStringW(SEC_GENERAL, KEY_FOLDER, L"D:\\Cofanetti già fatti", path);
+    WritePrivateProfileStringW(SEC_GENERAL, KEY_MAXREADS, L"5", path);
+    WritePrivateProfileStringW(SEC_WINDOW, L"X", L"40", path);
+}
+
+/* an ini of version 261017, with the Italian keys, as the setup and the window wrote it */
+static void write_old(const wchar_t *path)
+{
+    HANDLE h = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    DWORD w; static const unsigned char bom[2] = { 0xFF, 0xFE };
+    WriteFile(h, bom, 2, &w, NULL);
+    CloseHandle(h);
     WritePrivateProfileStringW(L"Archiviazione", L"Cartella", L"D:\\Cofanetti già fatti", path);
     WritePrivateProfileStringW(L"Archiviazione", L"LettureMax", L"5", path);
-    WritePrivateProfileStringW(L"Finestra", L"X", L"40", path);
+    WritePrivateProfileStringW(L"Archiviazione", L"LeggiDa", L"b:", path);
+    WritePrivateProfileStringW(L"Archiviazione", L"NomeFloppy", L"DISK{nnn}", path);
+    WritePrivateProfileStringW(L"Archiviazione", L"Lingua", L"Italiano", path);
+    WritePrivateProfileStringW(L"Archiviazione", L"NomeFile", L"DISK{nn}", path);
+    WritePrivateProfileStringW(L"Finestra", L"X", L"-12", path);
+    WritePrivateProfileStringW(L"Finestra", L"Massimizzata", L"1", path);
+}
+
+static int has_key(const wchar_t *file, const wchar_t *sec, const wchar_t *key)
+{
+    wchar_t v[64];
+    GetPrivateProfileStringW(sec, key, L"(manca)", v, 64, file);
+    return wcscmp(v, L"(manca)") != 0;
+}
+
+static int has_section(const wchar_t *file, const wchar_t *sec)
+{
+    wchar_t buf[64];
+    return GetPrivateProfileSectionW(sec, buf, 64, file) != 0;
+}
+
+/* the old Italian ini: read as it is, then converted once */
+static void test_old_ini(const wchar_t *root)
+{
+    wchar_t def[MAX_PATH], user[MAX_PATH], v[512];
+    settings s;
+    _snwprintf(def, MAX_PATH, L"%ls\\tmp_settings_old_def.ini", root);
+    _snwprintf(user, MAX_PATH, L"%ls\\tmp_settings_old_user.ini", root);
+    DeleteFileW(def); DeleteFileW(user);
+    write_old(def);
+    set_init_paths(&s, def, user);
+
+    /* defaults in Italian and no user ini: read through the old keys */
+    set_get(&s, SEC_GENERAL, KEY_FOLDER, L"C:\\RetroArchive", v, 512);
+    check_str(v, L"D:\\Cofanetti già fatti", "old defaults ini: Cartella read as ArchiveFolder");
+    check(set_int(&s, SEC_GENERAL, KEY_MAXREADS, 3) == 5, "old defaults ini: LettureMax read as MaxReads");
+    check(set_int(&s, SEC_WINDOW, L"X", -32000) == -12, "old ini: a negative integer");
+    set_get(&s, SEC_FLOPPY, KEY_FLOPPYNAME, L"FLOPPY{nn}", v, 512);
+    check_str(v, L"DISK{nnn}", "old defaults ini: NomeFloppy read as FileName");
+    check(set_save(&s, SEC_GENERAL, KEY_MAXREADS, L"3", L"5"), "a choice equal to the old default");
+    check(GetFileAttributesW(user) == INVALID_FILE_ATTRIBUTES, "equal to the old default: nothing written");
+
+    /* a user ini in Italian: it wins over the defaults, the English key over it */
+    write_old(user);
+    WritePrivateProfileStringW(L"Archiviazione", L"LettureMax", L"7", user);
+    check(set_int(&s, SEC_GENERAL, KEY_MAXREADS, 3) == 7, "old user ini wins over the defaults");
+    WritePrivateProfileStringW(SEC_GENERAL, KEY_MAXREADS, L"9", user);
+    check(set_int(&s, SEC_GENERAL, KEY_MAXREADS, 3) == 9, "the English key wins over the Italian one");
+    /* writing a key removes the Italian one it replaces */
+    check(set_put(&s, SEC_FLOPPY, KEY_READFROM, L"a:"), "writes ReadFrom");
+    check(!has_key(user, L"Archiviazione", L"LeggiDa"), "writing ReadFrom removes LeggiDa");
+
+    /* conversion: values kept, the English one already there wins, nothing Italian left */
+    check(set_convert(user) > 0, "the old user ini is converted");
+    check(!has_section(user, L"Archiviazione") && !has_section(user, L"Finestra"), "no Italian sections left");
+    GetPrivateProfileStringW(SEC_GENERAL, KEY_FOLDER, L"", v, 512, user);
+    check_str(v, L"D:\\Cofanetti già fatti", "converted: Cartella -> [General] ArchiveFolder");
+    GetPrivateProfileStringW(SEC_GENERAL, KEY_MAXREADS, L"", v, 512, user);
+    check_str(v, L"9", "converted: the English value already there stays");
+    GetPrivateProfileStringW(SEC_BOX, KEY_LANGUAGE, L"", v, 512, user);
+    check_str(v, L"Italiano", "converted: Lingua -> [Box] Language");
+    GetPrivateProfileStringW(SEC_WINDOW, L"Maximized", L"", v, 512, user);
+    check_str(v, L"1", "converted: Massimizzata -> [Window] Maximized");
+    check(!has_key(user, SEC_FLOPPY, L"NomeFile") && !has_key(user, L"Archiviazione", L"NomeFile"),
+          "the obsolete NomeFile is gone");
+    check(set_convert(user) == 0, "a second conversion changes nothing");
+    check(set_convert(def) > 0 && !has_section(def, L"Archiviazione"), "the defaults ini converts too");
+    set_get(&s, SEC_FLOPPY, KEY_FLOPPYNAME, L"FLOPPY{nn}", v, 512);
+    check_str(v, L"DISK{nnn}", "after converting, the same values");
+    DeleteFileW(def); DeleteFileW(user);
 }
 
 static void file_time(const wchar_t *p, FILETIME *t)
@@ -58,69 +139,69 @@ int main(void)
 
     /* no ini: the value from the code */
     set_init_paths(&s, def, user);
-    set_get(&s, L"Archiviazione", L"Cartella", L"C:\\RetroArchive", v, 512);
+    set_get(&s, SEC_GENERAL, KEY_FOLDER, L"C:\\RetroArchive", v, 512);
     check_str(v, L"C:\\RetroArchive", "no ini: the code value");
-    check(set_int(&s, L"Finestra", L"X", -32000) == -32000, "no ini: the code integer");
+    check(set_int(&s, SEC_WINDOW, L"X", -32000) == -32000, "no ini: the code integer");
 
     /* empty paths: no win.ini, no writes */
     set_init_paths(&none, L"", L"");
     set_get(&none, L"windows", L"load", L"x", v, 512);
     check_str(v, L"x", "empty paths do not read win.ini");
-    check(!set_put(&none, L"Archiviazione", L"Cartella", L"C:\\x"), "no user ini: nothing is saved");
+    check(!set_put(&none, SEC_GENERAL, KEY_FOLDER, L"C:\\x"), "no user ini: nothing is saved");
 
     /* the installer defaults */
     write_defaults(def);
-    set_get(&s, L"Archiviazione", L"Cartella", L"C:\\RetroArchive", v, 512);
+    set_get(&s, SEC_GENERAL, KEY_FOLDER, L"C:\\RetroArchive", v, 512);
     check_str(v, L"D:\\Cofanetti già fatti", "the default wins, with accents");
-    check(set_int(&s, L"Archiviazione", L"LettureMax", 3) == 5, "integer from the defaults");
-    check(set_int(&s, L"Archiviazione", L"Suoni", 0) == 0, "key missing from the defaults");
+    check(set_int(&s, SEC_GENERAL, KEY_MAXREADS, 3) == 5, "integer from the defaults");
+    check(set_int(&s, SEC_GENERAL, KEY_SOUNDS, 0) == 0, "key missing from the defaults");
     check(!exists(dir), "reading does not create the user folder");
 
     /* the user writes: only in their ini, folder created, UTF-16 BOM */
     file_time(def, &t0);
     Sleep(20);
-    check(set_put(&s, L"Archiviazione", L"Cartella", L"E:\\Mio archivio è qui"), "writes the user ini");
+    check(set_put(&s, SEC_GENERAL, KEY_FOLDER, L"E:\\Mio archivio è qui"), "writes the user ini");
     check(exists(user), "the user ini and its folder exist");
     h = CreateFileW(user, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
     if (h != INVALID_HANDLE_VALUE) { ReadFile(h, head, 2, &got, NULL); CloseHandle(h); }
     check(head[0] == 0xFF && head[1] == 0xFE, "the user ini starts with the UTF-16 LE BOM");
-    set_get(&s, L"Archiviazione", L"Cartella", L"C:\\RetroArchive", v, 512);
+    set_get(&s, SEC_GENERAL, KEY_FOLDER, L"C:\\RetroArchive", v, 512);
     check_str(v, L"E:\\Mio archivio è qui", "the user wins over the default");
-    set_get(&s, L"Archiviazione", L"LettureMax", L"3", v, 512);
+    set_get(&s, SEC_GENERAL, KEY_MAXREADS, L"3", v, 512);
     check_str(v, L"5", "the other keys keep the defaults");
     file_time(def, &t1);
     check(CompareFileTime(&t0, &t1) == 0, "the defaults are not touched");
 
     /* integers and an empty value chosen by the user */
-    check(set_put_int(&s, L"Finestra", L"X", 7), "writes an integer");
-    check(set_int(&s, L"Finestra", L"X", -32000) == 7, "user integer over the default");
-    set_put(&s, L"Archiviazione", L"LettoreCD", L"");
-    WritePrivateProfileStringW(L"Archiviazione", L"LettoreCD", L"F:", def);
-    set_get(&s, L"Archiviazione", L"LettoreCD", L"D:", v, 512);
+    check(set_put_int(&s, SEC_WINDOW, L"X", 7), "writes an integer");
+    check(set_int(&s, SEC_WINDOW, L"X", -32000) == 7, "user integer over the default");
+    set_put(&s, SEC_OPTICAL, KEY_DRIVE, L"");
+    WritePrivateProfileStringW(SEC_OPTICAL, KEY_DRIVE, L"F:", def);
+    set_get(&s, SEC_OPTICAL, KEY_DRIVE, L"D:", v, 512);
     check_str(v, L"", "an empty user value stays empty");
 
     /* removing a key: back to the default */
-    set_put(&s, L"Archiviazione", L"Cartella", NULL);
-    set_get(&s, L"Archiviazione", L"Cartella", L"C:\\RetroArchive", v, 512);
+    set_put(&s, SEC_GENERAL, KEY_FOLDER, NULL);
+    set_get(&s, SEC_GENERAL, KEY_FOLDER, L"C:\\RetroArchive", v, 512);
     check_str(v, L"D:\\Cofanetti già fatti", "key removed: back to the default");
 
     /* set_save: equal to the default it is removed, different it is written */
-    check(set_save(&s, L"Archiviazione", L"LettureMax", L"3", L"7"), "set_save different: writes");
-    check(set_int(&s, L"Archiviazione", L"LettureMax", 3) == 7, "set_save different: the user wins");
-    check(set_save(&s, L"Archiviazione", L"LettureMax", L"3", L"5"), "set_save equal to the installer default");
-    GetPrivateProfileStringW(L"Archiviazione", L"LettureMax", L"(manca)", v, 512, user);
+    check(set_save(&s, SEC_GENERAL, KEY_MAXREADS, L"3", L"7"), "set_save different: writes");
+    check(set_int(&s, SEC_GENERAL, KEY_MAXREADS, 3) == 7, "set_save different: the user wins");
+    check(set_save(&s, SEC_GENERAL, KEY_MAXREADS, L"3", L"5"), "set_save equal to the installer default");
+    GetPrivateProfileStringW(SEC_GENERAL, KEY_MAXREADS, L"(manca)", v, 512, user);
     check_str(v, L"(manca)", "set_save equal: the user key is removed");
-    check(set_save(&s, L"Archiviazione", L"NomeCD", L"CD{nn}", L"CD{nn}"), "set_save equal to the code");
-    GetPrivateProfileStringW(L"Archiviazione", L"NomeCD", L"(manca)", v, 512, user);
+    check(set_save(&s, SEC_OPTICAL, KEY_CDNAME, L"CD{nn}", L"CD{nn}"), "set_save equal to the code");
+    GetPrivateProfileStringW(SEC_OPTICAL, KEY_CDNAME, L"(manca)", v, 512, user);
     check_str(v, L"(manca)", "set_save equal to the code: not written");
-    WritePrivateProfileStringW(L"Archiviazione", L"LettureMax", L"4", def);
-    check(set_int(&s, L"Archiviazione", L"LettureMax", 3) == 4, "a new default reaches users who did not change it");
+    WritePrivateProfileStringW(SEC_GENERAL, KEY_MAXREADS, L"4", def);
+    check(set_int(&s, SEC_GENERAL, KEY_MAXREADS, 3) == 4, "a new default reaches users who did not change it");
     {   /* no user ini and an equal choice: the file is not created */
         settings t;
         wchar_t u2[MAX_PATH];
         _snwprintf(u2, MAX_PATH, L"%ls\\tmp_settings_mai\\RetroArchiver.ini", root);
         set_init_paths(&t, def, u2);
-        set_save(&t, L"Archiviazione", L"LettureMax", L"3", L"4");
+        set_save(&t, SEC_GENERAL, KEY_MAXREADS, L"3", L"4");
         check(!exists(u2), "choice equal to the default: the user ini is not created");
     }
 
@@ -149,6 +230,7 @@ int main(void)
     }
 
     DeleteFileW(def); DeleteFileW(user); RemoveDirectoryW(dir);
+    test_old_ini(root);
     printf("settings: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

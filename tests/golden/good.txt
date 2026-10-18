@@ -1,20 +1,20 @@
 
-dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+dskdiff 1.2 - compares several reads of the same floppy
 
-  3 letture a confronto
+  3 reads compared
 
-  1) fixtures/good_1.dsk           1.534.720 byte
-  2) fixtures/good_2.dsk           1.534.720 byte
-  3) fixtures/good_3.dsk           1.534.720 byte
+  1) fixtures/good_1.dsk           1,534,720 bytes
+  2) fixtures/good_2.dsk           1,534,720 bytes
+  3) fixtures/good_3.dsk           1,534,720 bytes
 
-  tracce formattate: 80 cilindri, 18 settori per traccia
-  area standard considerata: 0-79
+  formatted tracks: 80 cylinders, 18 sectors per track
+  standard area checked: 0-79
 
 
-  tracce instabili nei cilindri extra: 2 (rumore, normale)
+  unstable tracks in the extra cylinders: 2 (noise, normal)
 
-  ESITO: l'area dati e' IDENTICA in tutte le letture.
+  RESULT: the data area is IDENTICAL in all reads.
 
-  Il disco e' stabile. Catalogalo come pulito.
+  The disk is stable. Catalog it as clean.
 
 exit=0

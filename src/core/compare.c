@@ -1,6 +1,6 @@
 /* compare - the comparison that used to live inside dskdiff.
- * The text stays identical (tests/golden.sh checks it), but it ends up in
- * r->detail instead of on stdout.
+ * The text keeps the layout of dskdiff's historical output (tests/golden.sh
+ * checks it), but it ends up in r->detail instead of on stdout.
  * Text without accents: it also goes to the Windows XP console. */
 #include <stdlib.h>
 #include <string.h>
@@ -54,29 +54,29 @@ static int multi(const char *const *files, int nf, int forced, compare_result *r
     char s1[32];
     strbuf *o = &r->detail;
 
-    if (!d) { sb_puts(o, "  ERRORE: memoria insufficiente\n"); return finish(r, V_ERROR); }
+    if (!d) { sb_puts(o, "  ERROR: out of memory\n"); return finish(r, V_ERROR); }
     for (i = 0; i < nf; i++) {
         if (!edsk_load_as(files[i], SHOWN(r, files, i), &d[i], o)) { rc = finish(r, V_ERROR); goto out; }
         loaded++;
     }
 
-    sb_printf(o, "  %d letture a confronto\n\n", nf);
+    sb_printf(o, "  %d reads compared\n\n", nf);
     for (i = 0; i < nf; i++) {
         fmt_thousands(d[i].len, s1);
-        sb_printf(o, "  %d) %-24s %14s byte\n", i + 1, SHOWN(r, files, i), s1);
+        sb_printf(o, "  %d) %-24s %14s bytes\n", i + 1, SHOWN(r, files, i), s1);
     }
     sb_puts(o, "\n");
 
     if (!d[0].ok) {
-        sb_puts(o, "  ESITO: intestazione non riconosciuta.\n\n");
+        sb_puts(o, "  RESULT: header not recognized.\n\n");
         rc = finish(r, V_ERROR); goto out;
     }
 
     stdcyl = forced ? forced : (d[0].nomcyl ? edsk_snap(d[0].nomcyl) : 80);
     geometry(r, &d[0], stdcyl);
-    sb_printf(o, "  tracce formattate: %d cilindri", d[0].nomcyl);
-    if (d[0].nsec0) sb_printf(o, ", %d settori per traccia", d[0].nsec0);
-    sb_printf(o, "\n  area standard considerata: 0-%d\n\n", stdcyl - 1);
+    sb_printf(o, "  formatted tracks: %d cylinders", d[0].nomcyl);
+    if (d[0].nsec0) sb_printf(o, ", %d sectors per track", d[0].nsec0);
+    sb_printf(o, "\n  standard area checked: 0-%d\n\n", stdcyl - 1);
 
     ntrk = d[0].ntrk;
     for (i = 0; i < nf; i++)
@@ -105,43 +105,43 @@ static int multi(const char *const *files, int nf, int forced, compare_result *r
         else { unst_extra++; continue; }
 
         if (shown < 30) {
-            sb_printf(o, "  cil %2d faccia %d : %d varianti su %d letture",
+            sb_printf(o, "  cyl %2d side %d : %d variants in %d reads",
                       d[0].cyl[t], d[0].head[t], nvar, nf);
-            if (best > 1) sb_printf(o, "   (%d concordano)", best);
-            else          sb_puts(o, "   (nessuna coppia concorde)");
-            if (szdiff) { sb_puts(o, "   DIMENSIONE DIVERSA"); nsz++; }
+            if (best > 1) sb_printf(o, "   (%d agree)", best);
+            else          sb_puts(o, "   (no two agree)");
+            if (szdiff) { sb_puts(o, "   SIZE DIFFERS"); nsz++; }
             sb_puts(o, "\n");
             shown++;
-        } else if (shown == 30) { sb_puts(o, "  ... e altre tracce\n"); shown++; }
+        } else if (shown == 30) { sb_puts(o, "  ... and more tracks\n"); shown++; }
     }
     if (unst_extra)
-        sb_printf(o, "\n  tracce instabili nei cilindri extra: %d (rumore, normale)\n", unst_extra);
+        sb_printf(o, "\n  unstable tracks in the extra cylinders: %d (noise, normal)\n", unst_extra);
     sb_puts(o, "\n");
 
     r->unstable_tracks = unst_dati;
     r->agree = unst_dati ? worst : nf;
     if (!unst_dati) {
-        sb_puts(o, "  ESITO: l'area dati e' IDENTICA in tutte le letture.\n\n");
-        sb_puts(o, "  Il disco e' stabile. Catalogalo come pulito.\n\n");
+        sb_puts(o, "  RESULT: the data area is IDENTICAL in all reads.\n\n");
+        sb_puts(o, "  The disk is stable. Catalog it as clean.\n\n");
         rc = finish(r, V_IDENTICAL); goto out;
     }
 
-    sb_printf(o, "  ESITO: %d tracce dell'area dati cambiano fra una lettura e l'altra.\n\n", unst_dati);
+    sb_printf(o, "  RESULT: %d tracks of the data area change from one read to the next.\n\n", unst_dati);
     if (nsz) {
-        sb_printf(o, "  %d di queste hanno DIMENSIONE DIVERSA fra una lettura e l'altra.\n", nsz);
-        sb_puts(o, "  In un EDSK una traccia cresce quando SAMdisk salva piu' copie di un\n");
-        sb_puts(o, "  settore che a riletture successive ha dato dati diversi. Vuol dire\n");
-        sb_puts(o, "  che li' SAMdisk ha incontrato errori e ha dovuto insistere, anche se\n");
-        sb_puts(o, "  non te l'ha detto a video: e' il segno di un supporto degradato.\n");
-        sb_puts(o, "  Verifica con:  samdisk scan NOMEFILE.DSK\n");
-        sb_puts(o, "  e cerca i flag m1, m2 o dc sui cilindri elencati sopra.\n\n");
+        sb_printf(o, "  In %d of them the SIZE DIFFERS from one read to the next.\n", nsz);
+        sb_puts(o, "  In an EDSK a track grows when SAMdisk saves several copies of a\n");
+        sb_puts(o, "  sector that gave different data on later rereads. It means that\n");
+        sb_puts(o, "  SAMdisk ran into errors there and had to insist, even if it did\n");
+        sb_puts(o, "  not tell you on screen: it is the sign of degraded media.\n");
+        sb_puts(o, "  Check with:  samdisk scan FILENAME.DSK\n");
+        sb_puts(o, "  and look for the m1, m2 or dc flags on the cylinders listed above.\n\n");
     }
-    sb_puts(o, "  Se le letture segnalano errori dc o nd, il supporto e' degradato:\n");
-    sb_puts(o, "  rileggi con --retries=30 --rescans=5, pulisci le testine, prova un altro drive.\n\n");
-    sb_puts(o, "  Se invece NON segnalano errori, sono settori deboli scritti apposta\n");
-    sb_puts(o, "  per essere instabili, cioe' una protezione anticopia. In quel caso\n");
-    sb_puts(o, "  nessun tentativo in piu' aiuta: serve la cattura in flux.\n\n");
-    sb_puts(o, "  Dove alcune letture concordano puoi tenere la variante di maggioranza.\n\n");
+    sb_puts(o, "  If the reads report dc or nd errors, the media is degraded:\n");
+    sb_puts(o, "  reread with --retries=30 --rescans=5, clean the heads, try another drive.\n\n");
+    sb_puts(o, "  If instead they report NO errors, these are weak sectors written\n");
+    sb_puts(o, "  to be unstable on purpose, that is, copy protection. In that case\n");
+    sb_puts(o, "  no amount of retries helps: you need a flux capture.\n\n");
+    sb_puts(o, "  Where some reads agree you can keep the majority variant.\n\n");
     rc = finish(r, V_UNSTABLE);
 out:
     for (i = 0; i < loaded; i++) edsk_free(&d[i]);
@@ -160,44 +160,44 @@ static int pair(const char *const *fl, int forced, compare_result *r)
     char s1[32], s2[32];
     strbuf *o = &r->detail;
 
-    if (!a) { sb_puts(o, "  ERRORE: memoria insufficiente\n"); return finish(r, V_ERROR); }
+    if (!a) { sb_puts(o, "  ERROR: out of memory\n"); return finish(r, V_ERROR); }
     b = a + 1;
     if (!edsk_load_as(fl[0], SHOWN(r, fl, 0), a, o)) { rc = finish(r, V_ERROR); goto out; }
     if (!edsk_load_as(fl[1], SHOWN(r, fl, 1), b, o)) { rc = finish(r, V_ERROR); goto out; }
 
     fmt_thousands(a->len, s1); fmt_thousands(b->len, s2);
-    sb_printf(o, "  A: %-24s %14s byte", SHOWN(r, fl, 0), s1);
-    if (a->ok) sb_printf(o, "   %d cilindri, %d facce", a->cyls, a->heads);
+    sb_printf(o, "  A: %-24s %14s bytes", SHOWN(r, fl, 0), s1);
+    if (a->ok) sb_printf(o, "   %d cylinders, %d sides", a->cyls, a->heads);
     sb_puts(o, "\n");
-    sb_printf(o, "  B: %-24s %14s byte", SHOWN(r, fl, 1), s2);
-    if (b->ok) sb_printf(o, "   %d cilindri, %d facce", b->cyls, b->heads);
+    sb_printf(o, "  B: %-24s %14s bytes", SHOWN(r, fl, 1), s2);
+    if (b->ok) sb_printf(o, "   %d cylinders, %d sides", b->cyls, b->heads);
     sb_puts(o, "\n");
 
     if (a->ok && a->nomcyl) {
-        sb_printf(o, "  tracce formattate: %d cilindri", a->nomcyl);
-        if (a->nsec0) sb_printf(o, ", %d settori per traccia", a->nsec0);
+        sb_printf(o, "  formatted tracks: %d cylinders", a->nomcyl);
+        if (a->nsec0) sb_printf(o, ", %d sectors per track", a->nsec0);
         sb_puts(o, "\n");
         if (edsk_snap(a->nomcyl) != a->nomcyl)
-            sb_printf(o, "  area standard considerata: 0-%d  (il resto e' territorio extra)\n",
+            sb_printf(o, "  standard area checked: 0-%d  (the rest is extra territory)\n",
                       edsk_snap(a->nomcyl) - 1);
     } else if (a->ok) {
-        sb_puts(o, "  ATTENZIONE: nessuna traccia formattata riconosciuta.\n");
-        sb_puts(o, "              Uso la soglia classica degli 80 cilindri.\n");
+        sb_puts(o, "  WARNING: no formatted track recognized.\n");
+        sb_puts(o, "           Using the classic 80-cylinder threshold.\n");
     }
     sb_puts(o, "\n");
 
     if (a->len != b->len) {
-        sb_puts(o, "  ATTENZIONE: i file hanno dimensioni diverse.\n");
+        sb_puts(o, "  WARNING: the files have different sizes.\n");
         if (a->ok && b->ok && a->cyls != b->cyls)
-            sb_printf(o, "              Le due letture hanno catturato un numero di cilindri\n"
-                         "              diverso (%d contro %d). Per un confronto pulito rileggi\n"
-                         "              entrambe con -c80.\n", a->cyls, b->cyls);
-        sb_puts(o, "              Confronto limitato alla parte in comune.\n\n");
+            sb_printf(o, "           The two reads captured a different number of\n"
+                         "           cylinders (%d versus %d). For a clean comparison\n"
+                         "           reread both with -c80.\n", a->cyls, b->cyls);
+        sb_puts(o, "           Comparing only the part the two files share.\n\n");
     }
 
     stdcyl = forced ? forced : (a->nomcyl ? edsk_snap(a->nomcyl) : 80);
     geometry(r, a, stdcyl);
-    if (forced) sb_printf(o, "  soglia forzata a %d cilindri\n\n", stdcyl);
+    if (forced) sb_printf(o, "  threshold forced to %d cylinders\n\n", stdcyl);
 
     memset(cnt, 0, sizeof(cnt));
     lim = (a->len < b->len) ? a->len : b->len;
@@ -216,57 +216,57 @@ static int pair(const char *const *fl, int forced, compare_result *r)
     }
 
     if (ndiff == 0 && a->len == b->len) {
-        sb_puts(o, "  ESITO: i due file sono IDENTICI.\n\n"
-                   "  La lettura e' perfettamente riproducibile. Catalogalo come pulito.\n\n");
+        sb_puts(o, "  RESULT: the two files are IDENTICAL.\n\n"
+                   "  The read is perfectly reproducible. Catalog it as clean.\n\n");
         r->agree = 2;
         rc = finish(r, V_IDENTICAL); goto out;
     }
 
     fmt_thousands(ndiff, s1);
-    sb_printf(o, "  byte diversi: %s", s1);
-    if (firstdiff >= 0) sb_printf(o, "   (il primo a 0x%08lX)", firstdiff);
+    sb_printf(o, "  differing bytes: %s", s1);
+    if (firstdiff >= 0) sb_printf(o, "   (the first at 0x%08lX)", firstdiff);
     sb_puts(o, "\n\n");
 
     if (nhdr) {
         fmt_thousands(nhdr, s1);
-        sb_printf(o, "  intestazione .............. %s\n", s1);
+        sb_printf(o, "  header .................... %s\n", s1);
     }
     shown = 0;
     for (t = 0; t < EDSK_MAXTRK; t++) {
         if (!cnt[t]) continue;
         if (map->cyl[t] < stdcyl) unstable++;
-        if (shown == 24) { sb_puts(o, "  ... e altre tracce\n"); shown++; continue; }
+        if (shown == 24) { sb_puts(o, "  ... and more tracks\n"); shown++; continue; }
         if (shown > 24) continue;
         fmt_thousands(cnt[t], s1);
-        sb_printf(o, "  cil %2d faccia %d ........... %s%s\n",
+        sb_printf(o, "  cyl %2d side %d ............. %s%s\n",
                   map->cyl[t], map->head[t], s1,
-                  map->cyl[t] >= stdcyl ? "   (cilindro extra)" : "");
+                  map->cyl[t] >= stdcyl ? "   (extra cylinder)" : "");
         shown++;
     }
     sb_puts(o, "\n");
     r->unstable_tracks = unstable;
 
     if (!map->ok) {
-        sb_puts(o, "  ESITO: non riesco a mappare le tracce su questi file.\n\n");
+        sb_puts(o, "  RESULT: cannot map the tracks in these files.\n\n");
         r->agree = 1;
         rc = finish(r, V_UNMAPPED); goto out;
     }
 
     if (!worst) {
-        sb_printf(o, "  ESITO: i cilindri 0-%d sono IDENTICI.\n\n", stdcyl - 1);
-        sb_puts(o, "  Tutte le differenze stanno nei cilindri extra o nell'intestazione.\n");
-        sb_puts(o, "  Li' il disco non e' formattato e la testina legge rumore magnetico,\n");
-        sb_puts(o, "  diverso a ogni passata: non dice nulla sullo stato del supporto.\n\n");
-        sb_puts(o, "  Il disco e' stabile. Catalogalo come pulito.\n\n");
+        sb_printf(o, "  RESULT: cylinders 0-%d are IDENTICAL.\n\n", stdcyl - 1);
+        sb_puts(o, "  All the differences are in the extra cylinders or in the header.\n");
+        sb_puts(o, "  There the disk is not formatted and the head reads magnetic noise,\n");
+        sb_puts(o, "  different on every pass: it says nothing about the media.\n\n");
+        sb_puts(o, "  The disk is stable. Catalog it as clean.\n\n");
         r->agree = 2; r->unstable_tracks = 0;
         rc = finish(r, V_NOISE_ONLY); goto out;
     }
 
-    sb_puts(o, "  ESITO: ci sono differenze nei DATI del disco.\n\n");
-    sb_puts(o, "  Le due letture dello stesso dischetto non coincidono su cilindri\n");
-    sb_puts(o, "  dentro l'area standard: il segnale e' al limite e il controller lo\n");
-    sb_puts(o, "  interpreta diversamente a ogni passata.\n\n");
-    sb_puts(o, "  Rileggi con  --retries=30 --rescans=5  e catalogalo come marginale.\n\n");
+    sb_puts(o, "  RESULT: there are differences in the disk DATA.\n\n");
+    sb_puts(o, "  The two reads of the same floppy do not match on cylinders\n");
+    sb_puts(o, "  inside the standard area: the signal is marginal and the controller\n");
+    sb_puts(o, "  reads it differently on every pass.\n\n");
+    sb_puts(o, "  Reread with  --retries=30 --rescans=5  and catalog it as marginal.\n\n");
     r->agree = 1;
     rc = finish(r, V_DATA_DIFFER);
 out:
@@ -278,7 +278,7 @@ out:
 int compare_files(const char *const *paths, int n, int forced_cyl, compare_result *r)
 {
     if (n < 2 || n > COMPARE_MAXF) {
-        sb_printf(&r->detail, "  ERRORE: servono da 2 a %d letture\n", COMPARE_MAXF);
+        sb_printf(&r->detail, "  ERROR: 2 to %d reads are needed\n", COMPARE_MAXF);
         return finish(r, V_ERROR);
     }
     return n > 2 ? multi(paths, n, forced_cyl, r) : pair(paths, forced_cyl, r);

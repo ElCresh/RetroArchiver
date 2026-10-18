@@ -26,15 +26,16 @@ sure nothing can write to the original.
 4. At the end of the box, the BagIt package is closed: SHA-256 of every
    file in `manifest-sha256.txt`, re-checked before closing.
 
-The outcomes, as the window shows them:
+The outcomes, as `metadata.json` stores them (the window shows them in its language;
+version 261017 stored the Italian words, which are still read):
 
 | Outcome | When |
 | --- | --- |
-| pulito (clean) | the reads are identical, or differ only in the extra cylinders or the header |
-| marginale (marginal) | after the last read the reads still differ in the data area (with three or more: tracks that change), or a read has no EDSK header and its tracks cannot be mapped |
-| errore (error) | a read could not be compared (unreadable file) |
+| clean (pulito) | the reads are identical, or differ only in the extra cylinders or the header |
+| marginal (marginale) | after the last read the reads still differ in the data area (with three or more: tracks that change), or a read has no EDSK header and its tracks cannot be mapped |
+| error (errore) | a read could not be compared (unreadable file) |
 | fragile | the scan found bad sectors; read once with strong retries, not compared |
-| lettura fallita (failed read) | SAMdisk could not read the disk: retry or skip |
+| read-failed (lettura fallita) | SAMdisk could not read the disk: retry or skip |
 
 A disk that has to be read again keeps its earlier reads: the new ones
 are added (`_b`, `_c`, ... up to six) and all of them are compared together.

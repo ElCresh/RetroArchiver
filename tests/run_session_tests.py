@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Complete dskrun sessions with the fake SAMdisk: checks the bag,
-metadata.json and archivio.csv. Run by make test, from the tests folder."""
+metadata.json and archive.csv. Run by make test, from the tests folder."""
 import hashlib
 import json
 import os
@@ -104,7 +104,7 @@ def tree_sha(path):
 shutil.rmtree(WORK, ignore_errors=True)
 os.makedirs(ARCH)
 os.makedirs(NODAT)
-# a log written by dskrun 1.0: new lines are appended
+# the log of version 261017 (and dskrun 1.0): it stays as it is, the new one is archive.csv
 with open(os.path.join(ARCH, "archivio.csv"), "w") as f:
     f.write("disco;master;letture;esito;quando\n1;D:\\x.dsk;2;pulito;2026-01-01 10:00\n")
 
@@ -123,20 +123,23 @@ with open(os.path.join(b, "data", "disco01.diff.txt"), encoding="utf-8") as f:
 ok("healthy box: the .diff.txt has names relative to data/, not PC paths",
    "  A: disco01.dsk " in rep_txt and "  B: disco01_b.dsk " in rep_txt and ARCH not in rep_txt, rep_txt)
 m = meta(b)
-ok("healthy box: clean statuses", [d["status"] for d in m["media"]] == ["pulito", "pulito"])
+ok("healthy box: clean statuses", [d["status"] for d in m["media"]] == ["clean", "clean"])
 ok("healthy box: label of disk 1", m["media"][0]["label"] == "Disk 1")
 ok("healthy box: empty label of disk 2 taken from the FAT12", m["media"][1]["label"] == "MONKEY3"
-   and "Etichetta del floppy 2 presa dal disco: MONKEY3" in out, json.dumps(m["media"][1]["label"]))
+   and "Label of floppy 2 taken from the disk: MONKEY3" in out, json.dumps(m["media"][1]["label"]))
 ok("healthy box: FAT12 of disk 2",
    (m["media"][1].get("filesystem") or {}).get("volume_label") == "MONKEY3", json.dumps(m["media"][1]))
 ok("healthy box: 1.44M format", m["media"][1]["geometry"]["format"] == "1.44M")
-ok("healthy box: Box-Status complete", info(b).get("Box-Status") == "completo")
+ok("healthy box: Box-Status complete", info(b).get("Box-Status") == "complete")
 with open(os.path.join(ARCH, "archivio.csv"), encoding="utf-8") as f:
+    old_rows = f.read().splitlines()
+ok("log: the old archivio.csv is left as it was", len(old_rows) == 2 and old_rows[0] == "disco;master;letture;esito;quando")
+with open(os.path.join(ARCH, "archive.csv"), encoding="utf-8") as f:
     rows = f.read().splitlines()
-ok("log: old header kept", rows[0] == "disco;master;letture;esito;quando")
-ok("log: two new rows with the box", len(rows) == 4
-   and rows[2].startswith("1;disco01.dsk;1;pulito;") and rows[2].endswith(";Sano")
-   and rows[3].startswith("2;disco02.dsk;1;pulito;") and rows[3].endswith(";Sano"),
+ok("log: archive.csv with the English header and two rows", len(rows) == 3
+   and rows[0] == "disk;master;reads;status;when;box"
+   and rows[1].startswith("1;disco01.dsk;1;clean;") and rows[1].endswith(";Sano")
+   and rows[2].startswith("2;disco02.dsk;1;clean;") and rows[2].endswith(";Sano"),
    "\n".join(rows))
 
 # 2. marginal disk: three reads, all kept
@@ -144,7 +147,7 @@ rc, out = run("Marginale", 1, ["weak_1", "weak_2", "weak_3"], [""])
 b = bag("Marginale")
 m = meta(b)
 ok("marginal: closed and valid", rc == 0 and check_bag.check(b, PROFILE) == [], out)
-ok("marginal: status", m["media"][0]["status"] == "marginale")
+ok("marginal: status", m["media"][0]["status"] == "marginal")
 ok("marginal: three reads kept",
    [r["file"] for r in m["media"][0]["reads"]] == ["disco01.dsk", "disco01_b.dsk", "disco01_c.dsk"])
 with open(os.path.join(b, "data", "disco01.diff.txt"), encoding="utf-8") as f:
@@ -159,15 +162,15 @@ ok("marginal: verdict", m["media"][0]["compare"]["verdict"] == "unstable"
 # 3. failed read: the bag stays open
 rc, out = run("Fallita", 1, ["FAIL"], [""])
 b = bag("Fallita")
-ok("failed read: bag open", rc == 1 and os.path.exists(os.path.join(b, ".in-corso")), out)
-ok("failed read: status", meta(b)["media"][0]["status"] == "lettura fallita")
+ok("failed read: bag open", rc == 1 and os.path.exists(os.path.join(b, ".in-progress")), out)
+ok("failed read: status", meta(b)["media"][0]["status"] == "read-failed")
 ok("failed read: no image", not [f for f in data_files(b) if f.endswith(".dsk")])
 
 # 4. skip and close: incomplete but valid box
 rc, out = run("Saltati", 2, [], ["S", "F"])
 b = bag("Saltati")
 ok("incomplete: closed and valid", rc == 0 and check_bag.check(b, PROFILE) == [], out)
-ok("incomplete: Box-Status", info(b).get("Box-Status") == "incompleto")
+ok("incomplete: Box-Status", info(b).get("Box-Status") == "incomplete")
 ok("incomplete: Missing-Media", info(b).get("Missing-Media") == "floppy 1, floppy 2", str(info(b)))
 ok("incomplete: Media-Type", info(b).get("Media-Type") == "2 floppy", str(info(b)))
 
@@ -180,8 +183,8 @@ with open(os.path.join(b, "data", "disco02_b.dsk"), "w") as f:
 # disk 2 is another disk: another image, or it would be a duplicate of disk 1
 rc, out = run("Ripreso", 2, ["good_2", "good_2"], [""])
 ok("resume: closed and valid", rc == 0 and check_bag.check(b, PROFILE) == [], out)
-ok("resume: orphan removed with a warning", "Tolgo data/disco02_b.dsk" in out, out)
-ok("resume: both disks clean", [d["status"] for d in meta(b)["media"]] == ["pulito", "pulito"])
+ok("resume: orphan removed with a warning", "Removing data/disco02_b.dsk" in out, out)
+ok("resume: both disks clean", [d["status"] for d in meta(b)["media"]] == ["clean", "clean"])
 ok("resume: images intact",
    sha(os.path.join(b, "data", "disco01.dsk")) == sha(os.path.join(FIX, "ident_a.dsk")) and
    sha(os.path.join(b, "data", "disco02.dsk")) == sha(os.path.join(FIX, "good_2.dsk")))
@@ -192,15 +195,15 @@ rc, out = run(title, 1, ["ident_a", "ident_b"], [""])
 b = bag("Citt\u00e0_ parte 1_2")
 ok("title with special characters: folder name cleaned", rc == 0 and os.path.isdir(b), out)
 ok("title with special characters: real title in the bag", info(b).get("Title") == title)
-ok("accented title: on a pipe the output stays UTF-8", "  Cofanetto: " + title + "\n" in out, out)
+ok("accented title: on a pipe the output stays UTF-8", "  Box: " + title + "\n" in out, out)
 
 # 7. input closed: counts as quitting
 rc, out = run("Eof", 1, ["ident_a", "ident_b"], [])
-ok("input closed: bag open", rc == 1 and "lasciato aperto" in out, out)
+ok("input closed: bag open", rc == 1 and "left open" in out, out)
 
 # 8. box already closed
 rc, out = run("Sano", 2, [], [""])
-ok("box already closed: clear error", rc == 2 and "gia' chiuso" in out, out)
+ok("box already closed: clear error", rc == 2 and "is already closed" in out, out)
 
 # 10. partial read: the half-written file does not enter the closed bag
 rc, out = run("Parziale", 2, ["ident_a", "PARTIAL"], ["", "F"])
@@ -210,13 +213,13 @@ ok("partial: no half-written file in data/", "disco01_b.dsk" not in data_files(b
 
 # 11. naming scheme that gives the same name to different disks
 rc, out = run("Collisione", 2, [], [""], ["-p", "{set}"])
-ok("collision: clear error, nothing created", rc == 2 and "stesso nome" in out
+ok("collision: clear error, nothing created", rc == 2 and "the same name" in out
    and not os.path.exists(bag("Collisione")), out)
 
 # 11b. long title: the cut at 77 bytes makes disk 10 coincide with 1
 longt = "A" * 76
 rc, out = run(longt, 10, [], [""], ["-p", "{set}{n}"])
-ok("long collision: clear error, nothing created", rc == 2 and "stesso nome" in out
+ok("long collision: clear error, nothing created", rc == 2 and "the same name" in out
    and not os.path.exists(bag(longt)), out)
 
 # 12. dying disk: a new attempt does not delete the only good read
@@ -231,16 +234,16 @@ ok("dying: after the second attempt the good read is still there",
    os.path.exists(good) and sha(good) == first, out)
 ok("dying: the good read stays in metadata.json",
    [r["file"] for r in d1["reads"]] == ["disco01.dsk"] and d1["reads"][0]["sha256"] == first
-   and d1["master"] == "disco01.dsk" and d1["status"] == "lettura fallita", json.dumps(d1))
+   and d1["master"] == "disco01.dsk" and d1["status"] == "read-failed", json.dumps(d1))
 rc, out = run("Morente", 1, [], ["S"])
 d1 = meta(b)["media"][0]
 ok("dying: skipping it does not delete the read",
-   os.path.exists(good) and d1["status"] == "lettura fallita"
+   os.path.exists(good) and d1["status"] == "read-failed"
    and [r["file"] for r in d1["reads"]] == ["disco01.dsk"], json.dumps(d1) + "\n" + out)
 rc, out = run("Morente", 1, ["ident_b"], [""])
 d1 = meta(b)["media"][0]
 ok("dying: the new read is compared with the old one and closes",
-   rc == 0 and check_bag.check(b, PROFILE) == [] and d1["status"] == "pulito"
+   rc == 0 and check_bag.check(b, PROFILE) == [] and d1["status"] == "clean"
    and d1["master"] == "disco01.dsk" and sha(good) == first, json.dumps(d1) + "\n" + out)
 ok("dying: the extra read removed because the disk is clean",
    [f for f in data_files(b) if f.endswith(".dsk")] == ["disco01.dsk"], str(data_files(b)))
@@ -251,8 +254,8 @@ for k in range(5):
 b = bag("Tentativi")
 rc, out = run("Tentativi", 1, ["weak_3"], [""])
 d1 = meta(b)["media"][0]
-ok("attempts: at most six reads, with a warning", rc == 0 and "il massimo" in out
-   and len(d1["reads"]) == 6 and d1["status"] == "marginale", json.dumps(d1) + "\n" + out)
+ok("attempts: at most six reads, with a warning", rc == 0 and "the maximum" in out
+   and len(d1["reads"]) == 6 and d1["status"] == "marginal", json.dumps(d1) + "\n" + out)
 ok("attempts: all six reads are there",
    [f for f in data_files(b) if f.endswith(".dsk")] == ["disco01.dsk"] +
    ["disco01_%s.dsk" % c for c in "bcdef"] and check_bag.check(b, PROFILE) == [], str(data_files(b)))
@@ -262,15 +265,15 @@ rc, out = run("Prova: A", 2, ["ident_a", "ident_b"], ["", "Q"])
 b = bag("Prova_ A")
 before = open(os.path.join(b, "data", "metadata.json"), "rb").read()
 rc, out = run("Prova_ A", 2, ["ident_a", "ident_b"], ["", ""])
-ok("different title, same folder: clear error", rc == 2 and "contiene il cofanetto" in out, out)
+ok("different title, same folder: clear error", rc == 2 and "holds the box" in out, out)
 ok("different title, same folder: the first stays open and intact",
-   os.path.exists(os.path.join(b, ".in-corso"))
+   os.path.exists(os.path.join(b, ".in-progress"))
    and open(os.path.join(b, "data", "metadata.json"), "rb").read() == before
    and meta(b)["box"]["title"] == "Prova: A", out)
 # (each disk of a box gets its own image: the same one would be a duplicate)
 rc, out = run("Prova: A", 3, ["good_2", "good_2"], [""])
 ok("different number of disks: the saved one wins, with a warning",
-   rc == 0 and "aperto con 2 floppy: continuo con 2 floppy" in out
+   rc == 0 and "opened with 2 floppy: going on with 2 floppy" in out
    and meta(b)["box"]["media_expected"] == 2, out)
 
 # 14. image changed after the read: set aside, the disk is read again
@@ -285,15 +288,15 @@ with open(img, "r+b") as f:
 rc, out = run("Impronta", 2, ["good_2", "good_2"], [""])
 d1 = meta(b)["media"][0]
 ok("changed hash: stays open and says to read disk 1 again",
-   rc == 1 and "rileggi il floppy 1" in out and os.path.exists(os.path.join(b, ".in-corso")), out)
-aside = os.path.join(b, "messi-da-parte", "disco01.dsk.danneggiato")
+   rc == 1 and "read floppy 1 again" in out and os.path.exists(os.path.join(b, ".in-progress")), out)
+aside = os.path.join(b, "set-aside", "disco01.dsk.damaged")
 ok("changed hash: the file set aside outside data/, not deleted",
    os.path.exists(aside) and not os.path.exists(img)
-   and not [f for f in data_files(b) if "danneggiato" in f]
-   and "come messi-da-parte/disco01.dsk.danneggiato, fuori dal pacchetto dei dati" in out,
+   and not [f for f in data_files(b) if "damaged" in f]
+   and "as set-aside/disco01.dsk.damaged, out of the data package" in out,
    str(data_files(b)) + "\n" + out)
 ok("changed hash: disk 1 goes back to unread",
-   d1["status"] == "da leggere" and d1["reads"] == [] and d1["master"] is None, json.dumps(d1))
+   d1["status"] == "to-read" and d1["reads"] == [] and d1["master"] is None, json.dumps(d1))
 # a .danneggiato left in data/ by the previous version: it is moved too
 old_aside = os.path.join(b, "data", "disco02.dsk.danneggiato")
 with open(old_aside, "w") as f:
@@ -303,26 +306,26 @@ with open(os.path.join(b, "manifest-sha256.txt"), encoding="utf-8") as f:
     man = f.read()
 ok("changed hash: disk 1 read again, the box closes valid",
    rc == 0 and check_bag.check(b, PROFILE) == []
-   and [d["status"] for d in meta(b)["media"]] == ["pulito", "pulito"], out)
+   and [d["status"] for d in meta(b)["media"]] == ["clean", "clean"], out)
 ok("changed hash: no .danneggiato in the manifest, the files set aside are there",
-   "danneggiato" not in man and os.path.exists(aside)
-   and os.path.exists(os.path.join(b, "messi-da-parte", "disco02.dsk.danneggiato"))
-   and not os.path.exists(old_aside) and "Sposto data/disco02.dsk.danneggiato in messi-da-parte/" in out,
+   "damaged" not in man and "danneggiato" not in man and os.path.exists(aside)
+   and os.path.exists(os.path.join(b, "set-aside", "disco02.dsk.danneggiato"))
+   and not os.path.exists(old_aside) and "Moving data/disco02.dsk.danneggiato to set-aside/" in out,
    man + "\n" + out)
 ok("changed hash: at the end of the box the list of files set aside with the path",
-   "Messi da parte, fuori dal pacchetto dei dati" in out and "2 file" in out
-   and os.path.join(b, "messi-da-parte", "disco01.dsk.danneggiato") in out
-   and os.path.join(b, "messi-da-parte", "disco02.dsk.danneggiato") in out, out)
+   "Set aside, out of the data package" in out and "2 file(s)" in out
+   and os.path.join(b, "set-aside", "disco01.dsk.damaged") in out
+   and os.path.join(b, "set-aside", "disco02.dsk.danneggiato") in out, out)
 ok("box without reads set aside: no list", "Messi da parte" not in run("Senza scarti", 1,
    ["ident_a", "ident_b"], [""])[1])
 
 # 15. SAMdisk missing: it is not a damaged diskette
 rc, out = run("Senza SAMdisk", 2, [], ["", ""], ["-x", os.path.join(WORK, "manca", "samdisk")])
 b = bag("Senza SAMdisk")
-ok("no SAMdisk: open, with the instruction", rc == 1 and "Non trovo" in out
-   and "Inserisci il floppy 2" not in out, out)
+ok("no SAMdisk: open, with the instruction", rc == 1 and "Cannot find" in out
+   and "Insert floppy 2" not in out, out)
 ok("no SAMdisk: disk 1 stays unread",
-   meta(b)["media"][0]["status"] == "da leggere" and meta(b)["media"][0]["reads"] == [],
+   meta(b)["media"][0]["status"] == "to-read" and meta(b)["media"][0]["reads"] == [],
    json.dumps(meta(b)["media"]))
 
 # 16. Ctrl+C during a read: SAMdisk stopped, box left open
@@ -342,7 +345,7 @@ if os.name == "posix":
     for raw in p.stdout:
         line = raw.decode("utf-8", "replace")
         lines.append(line)
-        if "Lettura 1" in line:
+        if "Read 1" in line:
             seen.append("lettura")
         if seen and "fake_samdisk: slow" in line:
             p.send_signal(signal.SIGINT)
@@ -352,8 +355,8 @@ if os.name == "posix":
     left = subprocess.run(["pgrep", "-f", FAKE], stdout=subprocess.PIPE).stdout.decode().split()
     d1 = meta(bag("CtrlC"))["media"][0]
     ok("Ctrl+C: box open, disk interrupted, no disk 2",
-       rc == 1 and d1["status"] == "interrotto" and "Inserisci il floppy 2" not in out
-       and "rilancia per riprendere dal floppy 1" in out, out)
+       rc == 1 and d1["status"] == "interrupted" and "Insert floppy 2" not in out
+       and "start again to resume from floppy 1" in out, out)
     ok("Ctrl+C: SAMdisk stopped at once", not left and time.time() - t0 < 4.5, str(left))
 
 # 16b. Ctrl+C during the comparison (slowed down on purpose): the disk is
@@ -374,7 +377,7 @@ if os.name == "posix":
     for raw in p.stdout:
         line = raw.decode("utf-8", "replace")
         lines.append(line)
-        if "--- floppy 1: Confronto ---" in line:
+        if "--- floppy 1: Compare ---" in line:
             time.sleep(0.3)
             p.send_signal(signal.SIGINT)
             break
@@ -382,15 +385,15 @@ if os.name == "posix":
     rc = p.wait(timeout=20)
     m = meta(bag("CtrlC confronto"))
     ok("Ctrl+C in the comparison: disk 1 closes clean, no disk 2",
-       rc == 1 and m["media"][0]["status"] == "pulito" and "Inserisci il floppy 2" not in out
-       and "Fermato: rilancia per riprendere dal floppy 2" in out and time.time() - t0 >= 2, out)
+       rc == 1 and m["media"][0]["status"] == "clean" and "Insert floppy 2" not in out
+       and "Stopped: start again to resume from floppy 2" in out and time.time() - t0 >= 2, out)
 
 # 17. closed with F: disks never asked for are reported missing
 rc, out = run("Chiuso presto", 3, ["ident_a", "ident_b"], ["", "F"])
 m = meta(bag("Chiuso presto"))
 ok("F: all disks in metadata.json, the unread ones missing",
    rc == 0 and [(d["n"], d["status"]) for d in m["media"]] ==
-   [(1, "pulito"), (2, "mancante"), (3, "mancante")], json.dumps(m["media"]))
+   [(1, "clean"), (2, "missing"), (3, "missing")], json.dumps(m["media"]))
 
 # 18. a leftover that cannot be removed: the box does not close
 # (in a system folder: under WSL's /mnt/c chmod has no effect)
@@ -406,8 +409,8 @@ if os.name == "posix" and os.geteuid() != 0:
     finally:
         os.chmod(os.path.join(b, "data"), 0o755)
     ok("stuck leftover: clear error, box open",
-       rc == 1 and "non riesco a togliere data/avanzo.tmp" in out
-       and os.path.exists(os.path.join(b, ".in-corso"))
+       rc == 1 and "Cannot remove data/avanzo.tmp" in out
+       and os.path.exists(os.path.join(b, ".in-progress"))
        and not os.path.exists(os.path.join(b, "manifest-sha256.txt")), out)
     shutil.rmtree(tmparch, ignore_errors=True)
 
@@ -415,7 +418,7 @@ if os.name == "posix" and os.geteuid() != 0:
 os.makedirs(os.path.join(bag("Senza metadati"), "data"))
 with open(os.path.join(bag("Senza metadati"), "bagit.txt"), "w") as f:
     f.write("BagIt-Version: 1.0\nTag-File-Character-Encoding: UTF-8\n")
-with open(os.path.join(bag("Senza metadati"), ".in-corso"), "w") as f:
+with open(os.path.join(bag("Senza metadati"), ".in-corso"), "w") as f:     # the marker of 261017
     f.write("x\n")
 rc, out = run("Senza metadati", 1, ["ident_a", "ident_b"], [""])
 ok("no metadata.json: starts over and closes",
@@ -436,7 +439,7 @@ rc, out = run("Da immagine", 1, [], [""], ["-a", os.path.join(FIX, "fat_144.dsk"
 b = bag("Da immagine")
 ok("-a: box read from an image", rc == 0 and check_bag.check(b, PROFILE) == []
    and sha(os.path.join(b, "data", "disco01.dsk")) == sha(os.path.join(FIX, "fat_144.dsk")), out)
-ok("-a: the source is shown on screen", "Lettura da:" in out, out)
+ok("-a: the source is shown on screen", "Reading from:" in out, out)
 
 # 23. fragile disk: the survey sees defective sectors, a single careful read
 rc, out = run("Fragile", 2, ["BAD fat_144", "ident_a", "ident_b"], ["", ""])
@@ -445,9 +448,9 @@ m = meta(b)
 ok("fragile: box closed and valid", rc == 0 and check_bag.check(b, PROFILE) == [], out)
 ok("fragile: the defective disk is read only once",
    m["media"][0]["status"] == "fragile" and len(m["media"][0]["reads"]) == 1, json.dumps(m["media"][0]))
-ok("fragile: read with strong retries", "careful read --retries=30 --rescans=5" in out and "disco fragile" in out, out)
+ok("fragile: read with strong retries", "careful read --retries=30 --rescans=5" in out and "fragile disk" in out, out)
 ok("fragile: the healthy disk follows the normal round",
-   m["media"][1]["status"] == "pulito" and "careful read" not in out.split("floppy 2:")[-1], out)
+   m["media"][1]["status"] == "clean" and "careful read" not in out.split("floppy 2:")[-1], out)
 
 # 24. interrupted disk resumed and skipped: moves on to the next disk, does not quit
 rc, out = run("Salto interrotto", 2, ["ident_a", "ident_b"], ["", "Q"])
@@ -455,34 +458,34 @@ b = bag("Salto interrotto")
 mp = os.path.join(b, "data", "metadata.json")
 with open(mp, encoding="utf-8") as f:
     m = json.load(f)
-m["media"][0]["status"] = "interrotto"      # as after a Ctrl+C on the second read
+m["media"][0]["status"] = "interrotto"      # as 261017 wrote it after a Ctrl+C: Italian, still read
 with open(mp, "w", encoding="utf-8") as f:
     json.dump(m, f)
 rc, out = run("Salto interrotto", 2, ["good_2", "good_2"], ["S", ""])
 m = meta(b)
 ok("skip an interrupted disk: disk 2 is asked for and read",
-   "Inserisci il floppy 2" in out and m["media"][1]["status"] == "pulito"
-   and "riprendere dal floppy 1" not in out, out)
-ok("skip an interrupted disk: disk 1 keeps reads and status",
-   m["media"][0]["status"] == "interrotto" and len(m["media"][0]["reads"]) == 1 and rc == 1,
+   "Insert floppy 2" in out and m["media"][1]["status"] == "clean"
+   and "resume from floppy 1" not in out, out)
+ok("skip an interrupted disk: disk 1 keeps reads and status (the Italian one read as English)",
+   m["media"][0]["status"] == "interrupted" and len(m["media"][0]["reads"]) == 1 and rc == 1,
    json.dumps(m["media"][0]))
 
 # 25. -r: a failed disk is asked for again at once, the second attempt succeeds
 rc, out = run("Riprova", 1, ["FAIL", "ident_a", "ident_b"], ["", ""], ["-r"])
 b = bag("Riprova")
-ok("-r: disk 1 asked for again after the failure", out.count("Inserisci il floppy 1") == 2, out)
+ok("-r: disk 1 asked for again after the failure", out.count("Insert floppy 1") == 2, out)
 ok("-r: second attempt clean, box closed and valid",
-   rc == 0 and check_bag.check(b, PROFILE) == [] and meta(b)["media"][0]["status"] == "pulito", out)
+   rc == 0 and check_bag.check(b, PROFILE) == [] and meta(b)["media"][0]["status"] == "clean", out)
 ok("-r: in the summary the retried disk counts once",
-   "1 puliti, 0 marginali, 0 con errori, 0 saltati o da rifare" in out.split("Cofanetto chiuso.")[-1], out)
+   "1 clean, 0 marginal, 0 with errors, 0 skipped or to redo" in out.split("Box closed.")[-1], out)
 
 # 25b. -r: the good read from before the failure stays and is compared with the new one
 rc, out = run("Riprova parziale", 1, ["ident_a", "FAIL", "ident_a"], ["", ""], ["-r"])
 b = bag("Riprova parziale")
 d1 = meta(b)["media"][0]
 ok("-r: the first read stays and is compared with the new attempt",
-   rc == 0 and check_bag.check(b, PROFILE) == [] and d1["status"] == "pulito"
-   and "ha gia' 1 letture" in out and d1["master"] == "disco01.dsk"
+   rc == 0 and check_bag.check(b, PROFILE) == [] and d1["status"] == "clean"
+   and "already has 1 reads" in out and d1["master"] == "disco01.dsk"
    and sha(os.path.join(b, "data", "disco01.dsk")) == sha(os.path.join(FIX, "ident_a.dsk")),
    json.dumps(d1) + "\n" + out)
 
@@ -490,8 +493,8 @@ ok("-r: the first read stays and is compared with the new attempt",
 rc, out = run("Riprova saltata", 2, ["FAIL", "ident_a", "ident_b"], ["", "S", ""], ["-r"])
 m = meta(bag("Riprova saltata"))
 ok("-r and Skip: disk 2 is read, disk 1 stays missing",
-   rc == 1 and out.count("Inserisci il floppy 1") == 2 and "Inserisci il floppy 2" in out
-   and [d["status"] for d in m["media"]] == ["mancante", "pulito"], json.dumps(m["media"]) + "\n" + out)
+   rc == 1 and out.count("Insert floppy 1") == 2 and "Insert floppy 2" in out
+   and [d["status"] for d in m["media"]] == ["missing", "clean"], json.dumps(m["media"]) + "\n" + out)
 
 # 27. mixed box: three floppies with the fake SAMdisk, then Q on the CD's turn
 rc, out = run("Windows NT Workstation 4.0", 3, ["ident_a", "ident_b", "good_2", "good_2", "good_3", "good_3"],
@@ -499,16 +502,16 @@ rc, out = run("Windows NT Workstation 4.0", 3, ["ident_a", "ident_b", "good_2", 
               ["-C", "1", "-P", "Windows NT"], tpl=None)
 b = bag("Windows NT Workstation 4.0")
 m = meta(b)
-ok("mixed: after the floppies the CD is asked for", rc == 1 and "Inserisci il CD 1 di 1" in out
-   and os.path.exists(os.path.join(b, ".in-corso")), out)
-ok("mixed: retroarchiver-2 schema with the composition",
-   m["schema"] == "retroarchiver-2" and m["box"]["media_expected"] == 4
+ok("mixed: after the floppies the CD is asked for", rc == 1 and "Insert CD 1 of 1" in out
+   and os.path.exists(os.path.join(b, ".in-progress")), out)
+ok("mixed: retroarchiver-3 schema with the composition",
+   m["schema"] == "retroarchiver-3" and m["box"]["media_expected"] == 4
    and m["box"]["media"] == [{"type": "floppy", "count": 3}, {"type": "cd", "count": 1}]
    and m["box"]["names"] == {"floppy": "FLOPPY{nn}", "cd": "CD{nn}"}, json.dumps(m["box"]))
 ok("mixed: type and number of each medium",
    [(d["n"], d["type"], d["number"], d["status"]) for d in m["media"]] ==
-   [(1, "floppy", 1, "pulito"), (2, "floppy", 2, "pulito"), (3, "floppy", 3, "pulito"),
-    (4, "cd", 1, "da leggere")], json.dumps(m["media"]))
+   [(1, "floppy", 1, "clean"), (2, "floppy", 2, "clean"), (3, "floppy", 3, "clean"),
+    (4, "cd", 1, "to-read")], json.dumps(m["media"]))
 ok("mixed: fixed names FLOPPY01..03, the CD not yet",
    [f for f in data_files(b) if f.endswith(".dsk")] == ["FLOPPY01.dsk", "FLOPPY02.dsk", "FLOPPY03.dsk"]
    and not os.path.exists(os.path.join(b, "data", "CD01")), str(data_files(b)))
@@ -518,11 +521,11 @@ rc, out = run("Windows NT Workstation 4.0", 3, [], ["NTWKS40_IT"], ["-C", "1"], 
 m = meta(b)
 cd = m["media"][3]
 ok("mixed resumed: closed complete and valid", rc == 0 and check_bag.check(b, PROFILE) == []
-   and "Inserisci il floppy" not in out and info(b).get("Box-Status") == "completo", out)
-ok("mixed: the CD phases", all(x in out for x in ("--- CD 1: TOC ---", "--- CD 1: Lettura 1 ---",
-   "--- CD 1: Controllo C2 ---", "--- CD 1: Redump ---", "--- CD 1: Lettura 2 ---",
-   "--- CD 1: Confronto ---")), out)
-ok("mixed: CD clean, one read kept", cd["status"] == "pulito" and cd["label"] == "NTWKS40_IT"
+   and "Insert floppy" not in out and info(b).get("Box-Status") == "complete", out)
+ok("mixed: the CD phases", all(x in out for x in ("--- CD 1: TOC ---", "--- CD 1: Read 1 ---",
+   "--- CD 1: C2 check ---", "--- CD 1: Redump ---", "--- CD 1: Read 2 ---",
+   "--- CD 1: Compare ---")), out)
+ok("mixed: CD clean, one read kept", cd["status"] == "clean" and cd["label"] == "NTWKS40_IT"
    and [r["file"] for r in cd["reads"]] == ["CD01"] and cd["master"] == "CD01"
    and cd["compare"]["verdict"] == "identical" and cd["compare"]["agree"] == 2, json.dumps(cd))
 ok("mixed: the DIC files in data/CD01, the second read removed",
@@ -546,10 +549,10 @@ i = info(b)
 ok("mixed: bag-info with the composition",
    i.get("Media-Type") == "3 floppy, 1 CD" and i.get("Media-Expected") == "4"
    and i.get("Media-Archived") == "4" and "Missing-Media" not in i and i.get("Platform") == "Windows NT", str(i))
-with open(os.path.join(ARCH, "archivio.csv"), encoding="utf-8") as f:
+with open(os.path.join(ARCH, "archive.csv"), encoding="utf-8") as f:
     rows = f.read().splitlines()
-ok("mixed: CD row in archivio.csv",
-   any(r.startswith("4;CD01;1;pulito;") and r.endswith(";Windows NT Workstation 4.0") for r in rows), "\n".join(rows))
+ok("mixed: CD row in archive.csv",
+   any(r.startswith("4;CD01;1;clean;") and r.endswith(";Windows NT Workstation 4.0") for r in rows), "\n".join(rows))
 
 # 27b. a CD with C2 errors (and SafeDisc) that redump does not know: two equal reads, with errors
 rc, out = run("CD rovinato", 0, [], [""], ["-C", "1"], tpl=None, dic=["cd_c2", "cd_c2"])
@@ -557,15 +560,15 @@ b = bag("CD rovinato")
 m = meta(b)
 cd = m["media"][0]
 ok("CD with errors: closed and valid", rc == 0 and check_bag.check(b, PROFILE) == [], out)
-ok("CD with errors: errors status, both reads kept", cd["status"] == "errori"
+ok("CD with errors: errors status, both reads kept", cd["status"] == "errors"
    and [r["file"] for r in cd["reads"]] == ["CD01", "CD01_b"]
    and os.path.isdir(os.path.join(b, "data", "CD01_b")), json.dumps(cd))
 ok("CD with errors: C2 and protection in the technical data", (cd.get("disc") or {}).get("c2_errors") == 3
    and cd["disc"].get("protection") == "SafeDisc", json.dumps(cd.get("disc")))
 with open(os.path.join(b, "data", "CD01.diff.txt"), encoding="utf-8") as f:
     rep_txt = f.read()
-ok("CD with errors: the comparison says what to do", "errori non risolti" in rep_txt
-   and "Prova un altro lettore" in rep_txt, rep_txt)
+ok("CD with errors: the comparison says what to do", "unresolved errors" in rep_txt
+   and "Try another drive" in rep_txt, rep_txt)
 
 # 27c. the same CD present in the redump DAT: one read is enough
 rc, out = run("CD redump", 0, [], [""], ["-C", "1"], tpl=None, dic=["cd_c2"], dats=REDUMP)
@@ -573,8 +576,8 @@ b = bag("CD redump")
 m = meta(b)
 cd = m["media"][0]
 ok("CD in redump: closed with one read", rc == 0 and check_bag.check(b, PROFILE) == []
-   and cd["status"] == "verificato redump" and len(cd["reads"]) == 1
-   and "Lettura 2" not in out and "DAT di redump: " in out, out)
+   and cd["status"] == "redump-verified" and len(cd["reads"]) == 1
+   and "Read 2" not in out and "Redump DAT: " in out, out)
 ok("CD in redump: the game in the metadata", cd["compare"]["verdict"] == "redump"
    and ((cd.get("disc") or {}).get("redump") or {}).get("game") == "Gioco di Prova (Italy)"
    and cd["disc"]["redump"]["dat_date"] == "2026-09-01 10-00-00", json.dumps(cd))
@@ -583,30 +586,30 @@ ok("CD in redump: the game in the metadata", cd["compare"]["verdict"] == "redump
 rc, out = run("CD instabile", 0, [], [""], ["-C", "1"], tpl=None, dic=["cd_good", "cd_noise", "cd_noise"])
 b = bag("CD instabile")
 cd = meta(b)["media"][0]
-ok("unstable CD: three reads kept", rc == 0 and cd["status"] == "instabile"
+ok("unstable CD: three reads kept", rc == 0 and cd["status"] == "unstable"
    and [r["file"] for r in cd["reads"]] == ["CD01", "CD01_b", "CD01_c"]
    and cd["compare"]["agree"] == 2 and check_bag.check(b, PROFILE) == [], json.dumps(cd) + out)
-ok("unstable CD: after the second read another one is made", "Le letture non coincidono" in out, out)
+ok("unstable CD: after the second read another one is made", "The reads do not match" in out, out)
 
 # 27e. the second read fails: the CD stays read once
 rc, out = run("CD una volta", 0, [], [""], ["-C", "1"], tpl=None, dic=["cd_good", "FAIL"])
 cd = meta(bag("CD una volta"))["media"][0]
-ok("CD read once: status and one read", rc == 0 and cd["status"] == "letto una volta"
+ok("CD read once: status and one read", rc == 0 and cd["status"] == "read-once"
    and [r["file"] for r in cd["reads"]] == ["CD01"]
    and not os.path.exists(os.path.join(bag("CD una volta"), "data", "CD01_b")), json.dumps(cd) + out)
 
 # 27f. a DVD in the drive instead of the CD: read failed, the box stays open
 rc, out = run("CD sbagliato", 0, [], [""], ["-C", "1"], tpl=None, dic=["WRONG"])
 cd = meta(bag("CD sbagliato"))["media"][0]
-ok("wrong disc: failed read with the explanation", rc == 1 and cd["status"] == "lettura fallita"
-   and "Nel lettore non c'e' un CD" in out
+ok("wrong disc: failed read with the explanation", rc == 1 and cd["status"] == "read-failed"
+   and "The drive does not hold a CD" in out
    and not os.path.exists(os.path.join(bag("CD sbagliato"), "data", "CD01")), json.dumps(cd) + out)
 
 # 27g. DVD in redump: the .iso in its folder
 rc, out = run("Solo DVD", 0, [], [""], ["-D", "1"], tpl=None, dic=["dvd_good"], dats=REDUMP)
 b = bag("Solo DVD")
 dvd = meta(b)["media"][0]
-ok("DVD: redump verified and valid", rc == 0 and dvd["status"] == "verificato redump"
+ok("DVD: redump verified and valid", rc == 0 and dvd["status"] == "redump-verified"
    and os.path.isfile(os.path.join(b, "data", "DVD01", "DVD01.iso"))
    and check_bag.check(b, PROFILE) == [], json.dumps(dvd) + out)
 ok("DVD: file system and game", (dvd.get("filesystem") or {}).get("volume_label") == "PROVA_CD"
@@ -622,19 +625,19 @@ ok("Joliet: label and long accented names in the metadata", rc == 0
            and f["bytes"] == 5000 for f in fs.get("files", []))
    and "filesystem_note" not in meta(bag("DVD Joliet"))["media"][0], json.dumps(fs, ensure_ascii=False) + out)
 ok("no Joliet: 8.3 names, and it says so", (dvd.get("filesystem") or {}).get("names") == "ISO 9660"
-   and "non ha Joliet" in dvd.get("filesystem_note", ""), json.dumps(dvd))
+   and "has no Joliet" in dvd.get("filesystem_note", ""), json.dumps(dvd))
 
 # 27h. DiscImageCreator missing: the box stays open and says so
 rc, out = run("Senza DIC", 0, [], [""], ["-C", "1", "-X", os.path.join(WORK, "dic-che-non-esiste")], tpl=None)
 cd = meta(bag("Senza DIC"))["media"][0]
-ok("no DIC: open, CD unread", rc == 1 and cd["status"] == "da leggere"
-   and "Non trovo" in out and "dopo aver sistemato DiscImageCreator" in out, json.dumps(cd) + out)
+ok("no DIC: open, CD unread", rc == 1 and cd["status"] == "to-read"
+   and "Cannot find" in out and "once DiscImageCreator is fixed" in out, json.dumps(cd) + out)
 
 # 27i. -f and -C without floppies: only a CD, closed
 rc, out = run("Solo CD", 0, [], [""], ["-C", "1"], tpl=None)
 m = meta(bag("Solo CD"))
 ok("CD only: closed, CD clean",
-   rc == 0 and [(d["type"], d["status"]) for d in m["media"]] == [("cd", "pulito")], out)
+   rc == 0 and [(d["type"], d["status"]) for d in m["media"]] == [("cd", "clean")], out)
 rc, out = run("Composizione vuota", 0, [], [""], tpl=None)
 ok("empty composition: usage instructions", rc == 2 and "-C N" in out, out)
 
@@ -644,7 +647,7 @@ rc, out = run("CD redump alla seconda", 0, [], [""], ["-C", "1"], tpl=None, dic=
               dats=REDUMP)
 b = bag("CD redump alla seconda")
 cd = meta(b)["media"][0]
-ok("redump on the second read: verified, the second read is the master", rc == 0 and cd["status"] == "verificato redump"
+ok("redump on the second read: verified, the second read is the master", rc == 0 and cd["status"] == "redump-verified"
    and cd["master"] == "CD01_b" and [r["file"] for r in cd["reads"]] == ["CD01_b"]
    and not os.path.exists(os.path.join(b, "data", "CD01")) and check_bag.check(b, PROFILE) == [], json.dumps(cd) + out)
 ok("redump on the second read: the redump data are the master's",
@@ -653,15 +656,15 @@ ok("redump on the second read: the redump data are the master's",
 # 27k. DIC exits with an error but the read is complete: it is kept and counts as an error
 rc, out = run("CD uscita 3", 0, [], [""], ["-C", "1"], tpl=None, dic=["EXIT3 cd_good", "cd_good"])
 cd = meta(bag("CD uscita 3"))["media"][0]
-ok("DIC exits with an error: read kept, errors status", rc == 0 and cd["status"] == "errori"
+ok("DIC exits with an error: read kept, errors status", rc == 0 and cd["status"] == "errors"
    and [r["file"] for r in cd["reads"]] == ["CD01", "CD01_b"]
-   and "la lettura e' completa" in out and cd["disc"].get("dic_exit_code") == 3, json.dumps(cd) + out)
+   and "the read is complete" in out and cd["disc"].get("dic_exit_code") == 3, json.dumps(cd) + out)
 
 # 27l. first read broken (.dat without tracks), second failed: not "read once"
 rc, out = run("CD rotto", 0, [], [""], ["-C", "1"], tpl=None, dic=["cd_brokendat", "FAIL"])
 cd = meta(bag("CD rotto"))["media"][0]
 ok("broken read then failed: failed read, box open", rc == 1
-   and cd["status"] == "lettura fallita", json.dumps(cd) + out)
+   and cd["status"] == "read-failed", json.dumps(cd) + out)
 
 # 27m. resumed with folders in data/ that metadata.json does not mention:
 #      only those named like a CD read (CD01, CD01_c) are removed
@@ -673,7 +676,7 @@ for sub in ("CD01", "CD01_c", "Extra"):
         f.write("avanzo\n")
 rc, out = run("CD avanzi", 0, [], [""], ["-C", "1"], tpl=None, dic=["cd_good", "cd_good"])
 ok("leftovers: half reads removed, unrelated folder left", rc == 0
-   and "Tolgo data/CD01_c" in out and "Lascio data/Extra" in out
+   and "Removing data/CD01_c" in out and "Leaving data/Extra" in out
    and os.path.isfile(os.path.join(b, "data", "Extra", "x.txt"))
    and not os.path.exists(os.path.join(b, "data", "CD01_c"))
    and not os.path.exists(os.path.join(b, "data", "CD01", "x.txt"))
@@ -705,8 +708,56 @@ ok("old box resumed: the new floppies with the old naming scheme",
    [f for f in data_files(b) if f.endswith(".dsk")] == ["DISK001.dsk", "DISK002.dsk", "DISK003.dsk"]
    and m["box"]["names"] == {"floppy": "DISK{nnn}"}, str(data_files(b)) + json.dumps(m["box"]))
 ok("old box resumed: the earlier read intact, new schema",
-   sha(os.path.join(b, "data", "DISK001.dsk")) == first and m["schema"] == "retroarchiver-2"
+   sha(os.path.join(b, "data", "DISK001.dsk")) == first and m["schema"] == "retroarchiver-3"
    and [d["type"] for d in m["media"]] == ["floppy"] * 3, json.dumps(m["box"]))
+
+# 28b. a box left open by version 261017: schema retroarchiver-2 with the
+#      outcomes in Italian, the .in-corso marker and a messi-da-parte folder.
+#      It is open and resumable, keeps its folder, and closing removes .in-corso
+rc, out = run("Aperto 261017", 3, ["ident_a", "ident_b", "good_1", "good_1"], ["", "", "Q"])
+b = bag("Aperto 261017")
+os.rename(os.path.join(b, ".in-progress"), os.path.join(b, ".in-corso"))
+os.makedirs(os.path.join(b, "messi-da-parte"))
+with open(os.path.join(b, "messi-da-parte", "disco01_b.dsk.danneggiato"), "w") as f:
+    f.write("old")
+with open(os.path.join(b, "data", "disco02_c.dsk.danneggiato"), "w") as f:
+    f.write("left in data by an earlier version")
+mp = os.path.join(b, "data", "metadata.json")
+with open(mp, encoding="utf-8") as f:
+    m = json.load(f)
+m["schema"] = "retroarchiver-2"
+for d, it in zip(m["media"], ["pulito", "pulito", "da leggere"]):
+    d["status"] = it
+with open(mp, "w", encoding="utf-8") as f:
+    json.dump(m, f, indent=2)
+rc, out = run("Aperto 261017", 3, ["good_2", "good_2"], [""], tpl=None)
+m = meta(b)
+ok("261017 open box: resumed from floppy 3 and closed valid", rc == 0 and check_bag.check(b, PROFILE) == []
+   and "Insert floppy 3" in out and "Insert floppy 1" not in out, out)
+ok("261017 open box: outcomes in English, new schema, markers gone",
+   [d["status"] for d in m["media"]] == ["clean", "clean", "clean"] and m["schema"] == "retroarchiver-3"
+   and not os.path.exists(os.path.join(b, ".in-corso")) and not os.path.exists(os.path.join(b, ".in-progress"))
+   and info(b).get("Box-Status") == "complete", json.dumps(m["media"]))
+ok("261017 open box: its messi-da-parte folder is kept and used",
+   os.path.exists(os.path.join(b, "messi-da-parte", "disco01_b.dsk.danneggiato"))
+   and os.path.exists(os.path.join(b, "messi-da-parte", "disco02_c.dsk.danneggiato"))
+   and not os.path.exists(os.path.join(b, "set-aside")), str(os.listdir(b)))
+
+# 28c. a box closed by 261017 (profile 2, Box-Status in Italian) still checks out
+b = bag("Sano")
+bi = os.path.join(b, "bag-info.txt")
+with open(bi, encoding="utf-8") as f:
+    text = f.read()
+text = text.replace("urn:retroarchiver:bagit-profile:3", "urn:retroarchiver:bagit-profile:2")
+text = text.replace("Box-Status: complete", "Box-Status: completo")
+with open(bi, "w", encoding="utf-8", newline="") as f:
+    f.write(text)
+tag = os.path.join(b, "tagmanifest-sha256.txt")
+with open(tag, encoding="utf-8") as f:
+    lines = [l if not l.endswith("  bag-info.txt\n") else "%s  bag-info.txt\n" % sha(bi) for l in f]
+with open(tag, "w", encoding="utf-8", newline="") as f:
+    f.writelines(lines)
+ok("261017 closed box: valid with profile 2", check_bag.check(b) == [], str(check_bag.check(b)))
 
 # 9. -k keeps all the reads even of a clean disk
 rc, out = run("Tutte", 1, ["ident_a", "ident_b"], [""], ["-k"])
@@ -718,28 +769,28 @@ rc, out = run("Doppione", 3, ["ident_a", "ident_a", "fat_144", "fat_144", "ident
 b = bag("Doppione")
 d3 = meta(b)["media"][2]
 ok("same disk twice: the log says floppy 3 is identical to floppy 1",
-   "il floppy 3 e' identico al floppy 1" in out and "il floppy 2 e' identico" not in out, out)
+   "floppy 3 is identical to floppy 1" in out and "floppy 2 is identical" not in out, out)
 ok("same disk twice: box open, floppy 3 duplicate of floppy 1 with no reads",
-   rc == 1 and d3["status"] == "duplicato" and d3.get("duplicate_of") == 1
+   rc == 1 and d3["status"] == "duplicate" and d3.get("duplicate_of") == 1
    and d3["reads"] == [] and d3["master"] is None, json.dumps(d3) + "\n" + out)
-dup = os.path.join(b, "messi-da-parte", "disco03.dsk.duplicato")
+dup = os.path.join(b, "set-aside", "disco03.dsk.duplicate")
 ok("same disk twice: the reads set aside outside data/, not deleted",
    os.path.exists(dup) and "disco03.dsk" not in data_files(b)
    and sha(dup) == sha(os.path.join(FIX, "ident_a.dsk")), str(data_files(b)))
 rc, out = run("Doppione", 3, ["good_3", "good_3"], [""])
 d3 = meta(b)["media"][2]
 ok("same disk twice: on resume floppy 3 is asked for and read from zero",
-   rc == 0 and "Inserisci il floppy 3" in out and d3["status"] == "pulito" and "duplicate_of" not in d3
+   rc == 0 and "Insert floppy 3" in out and d3["status"] == "clean" and "duplicate_of" not in d3
    and len(d3["reads"]) == 1 and sha(os.path.join(b, "data", "disco03.dsk")) == sha(os.path.join(FIX, "good_3.dsk"))
    and check_bag.check(b, PROFILE) == [], json.dumps(d3) + "\n" + out)
 ok("same disk twice: the duplicate stays among the files set aside",
-   os.path.exists(dup) and "disco03.dsk.duplicato" in out, out)
+   os.path.exists(dup) and "disco03.dsk.duplicate" in out, out)
 # with -r the right disk is asked for at once
 rc, out = run("Doppione subito", 2, ["ident_a", "ident_a", "ident_a", "ident_a", "good_2", "good_2"],
               ["", "", ""], ["-r"])
 ok("same disk twice with -r: floppy 2 asked again at once, the box closes",
-   rc == 0 and out.count("Inserisci il floppy 2") == 2
-   and [d["status"] for d in meta(bag("Doppione subito"))["media"]] == ["pulito", "pulito"], out)
+   rc == 0 and out.count("Insert floppy 2") == 2
+   and [d["status"] for d in meta(bag("Doppione subito"))["media"]] == ["clean", "clean"], out)
 
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))

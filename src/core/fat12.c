@@ -72,7 +72,7 @@ static int add(fs *f, const char *prefix, const unsigned char *e)
     fat_entry *fe; char nm[13];
     unsigned long sz;
     if (f->out->nfiles >= MAXFILES) {
-        note(f, "elenco troncato a 1024 voci");
+        note(f, "list truncated at 1024 entries");
         return 0;
     }
     name83(e, nm);
@@ -121,19 +121,19 @@ static void walk_dir(fs *f, int cl, const char *prefix, int depth)
     int guard = 0, k;
     while (cl >= 2 && cl < 0xFF0 && guard++ < 4096) {
         if (f->visited[cl]) {
-            note(f, "directory con riferimenti circolari: elenco parziale");
+            note(f, "directory with circular references: partial list");
             return;
         }
         f->visited[cl] = 1;
         for (k = 0; k < f->spc; k++) {
             const unsigned char *s = lsec(f, f->datasec + (cl - 2) * f->spc + k);
-            if (!s) { note(f, "directory incompleta (settore illeggibile)"); return; }
+            if (!s) { note(f, "incomplete directory (unreadable sector)"); return; }
             if (!dirsec(f, s, prefix, depth)) return;
         }
         cl = fatnext(f, cl);
     }
     /* the chain ends with EOC (0xFF8 and above) or it is broken */
-    if (cl < 0xFF8) note(f, "catena della directory interrotta");
+    if (cl < 0xFF8) note(f, "broken directory chain");
 }
 
 int fat12_read(const edsk *d, fat_info *out)
@@ -143,12 +143,12 @@ int fat12_read(const edsk *d, fat_info *out)
     memset(out, 0, sizeof(*out));
     memset(&f, 0, sizeof(f));
     f.d = d; f.out = out;
-    if (!d->ok) { str_copy(out->note, sizeof(out->note), "immagine senza intestazione EDSK"); return 0; }
+    if (!d->ok) { str_copy(out->note, sizeof(out->note), "image without an EDSK header"); return 0; }
     b = edsk_sector(d, 0, 0, 1, &len);
-    if (!b || len < 512) { str_copy(out->note, sizeof(out->note), "settore di boot illeggibile"); return 0; }
+    if (!b || len < 512) { str_copy(out->note, sizeof(out->note), "unreadable boot sector"); return 0; }
     if ((b[11] | (b[12] << 8)) != 512 || b[13] == 0 || (b[13] & (b[13] - 1)) ||
         b[16] < 1 || b[16] > 2 || b[21] < 0xF0) {
-        str_copy(out->note, sizeof(out->note), "nessun file system FAT12 riconoscibile");
+        str_copy(out->note, sizeof(out->note), "no recognizable FAT12 file system");
         return 0;
     }
     f.spc = b[13];
@@ -161,7 +161,7 @@ int fat12_read(const edsk *d, fat_info *out)
     f.heads = b[26] | (b[27] << 8);
     if (f.reserved < 1 || f.fatsz < 1 || f.spt < 1 || f.heads < 1 || f.heads > 2 ||
         f.total < 1 || f.rootents < 1) {
-        str_copy(out->note, sizeof(out->note), "parametri del FAT12 non validi");
+        str_copy(out->note, sizeof(out->note), "invalid FAT12 parameters");
         return 0;
     }
     f.rootsec = f.reserved + f.nfats * f.fatsz;
@@ -172,21 +172,21 @@ int fat12_read(const edsk *d, fat_info *out)
     out->files = (fat_entry *)calloc(MAXFILES, sizeof(fat_entry));
     if (!f.fat || !out->files) {
         free(f.fat); fat12_free(out);
-        str_copy(out->note, sizeof(out->note), "memoria insufficiente");
+        str_copy(out->note, sizeof(out->note), "out of memory");
         return 0;
     }
     for (i = 0; i < f.fatsz; i++) {
         const unsigned char *s = lsec(&f, f.reserved + i);
         if (!s) {
             free(f.fat); fat12_free(out);
-            str_copy(out->note, sizeof(out->note), "FAT illeggibile (settore mancante o danneggiato)");
+            str_copy(out->note, sizeof(out->note), "unreadable FAT (missing or damaged sector)");
             return 0;
         }
         memcpy(f.fat + i * 512, s, 512);
     }
     for (i = 0; i < rootsecs; i++) {
         const unsigned char *s = lsec(&f, f.rootsec + i);
-        if (!s) { note(&f, "directory radice incompleta"); break; }
+        if (!s) { note(&f, "incomplete root directory"); break; }
         if (!dirsec(&f, s, "", 0)) break;
     }
     free(f.fat);

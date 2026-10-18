@@ -38,7 +38,7 @@ void session_expand(char *out, size_t n, const char *tpl, int disk, const char *
         else if (!strncmp(p, "{nn}", 4))  { sb_printf(&b, "%02d", disk); p += 4; }
         else if (!strncmp(p, "{n}", 3))   { sb_printf(&b, "%d", disk);   p += 3; }
         else if (!strncmp(p, "{set}", 5)) { sb_puts(&b, title);          p += 5; }
-        else if (!strncmp(p, "{data}", 6)) {
+        else if (!strncmp(p, "{date}", 6) || !strncmp(p, "{data}", 6)) {
             meta_now(now); now[10] = 0; sb_puts(&b, now); p += 6;
         } else {
             char c[2]; c[0] = *p++; c[1] = 0;
@@ -101,6 +101,8 @@ static void ev(run_ctx *r, event_kind k, int disk, const char *fmt, ...)
     sb_vprintf(&b, fmt, ap);
     va_end(ap);
     if (k == EV_PHASE) CP(r->phase, b.s);
+    /* a sentence that starts with a medium's name ("floppy 3 is...") gets its capital */
+    if ((k == EV_LINE || k == EV_ERROR) && b.s && b.s[0] >= 'a' && b.s[0] <= 'z') b.s[0] = (char)(b.s[0] - 'a' + 'A');
     r->host->event(r->host->ctx, k, disk, b.s);
     sb_free(&b);
 }
@@ -160,11 +162,11 @@ static void write_report(run_ctx *r, meta_disk *d, const char *base, const char 
 static void csv_row(run_ctx *r, const meta_disk *d)
 {
     char p[1024], ts[20], title[256]; FILE *f; long long sz; char *q;
-    u8_join(p, sizeof(p), r->cfg->outroot, "archivio.csv");
+    u8_join(p, sizeof(p), r->cfg->outroot, SESSION_CSV);
     sz = u8_filesize(p);
     f = u8_fopen(p, "ab");
-    if (!f) { ev(r, EV_LINE, d->n, "ATTENZIONE: non riesco a scrivere %s", p); return; }
-    if (sz <= 0) fputs("disco;master;letture;esito;quando;cofanetto\n", f);
+    if (!f) { ev(r, EV_LINE, d->n, "WARNING: cannot write %s", p); return; }
+    if (sz <= 0) fputs("disk;master;reads;status;when;box\n", f);
     meta_now(ts); ts[10] = ' '; ts[16] = 0;        /* "2026-10-15 21:04" as before */
     CP(title, r->cfg->box->title);
     for (q = title; *q; q++) if (*q == ';') *q = ',';
@@ -221,7 +223,7 @@ static int compare_reads(run_ctx *r, meta_disk *d, const char *base)
         names[i] = d->reads[i].file;
     }
     /* a single read is compared only against the redump DAT */
-    ev(r, EV_PHASE, d->n, d->nreads == 1 ? "Redump" : "Confronto");
+    ev(r, EV_PHASE, d->n, d->nreads == 1 ? "Redump" : "Compare");
     test_pause();
     compare_init(&res);
     res.names = names;          /* in the package's .diff.txt the names in data/, not the PC's paths */
@@ -231,7 +233,7 @@ static int compare_reads(run_ctx *r, meta_disk *d, const char *base)
     d->agree = res.agree;
     d->unstable_tracks = res.unstable_tracks;
     if (res.outcome[0]) CP(d->status, res.outcome);
-    else CP(d->status, cmp == 0 ? "pulito" : cmp == 1 ? "marginale" : "errore");
+    else CP(d->status, cmp == 0 ? ST_CLEAN : cmp == 1 ? ST_MARGINAL : ST_ERROR);
     /* the read redump knows becomes the master (the others are removed) */
     if (res.master > 0 && res.master <= d->nreads) CP(d->master, d->reads[res.master - 1].file);
     compare_free(&res);
@@ -263,7 +265,7 @@ static void label_from_disk(run_ctx *r, meta_disk *d, const char *who)
     u8_join(path, sizeof(path), r->datadir, d->master);
     if (!m->volume_label(path, lab, sizeof(lab))) return;
     CP(d->label, lab);
-    ev(r, EV_LINE, d->n, "Etichetta del %s presa dal disco: %s", who, lab);
+    ev(r, EV_LINE, d->n, "Label of %s taken from the disk: %s", who, lab);
 }
 
 static int process(run_ctx *r, meta_disk *d)
@@ -279,11 +281,11 @@ static int process(run_ctx *r, meta_disk *d)
     meta_disk_name(d->kind, d->num, who, sizeof(who));
     r->cur = d->n;
     if (d->nreads)
-        ev(r, EV_LINE, d->n, "Il %s ha gia' %d letture: le tengo e le confronto con le nuove.",
+        ev(r, EV_LINE, d->n, "%s already has %d reads: keeping them and comparing them with the new ones.",
            who, d->nreads);
 
     r->mcur = m;
-    ev(r, EV_PHASE, d->n, "%s", m->scan_phase ? m->scan_phase : "Scansione");
+    ev(r, EV_PHASE, d->n, "%s", m->scan_phase ? m->scan_phase : "Scan");
     snprintf(name, sizeof(name), "%s.scan.txt", base);
     u8_join(path, sizeof(path), r->datadir, name);
     rc = m->scan(path, on_line, r);
@@ -291,32 +293,32 @@ static int process(run_ctx *r, meta_disk *d)
         if (!strcmp(d->scan, name)) d->scan[0] = 0;
         return MEDIA_NOTOOL;
     }
-    if (rc == 1) { CP(d->status, "interrotto"); return 0; }
+    if (rc == 1) { CP(d->status, ST_INTERRUPTED); return 0; }
     if (rc == 0) CP(d->scan, name);
-    else ev(r, EV_LINE, d->n, "ATTENZIONE: la scansione non e' partita, continuo con la lettura.");
+    else ev(r, EV_LINE, d->n, "WARNING: the scan did not start, going on with the read.");
 
     /* the scan is a survey: if the disk already has damaged sectors every
      * extra pass risks finishing it off, so a single read that insists on
      * the bad sectors */
     if (rc == 0 && m->problems && (bad = m->problems(path)) > 0) {
-        ev(r, EV_LINE, d->n, "La ricognizione ha trovato settori difettosi su %d tracce: "
-                             "disco fragile, una sola lettura con ritentativi forti.", bad);
+        ev(r, EV_LINE, d->n, "The survey found bad sectors on %d tracks: "
+                             "fragile disk, a single read with heavy retries.", bad);
         limit = 1;
         if (m->careful) m->careful(1);
     }
 
-    CP(d->status, "errore");
+    CP(d->status, ST_ERROR);
     for (pass = 0; pass < limit; pass++) {
         if (free_slot(d, base, m->ext, file, sizeof(file))) {
-            ev(r, EV_LINE, d->n, "ATTENZIONE: il %s ha gia' %d letture, il massimo: "
-                                 "tengo quelle e non ne faccio altre.", who, d->nreads);
+            ev(r, EV_LINE, d->n, "WARNING: %s already has %d reads, the maximum: "
+                                 "keeping those and making no more.", who, d->nreads);
             if (cmp < 0 && d->nreads >= 2) cmp = compare_reads(r, d, base);
             break;
         }
         u8_join(path, sizeof(path), r->datadir, file);
         u8_rmtree(path);                    /* unrecorded leftover of an interruption */
 
-        ev(r, EV_PHASE, d->n, "Lettura %d", d->nreads + 1);
+        ev(r, EV_PHASE, d->n, "Read %d", d->nreads + 1);
         rc = m->read(path, on_line, r);
         if (rc == MEDIA_NOTOOL) {
             if (m->careful) m->careful(0);
@@ -325,14 +327,14 @@ static int process(run_ctx *r, meta_disk *d)
         }
         if (rc != 0) {
             u8_rmtree(path);                /* no half-written files in the bag */
-            CP(d->status, rc == 1 ? "interrotto" : "lettura fallita");
+            CP(d->status, rc == 1 ? ST_INTERRUPTED : ST_FAILED);
             break;
         }
         if (record(r, d, file)) {
-            ev(r, EV_ERROR, d->n, "non riesco a rileggere %s appena scritto: "
-                                  "controlla il disco di destinazione.", file);
+            ev(r, EV_ERROR, d->n, "cannot read back %s, just written: "
+                                  "check the destination disk.", file);
             u8_rmtree(path);
-            CP(d->status, "lettura fallita");
+            CP(d->status, ST_FAILED);
             break;
         }
         if (!d->master[0]) CP(d->master, file);
@@ -344,29 +346,29 @@ static int process(run_ctx *r, meta_disk *d)
             first = cmp;            /* 1: good but to be confirmed; 2: broken read */
             if (cmp == 0) break;
             if (pass + 1 < limit)
-                ev(r, EV_LINE, d->n, "Il %s non e' verificato da redump: faccio una seconda lettura "
-                                     "per confrontarle.", who);
+                ev(r, EV_LINE, d->n, "%s is not verified by redump: making a second read "
+                                     "to compare the two.", who);
             continue;
         }
         if (cmp != 1) break;
         if (pass + 1 < limit)
-            ev(r, EV_LINE, d->n, "Le letture non coincidono: faccio un'altra lettura.");
+            ev(r, EV_LINE, d->n, "The reads do not match: making another read.");
     }
     if (m->careful) m->careful(0);
 
     /* fragile: one successful read and no comparison possible */
-    if (bad > 0 && !strcmp(d->status, "errore") && d->nreads == 1) {
+    if (bad > 0 && !strcmp(d->status, ST_ERROR) && d->nreads == 1) {
         CP(d->status, "fragile");
-        ev(r, EV_LINE, d->n, "Il %s e' stato letto una volta sola: non verificato con un confronto.", who);
+        ev(r, EV_LINE, d->n, "%s was read only once: not verified by a comparison.", who);
     }
     /* CD: the second read failed, the first stays good */
-    if (m->one_read && d->nreads == 1 && first == 1 && !strcmp(d->status, "lettura fallita")) {
-        CP(d->status, "letto una volta");
-        ev(r, EV_LINE, d->n, "Il %s e' stato letto una volta sola: non verificato con un confronto.", who);
+    if (m->one_read && d->nreads == 1 && first == 1 && !strcmp(d->status, ST_FAILED)) {
+        CP(d->status, ST_READ_ONCE);
+        ev(r, EV_LINE, d->n, "%s was read only once: not verified by a comparison.", who);
     }
     label_from_disk(r, d, who);
 
-    if ((!strcmp(d->status, "pulito") || !strcmp(d->status, "verificato redump")) && !c->keepall)
+    if ((!strcmp(d->status, ST_CLEAN) || !strcmp(d->status, ST_REDUMP)) && !c->keepall)
         keep_master_only(r, d);
     return 0;
 }
@@ -407,13 +409,23 @@ static int read_dir_name(const run_ctx *r, const char *name)
  * allows other tag files, in subfolders too, and verifiers ignore those
  * the tagmanifest does not list. So they stay with their box without
  * ending up in the data manifest.
- * name is an entry of data/, suffix ".danneggiato" or ".duplicato"; rel
- * gets the new path, relative to the bag */
+ * name is an entry of data/, suffix SESSION_DAMAGED or SESSION_DUPLICATE;
+ * rel gets the new path, relative to the bag */
+const char *session_aside_dir(const char *bagdir)
+{
+    char p[1024];
+    u8_join(p, sizeof(p), bagdir, SESSION_ASIDE_DIR);
+    if (u8_isdir(p)) return SESSION_ASIDE_DIR;
+    u8_join(p, sizeof(p), bagdir, SESSION_ASIDE_DIR_OLD);
+    return u8_isdir(p) ? SESSION_ASIDE_DIR_OLD : SESSION_ASIDE_DIR;
+}
+
 static int move_aside(run_ctx *r, const char *name, const char *suffix, char *rel, size_t n)
 {
     char from[1024], dir[1024], to[1200], file[300]; int j;
+    const char *aside = session_aside_dir(r->bagdir);
     u8_join(from, sizeof(from), r->datadir, name);
-    u8_join(dir, sizeof(dir), r->bagdir, SESSION_ASIDE_DIR);
+    u8_join(dir, sizeof(dir), r->bagdir, aside);
     if (u8_mkdir(dir)) return -1;
     if (strstr(name, suffix)) CP(file, name);              /* already set aside before */
     else snprintf(file, sizeof(file), "%s%s", name, suffix);
@@ -424,7 +436,7 @@ static int move_aside(run_ctx *r, const char *name, const char *suffix, char *re
         u8_join(to, sizeof(to), dir, alt);
     }
     if (u8_exists(to) || u8_rename_replace(from, to)) return -1;
-    snprintf(rel, n, "%s/%s", SESSION_ASIDE_DIR, to + strlen(dir) + 1);
+    snprintf(rel, n, "%s/%s", aside, to + strlen(dir) + 1);
     return 0;
 }
 
@@ -432,37 +444,38 @@ static void orphan(void *c, const char *name, int isdir)
 {
     run_ctx *r = (run_ctx *)c; char p[1024], rel[400];
     if (referenced(r->cfg->box, name)) return;
-    /* a .danneggiato left in data/ by an earlier version: out of the payload */
-    if (strstr(name, ".danneggiato")) {
-        if (move_aside(r, name, ".danneggiato", rel, sizeof(rel)) == 0) {
-            ev(r, EV_LINE, 0, "Sposto data/%s in %s: fuori dal pacchetto dei dati.", name, rel);
+    /* a damaged read left in data/ by an earlier version: out of the payload */
+    if (strstr(name, SESSION_DAMAGED) || strstr(name, SESSION_DAMAGED_OLD)) {
+        if (move_aside(r, name, strstr(name, SESSION_DAMAGED) ? SESSION_DAMAGED : SESSION_DAMAGED_OLD,
+                       rel, sizeof(rel)) == 0) {
+            ev(r, EV_LINE, 0, "Moving data/%s to %s: out of the data package.", name, rel);
             return;
         }
         r->stuck = 1;
-        ev(r, EV_ERROR, 0, "non riesco a spostare data/%s in %s: e' aperto da un altro programma? "
-                           "chiudilo e rilancia.", name, SESSION_ASIDE_DIR);
+        ev(r, EV_ERROR, 0, "cannot move data/%s to %s: is it open in another program? "
+                           "close it and start again.", name, session_aside_dir(r->bagdir));
         return;
     }
     /* a folder is removed only if it is a half-done read of a CD or DVD
      * (CD01, CD01_b...): RetroArchiver did not make the others */
     if (isdir && !read_dir_name(r, name)) {
-        ev(r, EV_LINE, 0, "Lascio data/%s: non e' una lettura di questo cofanetto, ma finira' nel "
-                          "pacchetto. Se non serve, spostala fuori da data.", name);
+        ev(r, EV_LINE, 0, "Leaving data/%s: it is not a read of this box, but it will end up in the "
+                          "package. If it is not needed, move it out of data.", name);
         return;
     }
     u8_join(p, sizeof(p), r->datadir, name);
     if ((isdir ? u8_rmtree(p) : u8_remove(p)) == 0) {
-        ev(r, EV_LINE, 0, "Tolgo data/%s: non risulta in metadata.json "
-                          "(resto di un'interruzione).", name);
+        ev(r, EV_LINE, 0, "Removing data/%s: it is not in metadata.json "
+                          "(left over from an interruption).", name);
         return;
     }
     r->stuck = 1;
-    ev(r, EV_ERROR, 0, "non riesco a togliere data/%s: e' aperto da un altro programma? "
-                       "chiudilo e rilancia.", name);
+    ev(r, EV_ERROR, 0, "cannot remove data/%s: is it open in another program? "
+                       "close it and start again.", name);
 }
 
 /* the reads of disk n that no longer match their fingerprint are set
- * aside as .danneggiato in SESSION_ASIDE_DIR (never deleted) and the disk
+ * aside as NAME.damaged in the set-aside folder (never deleted) and the disk
  * goes back to "to be read"; the other reads stay */
 static void set_aside(run_ctx *r, int n)
 {
@@ -476,14 +489,14 @@ static void set_aside(run_ctx *r, int n)
             continue;
         }
         if (u8_exists(p)) {
-            if (move_aside(r, d->reads[i].file, ".danneggiato", rel, sizeof(rel))) {
-                ev(r, EV_LINE, n, "ATTENZIONE: non riesco a spostare data/%s in %s: e' aperto da un "
-                                  "altro programma? chiudilo e rilancia.", d->reads[i].file, SESSION_ASIDE_DIR);
+            if (move_aside(r, d->reads[i].file, SESSION_DAMAGED, rel, sizeof(rel))) {
+                ev(r, EV_LINE, n, "WARNING: cannot move data/%s to %s: is it open in "
+                                  "another program? close it and start again.", d->reads[i].file, session_aside_dir(r->bagdir));
                 d->reads[k++] = d->reads[i];
                 continue;
             }
-            ev(r, EV_LINE, n, "Metto da parte data/%s come %s, fuori dal pacchetto dei dati: "
-                              "non e' piu' quello letto.", d->reads[i].file, rel);
+            ev(r, EV_LINE, n, "Setting data/%s aside as %s, out of the data package: "
+                              "it is no longer what was read.", d->reads[i].file, rel);
         }
     }
     d->nreads = k;
@@ -507,7 +520,7 @@ int session_aside_list(const char *bagdir, strbuf *out)
 {
     char dir[1024]; aside_ctx a;
     a.out = out; a.n = 0;
-    u8_join(dir, sizeof(dir), bagdir, SESSION_ASIDE_DIR);
+    u8_join(dir, sizeof(dir), bagdir, session_aside_dir(bagdir));
     if (u8_isdir(dir)) u8_listdir(dir, aside_one, &a);
     return a.n;
 }
@@ -519,9 +532,9 @@ static void tell_aside(run_ctx *r)
     sb_init(&s);
     n = session_aside_list(r->bagdir, &s);
     if (n) {
-        u8_join(dir, sizeof(dir), r->bagdir, SESSION_ASIDE_DIR);
-        ev(r, EV_LINE, 0, "Messi da parte, fuori dal pacchetto dei dati (non sono nel manifest): %d file. "
-                          "Guardali e, se non servono, cancellali:", n);
+        u8_join(dir, sizeof(dir), r->bagdir, session_aside_dir(r->bagdir));
+        ev(r, EV_LINE, 0, "Set aside, out of the data package (not in the manifest): %d file(s). "
+                          "Look at them and, if they are not needed, delete them:", n);
         for (p = s.s; *p; p = nl + 1) {
             nl = strchr(p, '\n');
             *nl = 0;
@@ -543,14 +556,14 @@ static int all_done(const meta_box *b)
     return 1;
 }
 
-/* closed with F: disks never read become missing, not "da leggere";
+/* closed with F: disks never read become missing, not ST_TO_READ;
  * those with reads keep their outcome */
 static void mark_missing(meta_box *b)
 {
     int n; meta_disk *d;
     for (n = 1; n <= b->media_expected; n++) {
         d = meta_disk_get(b, n);
-        if (d && !meta_disk_done(d) && !d->nreads) CP(d->status, "mancante");
+        if (d && !meta_disk_done(d) && !d->nreads) CP(d->status, ST_MISSING);
     }
 }
 
@@ -562,17 +575,17 @@ static int open_bag(run_ctx *r)
     int nwant = box->media_expected;
     if (u8_exists(r->bagdir)) {
         if (!bag_is_open(r->bagdir)) {
-            ev(r, EV_ERROR, 0, "Il cofanetto \"%s\" e' gia' chiuso in %s: scegli un altro titolo.",
+            ev(r, EV_ERROR, 0, "The box \"%s\" is already closed in %s: choose another title.",
                box->title, r->bagdir);
             return -1;
         }
         u8_join(mp, sizeof(mp), r->datadir, "metadata.json");
         if (!u8_exists(mp)) {
             /* the first save failed: start over as new */
-            ev(r, EV_LINE, 0, "In %s manca metadata.json: riparto da capo con questo cofanetto.",
+            ev(r, EV_LINE, 0, "metadata.json is missing in %s: starting this box over from scratch.",
                r->bagdir);
             if (u8_mkdir(r->datadir)) {
-                ev(r, EV_ERROR, 0, "Non riesco a creare la cartella %s: controlla i permessi.", r->datadir);
+                ev(r, EV_ERROR, 0, "Cannot create the folder %s: check the permissions.", r->datadir);
                 return -1;
             }
             meta_now(box->started);
@@ -586,15 +599,15 @@ static int open_bag(run_ctx *r)
         }
         /* different titles can give the same folder ("A: B" and "A_ B") */
         if (strcmp(box->title, want)) {
-            ev(r, EV_ERROR, 0, "La cartella %s contiene il cofanetto \"%s\", non \"%s\": scegli un "
-                               "titolo diverso o riprendi quello con il suo titolo esatto.",
+            ev(r, EV_ERROR, 0, "The folder %s holds the box \"%s\", not \"%s\": choose a "
+                               "different title, or resume that box with its exact title.",
                r->bagdir, box->title, want);
             return -1;
         }
         meta_composition(box, was, sizeof(was));
         if (nwant && strcmp(was, now))
-            ev(r, EV_LINE, 0, "Il cofanetto era stato aperto con %s: continuo con %s.", was, was);
-        ev(r, EV_LINE, 0, "Riprendo il cofanetto \"%s\" da %s", box->title, r->bagdir);
+            ev(r, EV_LINE, 0, "The box was opened with %s: going on with %s.", was, was);
+        ev(r, EV_LINE, 0, "Resuming the box \"%s\" from %s", box->title, r->bagdir);
         u8_listdir(r->datadir, orphan, r);
         return 0;
     }
@@ -622,8 +635,8 @@ static int names_collide(run_ctx *r)
         disk_base(r, kind, num, base[i]);
         for (k = 0; k < i; k++) {
             if (!same_name(base[i], base[k])) continue;
-            ev(r, EV_ERROR, 0, "Lo schema dei nomi \"%s\" da' lo stesso nome a supporti diversi: "
-                               "usa {n}, {nn} o {nnn} e un titolo piu' corto.", tpl_for(r, kind));
+            ev(r, EV_ERROR, 0, "The naming scheme \"%s\" gives the same name to different media: "
+                               "use {n}, {nn} or {nnn} and a shorter title.", tpl_for(r, kind));
             return 1;
         }
     }
@@ -688,12 +701,12 @@ static int move_aside(run_ctx *r, const char *name, const char *suffix, char *re
 static void aside_dup(run_ctx *r, const meta_disk *d, char *name, size_t len)
 {
     char rel[400];
-    if (!name[0] || move_aside(r, name, ".duplicato", rel, sizeof(rel))) {
-        if (name[0]) ev(r, EV_LINE, d->n, "ATTENZIONE: non riesco a spostare data/%s in %s: e' aperto da "
-                                          "un altro programma?", name, SESSION_ASIDE_DIR);
+    if (!name[0] || move_aside(r, name, SESSION_DUPLICATE, rel, sizeof(rel))) {
+        if (name[0]) ev(r, EV_LINE, d->n, "WARNING: cannot move data/%s to %s: is it open in "
+                                          "another program?", name, session_aside_dir(r->bagdir));
         return;
     }
-    ev(r, EV_LINE, d->n, "Metto da parte data/%s come %s, fuori dal pacchetto dei dati.", name, rel);
+    ev(r, EV_LINE, d->n, "Setting data/%s aside as %s, out of the data package.", name, rel);
     name[0] = 0;
     (void)len;
 }
@@ -711,14 +724,14 @@ static void check_twin(run_ctx *r, meta_disk *d)
     name_of(r->cfg->box, t, other, sizeof(other));
     /* read again and still the same: the two disks really are identical */
     if (d->duplicate_of == t) {
-        ev(r, EV_LINE, d->n, "Il %s e' di nuovo identico al %s: lo tengo, i due dischi sono davvero uguali.",
+        ev(r, EV_LINE, d->n, "%s is again identical to %s: keeping it, the two disks really are the same.",
            who, other);
         d->duplicate_of = 0;
         return;
     }
-    ev(r, EV_LINE, d->n, "ATTENZIONE: il %s e' identico al %s (stessa impronta SHA-256): e' lo stesso disco "
-                         "inserito due volte? Il %s resta da leggere: inserisci quello giusto. Se i due "
-                         "dischi sono davvero uguali, rileggilo: alla seconda volta lo tengo.", who, other, who);
+    ev(r, EV_LINE, d->n, "WARNING: %s is identical to %s (same SHA-256 fingerprint): is it the same disk "
+                         "inserted twice? %s is still to be read: insert the right one. If the two "
+                         "disks really are the same, read it again: the second time it is kept.", who, other, who);
     for (i = 0; i < d->nreads; i++) {
         CP(file, d->reads[i].file);
         aside_dup(r, d, file, sizeof(file));
@@ -731,7 +744,7 @@ static void check_twin(run_ctx *r, meta_disk *d)
     d->verdict[0] = 0;
     d->agree = d->unstable_tracks = 0;
     d->duplicate_of = t;
-    CP(d->status, "duplicato");
+    CP(d->status, ST_DUPLICATE);
 }
 
 enum { DISK_NEXT, DISK_QUIT, DISK_FINISH, DISK_FAIL };
@@ -757,16 +770,16 @@ static int ask_and_do(run_ctx *r, meta_disk *d, int *cmd, char *bye, size_t blen
     if (!t.readable) {
         *cmd = CMD_SKIP;
         if (save(r)) return DISK_FAIL;
-        host->event(host->ctx, EV_DISK_DONE, d->n, d->status[0] ? d->status : "da leggere");
+        host->event(host->ctx, EV_DISK_DONE, d->n, d->status[0] ? d->status : ST_TO_READ);
         return DISK_NEXT;
     }
     /* skipped: reads already done stay, and with them their outcome */
-    if (*cmd == CMD_SKIP) { if (!d->nreads) CP(d->status, "mancante"); }
+    if (*cmd == CMD_SKIP) { if (!d->nreads) CP(d->status, ST_MISSING); }
     else if (process(r, d) == MEDIA_NOTOOL) {
         const char *tool = r->cfg->media[d->kind]->tool;
         ev(r, EV_ERROR, d->n, "%s", r->last);
-        snprintf(bye, blen, "Il cofanetto resta aperto: dopo aver sistemato %s, "
-                            "riparti con lo stesso titolo.", tool ? tool : "il programma di lettura");
+        snprintf(bye, blen, "The box stays open: once %s is fixed, "
+                            "start again with the same title.", tool ? tool : "the reading program");
         return DISK_QUIT;
     } else check_twin(r, d);
     csv_row(r, d);
@@ -779,8 +792,8 @@ static int ask_and_do(run_ctx *r, meta_disk *d, int *cmd, char *bye, size_t blen
 static int retry_wanted(const run_ctx *r, const meta_disk *d, int cmd)
 {
     return r->host->ask_again && cmd == CMD_READ
-        && (!strcmp(d->status, "lettura fallita") || !strcmp(d->status, "interrotto")
-            || !strcmp(d->status, "duplicato"));
+        && (!strcmp(d->status, ST_FAILED) || !strcmp(d->status, ST_INTERRUPTED)
+            || !strcmp(d->status, ST_DUPLICATE));
 }
 
 /* after a read: did the user ask to stop? */
@@ -789,8 +802,8 @@ static int stop_after(const run_ctx *r, const meta_disk *d, int cmd, char *bye, 
     char who[32];
     if (cmd != CMD_READ) return 0;
     /* stopped by the user (Ctrl+C, Cancel): the next disk is not asked for */
-    if (!strcmp(d->status, "interrotto")) {
-        snprintf(bye, blen, "Lettura interrotta: rilancia per riprendere dal %s.",
+    if (!strcmp(d->status, ST_INTERRUPTED)) {
+        snprintf(bye, blen, "Read interrupted: start again to resume from %s.",
                  name_of(r->cfg->box, d->n, who, sizeof(who)));
         return 1;
     }
@@ -799,10 +812,10 @@ static int stop_after(const run_ctx *r, const meta_disk *d, int cmd, char *bye, 
      * request is already a stopping point. */
     if (!runner_stopped() || r->host->ask_again) return 0;
     if (d->n < r->cfg->box->media_expected)
-        snprintf(bye, blen, "Fermato: rilancia per riprendere dal %s.",
+        snprintf(bye, blen, "Stopped: start again to resume from %s.",
                  name_of(r->cfg->box, meta_disk_done(d) ? d->n + 1 : d->n, who, sizeof(who)));
     else
-        str_copy(bye, blen, "Fermato: rilancia con lo stesso titolo per chiudere il cofanetto.");
+        str_copy(bye, blen, "Stopped: start again with the same title to close the box.");
     return 1;
 }
 
@@ -821,9 +834,8 @@ static void still_to_read(const run_ctx *r, char *bye, size_t blen)
         sb_printf(&s, k++ ? ", %s" : "%s", who);
     }
     if (k)
-        snprintf(bye, blen, "%s %s: il cofanetto resta aperto. Riprendilo quando RetroArchiver "
-                            "sapra' leggerl%s, oppure chiudilo con F.",
-                 k == 1 ? "Resta da leggere il" : "Restano da leggere:", s.s, k == 1 ? "o" : "i");
+        snprintf(bye, blen, "Still to read: %s. The box stays open: resume it when RetroArchiver "
+                            "can read %s, or close it with F.", s.s, k == 1 ? "it" : "them");
     sb_free(&s);
 }
 
@@ -838,7 +850,7 @@ int session_run(const session_cfg *cfg, const session_host *host)
     sb_init(&r.msg);
     runner_clear();
     if (u8_mkdirs(cfg->outroot)) {
-        ev(&r, EV_ERROR, 0, "Non riesco a creare la cartella %s: controlla il percorso.", cfg->outroot);
+        ev(&r, EV_ERROR, 0, "Cannot create the folder %s: check the path.", cfg->outroot);
         goto out;
     }
     session_bagdir(r.bagdir, sizeof(r.bagdir), cfg->outroot, box->title);
@@ -850,7 +862,7 @@ int session_run(const session_cfg *cfg, const session_host *host)
 
     for (n = cfg->start > 0 ? cfg->start : 1; n <= box->media_expected; n++) {
         meta_disk *d = meta_disk_get(box, n);
-        if (!d) { ev(&r, EV_ERROR, n, "Troppi supporti: al massimo %d per cofanetto.", META_MAXDISK); break; }
+        if (!d) { ev(&r, EV_ERROR, n, "Too many media: at most %d per box.", META_MAXDISK); break; }
         if (meta_disk_done(d)) continue;
         do act = ask_and_do(&r, d, &cmd, bye, sizeof(bye));
         while (act == DISK_NEXT && retry_wanted(&r, d, cmd));
@@ -863,9 +875,9 @@ int session_run(const session_cfg *cfg, const session_host *host)
         save(&r);
         if (!bye[0] && !quit) still_to_read(&r, bye, sizeof(bye));
         ev(&r, EV_LINE, 0, "%s", bye[0] ? bye : quit
-           ? "Cofanetto lasciato aperto: rilancia con lo stesso titolo per riprenderlo."
-           : "Mancano dei supporti: il cofanetto resta aperto. Rilancia con lo stesso titolo "
-             "per riprenderli, oppure chiudilo con F.");
+           ? "Box left open: start again with the same title to resume it."
+           : "Some media are missing: the box stays open. Start again with the same title "
+             "to read them, or close it with F.");
         rc = SESSION_OPEN;
         goto out;
     }
@@ -882,15 +894,15 @@ int session_run(const session_cfg *cfg, const session_host *host)
     sb_clear(&r.msg);
     if (save(&r) == 0 && bag_close(r.bagdir, box, &r.msg, &bad) == 0) {
         tell_aside(&r);
-        host->event(host->ctx, EV_BOX_DONE, 0, all_done(box) ? "completo" : "incompleto");
+        host->event(host->ctx, EV_BOX_DONE, 0, all_done(box) ? BAG_COMPLETE : BAG_INCOMPLETE);
         rc = SESSION_CLOSED;
     } else {
         box->closed[0] = 0;
         if (bad > 0) {
             set_aside(&r, bad);
             char who[32];
-            ev(&r, EV_ERROR, bad, "%s. Rilancia con lo stesso titolo: il %s verra' "
-                                  "richiesto di nuovo.", r.msg.s, name_of(box, bad, who, sizeof(who)));
+            ev(&r, EV_ERROR, bad, "%s. Start again with the same title: %s will be "
+                                  "asked for again.", r.msg.s, name_of(box, bad, who, sizeof(who)));
         } else if (r.msg.len) {
             ev(&r, EV_ERROR, 0, "%s", r.msg.s);
         }

@@ -61,7 +61,11 @@ RetroArchiver checks the free space before reading.
 1. Carry `RetroArchiver-Setup.exe` (about 13 MB) to the XP PC on a USB
    stick.
 2. Double-click `RetroArchiver-Setup.exe` (an administrator account is
-   needed). The pages: welcome, third-party programs (credits and licenses,
+   needed). First it asks for the language, English or Italian (the one
+   of Windows is proposed; an update proposes the previous choice): the
+   pages, the final summary and `install-check.txt` are in that language,
+   and RetroArchiver starts in it too. The pages: welcome, third-party
+   programs (credits and licenses, in English in both languages,
    to read only: Next goes on), components (all selected), folder (Program
    Files: `C:\Programmi\RetroArchiver` on Italian XP,
    `C:\Program Files\RetroArchiver` on English XP), progress, finish.
@@ -91,15 +95,23 @@ RetroArchiver checks the free space before reading.
    usually starts only after a restart (rarely the runtime asks too).
 
 **The default RetroArchiver.ini.** Next to `RetroArchiver.exe` the setup
-writes the defaults: `Cartella=C:\RetroArchive`,
-`SAMdisk=<folder>\tools\samdisk\samdisk.exe`, `LeggiDa=a:`,
-`DiscImageCreator=<folder>\tools\DIC\DiscImageCreator.exe`, `LettoreCD=`
-the first CD drive it finds (otherwise `D:`), `LettureMax=3` and the file
-names. If the file already exists nothing in it changes: only missing keys
-are added. RetroArchiver only reads it; each user's choices go into their
-own `Application Data` (see [RetroArchiver](#retroarchiver)). The key
-names are still Italian: they will change, with backward-compatible
-reading, together with multi-language support.
+writes the defaults: `ArchiveFolder=C:\RetroArchive`, `MaxReads=3` and
+`UILanguage` (the language chosen at its start) in `[General]`;
+`SAMdisk=<folder>\tools\samdisk\samdisk.exe`, `ReadFrom=a:` and
+`FileName` in `[Floppy]`; `DiscImageCreator=<folder>\tools\DIC\DiscImageCreator.exe`,
+`Drive=` the first CD drive it finds (otherwise `D:`), `CDFileName` and
+`DVDFileName` in `[Optical]`. If the file already exists its values stay:
+only missing keys are added. RetroArchiver only reads it; each user's
+choices go into their own `Application Data` (see
+[RetroArchiver](#retroarchiver)).
+
+Version 261017 wrote the keys in Italian (`[Archiviazione]` with
+`Cartella`, `LeggiDa`...; `[Finestra]` with `X`, `Larghezza`...). An update
+converts the defaults ini and the ini of the user who installs: each value
+moves to its English key and the Italian keys go; `install-check.txt` says
+how many were moved. The other users' ini are converted by the window the
+first time they open it. Until then RetroArchiver still reads the Italian
+keys where the English ones are missing.
 
 **Updating.** Run the same setup again, or a newer one: if RetroArchiver
 is open it asks to close it (with a box in progress the window asks
@@ -107,7 +119,7 @@ whether to leave it open: it can be resumed later from the archive), then
 it replaces the programs. Settings and archive stay as they are. An
 installation made by the earlier setup in `C:\RetroArchiver` is updated
 in place: its `RetroArchiver.ini` becomes the defaults ini, so the earlier
-choices stay (`Cartella=C:\RetroArchiver\Archivio` too). SAMdisk and
+choices stay (`ArchiveFolder=C:\RetroArchiver\Archivio` too). SAMdisk and
 DiscImageCreator, which that setup had put in `C:\samdisk` and `C:\DIC`,
 move to `tools\`: their old files are removed (only the ones the setup put
 there). An old ini that still says `C:\samdisk\samdisk.exe` is not a
@@ -199,8 +211,10 @@ installed by hand.
 
 1. The setup puts it in Program Files (`<folder>`): `RetroArchiver.exe`
    (the window), `dskrun.exe` and `dskdiff.exe` (console),
-   `RetroArchiver.ini` with the defaults. By hand, copying the three
-   `.exe` files to a folder is enough: they need nothing else.
+   `RetroArchiver.ini` with the defaults, and the window's languages in
+   `lang\` (`it.lng`, `en.lng`). By hand, copying the three `.exe` files
+   to a folder is enough: they need nothing else, and without `lang\` the
+   window speaks the English built into it.
 2. Settings live in two `RetroArchiver.ini` files, both UTF-16 with a BOM
    (paths with accented letters survive):
 
@@ -215,23 +229,43 @@ installed by hand.
 
    For each key the user's value wins, otherwise the default, otherwise
    the value built into the program. This way a new default brought by an
-   update reaches whoever had not changed it. The keys, in the
-   `[Archiviazione]` section:
+   update reaches whoever had not changed it. The keys:
 
-   | Key | Setup default | Without any ini | What |
-   |---|---|---|---|
-   | `Cartella` | `C:\RetroArchive` | `C:\RetroArchive` (system drive) | where the boxes go |
-   | `SAMdisk` | `<folder>\tools\samdisk\samdisk.exe` | `samdisk` | the program for floppies |
-   | `LeggiDa` | `a:` | `a:` | floppy drive, or a `.dsk` file for tests |
-   | `LettureMax` | `3` | `3` | maximum reads per floppy |
-   | `NomeFloppy`, `NomeCD`, `NomeDVD` | `FLOPPY{nn}`, `CD{nn}`, `DVD{nn}` | the same | file names, only by hand in the ini |
-   | `DiscImageCreator` | `<folder>\tools\DIC\DiscImageCreator.exe` | `DiscImageCreator` | the program for CDs and DVDs |
-   | `LettoreCD` | the first CD drive | `D:` | the CD/DVD drive letter |
-   | `Piattaforma`, `Lingua` | | empty | the last choice in the box preparation |
-   | `Suoni` | | `0` | 1 = Windows sounds instead of beeps |
+   | Section | Key | Setup default | Without any ini | What |
+   |---|---|---|---|---|
+   | `General` | `ArchiveFolder` | `C:\RetroArchive` | `C:\RetroArchive` (system drive) | where the boxes go |
+   | `General` | `MaxReads` | `3` | `3` | maximum reads per disk |
+   | `General` | `Sounds` | | `0` | 1 = Windows sounds instead of beeps |
+   | `General` | `UILanguage` | the setup's language | empty | the window's language, see below |
+   | `Floppy` | `SAMdisk` | `<folder>\tools\samdisk\samdisk.exe` | `samdisk` | the program for floppies |
+   | `Floppy` | `ReadFrom` | `a:` | `a:` | floppy drive, or a `.dsk` file for tests |
+   | `Floppy` | `FileName` | `FLOPPY{nn}` | the same | file names, only by hand in the ini |
+   | `Optical` | `DiscImageCreator` | `<folder>\tools\DIC\DiscImageCreator.exe` | `DiscImageCreator` | the program for CDs and DVDs |
+   | `Optical` | `Drive` | the first CD drive | `D:` | the CD/DVD drive letter |
+   | `Optical` | `CDFileName`, `DVDFileName` | `CD{nn}`, `DVD{nn}` | the same | file names, only by hand in the ini |
+   | `Automatic` | `Enabled` | | `0` | 1 = the Automatic checkbox |
+   | `Box` | `Platform`, `Language` | | empty | the last choice in the box preparation |
+   | `Window` | `X`, `Y`, `Width`, `Height`, `Maximized` | | | the window position, only in the user's ini |
 
-   In the `[Finestra]` section: `X`, `Y`, `Larghezza`, `Altezza`,
-   `Massimizzata`, the window position (only in the user's ini). If
+   The keys of 261017 and the ones that replaced them: `[Archiviazione]`
+   `Cartella` → `[General] ArchiveFolder`, `LettureMax` → `MaxReads`,
+   `Suoni` → `Sounds`; `SAMdisk`, `LeggiDa` → `[Floppy] SAMdisk`,
+   `ReadFrom`; `NomeFloppy` → `[Floppy] FileName`; `DiscImageCreator`,
+   `LettoreCD`, `NomeCD`, `NomeDVD` → `[Optical] DiscImageCreator`, `Drive`,
+   `CDFileName`, `DVDFileName`; `AutoMode` → `[Automatic] Enabled`;
+   `Piattaforma`, `Lingua` → `[Box] Platform`, `Language`; `[Finestra]`
+   `X`, `Y`, `Larghezza`, `Altezza`, `Massimizzata` → `[Window] X`, `Y`,
+   `Width`, `Height`, `Maximized`. `NomeFile` is dropped. A key in English
+   wins over its Italian one; the window converts the user's ini by itself
+   at its first start, the setup the defaults.
+
+   `UILanguage` is the window's language: `it`, `en` (the name of a file in
+   `lang\`) or empty to follow the language of Windows. The setup writes
+   the language chosen at its start in the defaults; Program language
+   (Lingua del programma) in the box preparation writes the user's
+   choice, and the window changes at once. Windows in Italian gives
+   Italian, any other language English, unless `lang\` has a file for it.
+   If
    `SAMdisk` or `DiscImageCreator` cannot be found (an older ini with
    `C:\samdisk`), the window uses the ones in `tools\` next to the
    executable.
@@ -239,6 +273,14 @@ installed by hand.
    The redump DAT goes next to `RetroArchiver.exe` (in Program Files this
    needs an administrator): the window finds it by itself and shows its
    date in the status bar.
+
+   The language files, `lang\<code>.lng`, are UTF-8 text with one
+   `key=text` per line (`en.lng` explains the format at its top). A new
+   language is a copy of `en.lng` with the texts translated, saved as
+   `lang\de.lng`, `lang\fr.lng`...: it appears in Program language by
+   itself. A text that is missing, or whose `%` placeholders differ from
+   the English ones, stays in English. The setup removes only `it.lng`
+   and `en.lng`.
 3. **Check:** open `RetroArchiver.exe`. It opens on the Archive (empty the
    first time). With New box (Nuovo cofanetto), the status bar at the
    bottom left should say "SAMdisk 3.8.12"; once title, platform and media
@@ -251,6 +293,7 @@ The setup's ones, on Italian XP:
 ```
 C:\Programmi\RetroArchiver\RetroArchiver.exe
 C:\Programmi\RetroArchiver\RetroArchiver.ini      (the defaults, read-only)
+C:\Programmi\RetroArchiver\lang\                  (the window's languages: it.lng, en.lng)
 C:\Programmi\RetroArchiver\<redump DAT>.dat
 C:\Programmi\RetroArchiver\licenses\              (third-party notices and licenses)
 C:\Programmi\RetroArchiver\tools\samdisk\samdisk.exe
@@ -259,7 +302,7 @@ C:\Documents and Settings\<user>\Dati applicazioni\RetroArchiver\RetroArchiver.i
 C:\RetroArchive\                                  (the archive: better a large NTFS disk)
 ```
 
-The archive is moved from the window (the Cartella field, or the one at
+The archive is moved from the window (the Folder field, or the one at
 the top of the Archive): the choice goes into the user's ini.
 
 ## Credits and licenses

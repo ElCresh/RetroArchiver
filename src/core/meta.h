@@ -8,7 +8,28 @@
 #define META_MAXDISK 64
 #define META_MAXREAD 6
 #include "version.h"
-#define META_SCHEMA  "retroarchiver-2"
+#define META_SCHEMA  "retroarchiver-3"
+/* 261017 wrote retroarchiver-2 (and earlier retroarchiver-floppy-1), with
+ * the outcomes in Italian: they are still read, as the English ones */
+#define META_SCHEMA_2 "retroarchiver-2"
+
+/* the outcome of a medium, "status" in metadata.json */
+#define ST_CLEAN       "clean"
+#define ST_MARGINAL    "marginal"
+#define ST_ERROR       "error"
+#define ST_ERRORS      "errors"           /* a CD or DVD with errors redump does not explain */
+#define ST_FRAGILE     "fragile"
+#define ST_UNSTABLE    "unstable"
+#define ST_READ_ONCE   "read-once"
+#define ST_REDUMP      "redump-verified"
+#define ST_FAILED      "read-failed"
+#define ST_INTERRUPTED "interrupted"
+#define ST_MISSING     "missing"
+#define ST_DUPLICATE   "duplicate"
+#define ST_TO_READ     "to-read"          /* only in the file: in memory "" */
+
+/* an outcome as 261017 wrote it ("pulito"...) in English; others unchanged */
+const char *meta_status_english(const char *s);
 
 /* the media types of a box, in the order they are asked for */
 enum { MEDIA_FLOPPY, MEDIA_CD, MEDIA_DVD, MEDIA_KINDS };

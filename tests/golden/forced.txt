@@ -1,22 +1,22 @@
 
-dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+dskdiff 1.2 - compares several reads of the same floppy
 
-  A: fixtures/dd40bad_a.dsk          399.104 byte   42 cilindri, 2 facce
-  B: fixtures/dd40bad_b.dsk          399.104 byte   42 cilindri, 2 facce
-  tracce formattate: 40 cilindri, 9 settori per traccia
+  A: fixtures/dd40bad_a.dsk          399,104 bytes   42 cylinders, 2 sides
+  B: fixtures/dd40bad_b.dsk          399,104 bytes   42 cylinders, 2 sides
+  formatted tracks: 40 cylinders, 9 sectors per track
 
-  soglia forzata a 20 cilindri
+  threshold forced to 20 cylinders
 
-  byte diversi: 40   (il primo a 0x00010FE8)
+  differing bytes: 40   (the first at 0x00010FE8)
 
-  cil  7 faccia 0 ........... 40
+  cyl  7 side 0 ............. 40
 
-  ESITO: ci sono differenze nei DATI del disco.
+  RESULT: there are differences in the disk DATA.
 
-  Le due letture dello stesso dischetto non coincidono su cilindri
-  dentro l'area standard: il segnale e' al limite e il controller lo
-  interpreta diversamente a ogni passata.
+  The two reads of the same floppy do not match on cylinders
+  inside the standard area: the signal is marginal and the controller
+  reads it differently on every pass.
 
-  Rileggi con  --retries=30 --rescans=5  e catalogalo come marginale.
+  Reread with  --retries=30 --rescans=5  and catalog it as marginal.
 
 exit=1

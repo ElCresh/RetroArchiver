@@ -25,7 +25,7 @@ void test_floppy(void)
     floppy_media.tech(NULL, "fixtures/ident_a.dsk", &w);
     jw_end_obj(&w);
     CHECK(strstr(w.out.s, "\"filesystem\": null") != NULL);
-    CHECK(strstr(w.out.s, "nessun file system FAT12") != NULL);
+    CHECK(strstr(w.out.s, "no recognizable FAT12") != NULL);
     jw_free(&w);
 
     CHECK_STR(floppy_media.name, "floppy");
@@ -98,12 +98,12 @@ void test_floppy(void)
     }
     setenv("FAKE_SAMDISK_NODRIVE", "1", 1);
     CHECK(floppy_media.check(&msg) == -1);
-    CHECK(strstr(msg.s, "non risponde") != NULL);
+    CHECK(strstr(msg.s, "does not respond") != NULL);
     unsetenv("FAKE_SAMDISK_NODRIVE");
     sb_clear(&msg);
     floppy_set_samdisk("samdisk-che-non-esiste");
     CHECK(floppy_media.check(&msg) == -1);
-    CHECK(strstr(msg.s, "Non trovo") != NULL);
+    CHECK(strstr(msg.s, "Cannot find") != NULL);
     /* a missing SAMdisk is not a damaged disk */
     lines = 0;
     CHECK(floppy_media.scan("tmp_unit/z.scan.txt", count, NULL) == MEDIA_NOTOOL);

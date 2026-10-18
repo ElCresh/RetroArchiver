@@ -94,7 +94,7 @@ static void from_meta(arc_box *b, const meta_box *m)
         b->disks[n - 1] = c;
         b->kinds[n - 1] = kind_char[kind];
         if (d && d->master[0]) { b->archived++; b->kind_archived[kind]++; }
-        if (c == 'p') { b->clean++; if (!strcmp(d->status, "verificato redump")) b->redump++; }
+        if (c == 'p') { b->clean++; if (!strcmp(d->status, ST_REDUMP)) b->redump++; }
         else if (c == 'm') b->marginal++;
         else if (c == 'f') b->fragile++;
         else if (c == 'e') b->errors++;
@@ -159,7 +159,7 @@ int arc_load(const char *bagdir, arc_box *b)
         else {
             /* Box-Status was written by bag_close: that one wins */
             int all = b->first_todo == 0;
-            b->state = has_info && bi.status[0] ? (!strcmp(bi.status, "completo") ? ARC_COMPLETE : ARC_INCOMPLETE)
+            b->state = has_info && bi.status[0] ? (bag_status_complete(bi.status) ? ARC_COMPLETE : ARC_INCOMPLETE)
                                                 : (all ? ARC_COMPLETE : ARC_INCOMPLETE);
             CP(b->date, m->closed[0] ? m->closed : (has_info ? bi.date : ""));
         }
@@ -167,7 +167,7 @@ int arc_load(const char *bagdir, arc_box *b)
         b->state = ARC_BROKEN;
         if (has_info) { from_info(b, &bi); CP(b->date, bi.date); }
         if (!b->title[0]) CP(b->title, base_name(bagdir));
-        CP(b->error, err.s ? err.s : "memoria insufficiente");
+        CP(b->error, err.s ? err.s : "out of memory");
     }
     meta_delete(m);
     sb_free(&err);
@@ -238,12 +238,12 @@ void arc_outcome(const arc_box *b, char *out, size_t n)
 {
     strbuf s;
     sb_init(&s);
-    add_part(&s, b->clean, "pulito", "puliti");
-    if (b->redump) sb_printf(&s, " (%d verificat%s con redump)", b->redump, b->redump == 1 ? "o" : "i");
-    add_part(&s, b->marginal, "marginale", "marginali");
-    add_part(&s, b->fragile, "fragile", "fragili");
-    add_part(&s, b->errors, "con errori", "con errori");
-    if (!s.len) sb_puts(&s, b->state == ARC_BROKEN ? "illeggibile" : "nessun supporto letto");
+    add_part(&s, b->clean, "clean", "clean");
+    if (b->redump) sb_printf(&s, " (%d verified with redump)", b->redump);
+    add_part(&s, b->marginal, "marginal", "marginal");
+    add_part(&s, b->fragile, "fragile", "fragile");
+    add_part(&s, b->errors, "with errors", "with errors");
+    if (!s.len) sb_puts(&s, b->state == ARC_BROKEN ? "unreadable" : "no media read");
     str_copy(out, n, s.s);
     sb_free(&s);
 }
@@ -259,6 +259,15 @@ void arc_slot(const arc_box *b, int n, int *kind, int *num)
 
 /* until optical.c exists, CDs and DVDs are asked for but not read */
 static int readable(int kind) { return kind == MEDIA_FLOPPY; }
+
+/* "floppies" for the counts in the texts: meta_kind_label is the singular,
+ * also stored in Media-Type, so it stays as it is */
+static const char *kind_word(int kind, int many)
+{
+    static const char *plural[MEDIA_KINDS] = { "floppies", "CDs", "DVDs" };
+    if (!many || kind < 0 || kind >= MEDIA_KINDS) return meta_kind_label(kind);
+    return plural[kind];
+}
 
 /* the media with that character: "floppy 3", "floppy 3, 5" if they are of
  * the same type, "floppy 3, CD 1" if not. *same: all of the same type */
@@ -305,14 +314,14 @@ void arc_media(const arc_box *b, char *out, size_t n)
     sb_free(&s);
 }
 
-/* "manca il CD 1", "mancano i floppy 5, 7", "mancano i supporti floppy 5, CD 1" */
+/* "CD 1 is missing", "floppy 5, 7 are missing", "floppy 5, CD 1 are missing" */
 static void missing_phrase(const arc_box *b, strbuf *s)
 {
     strbuf l; int k, same;
     sb_init(&l);
     k = list_of(b, '-', &l, &same);
-    if (k == 1) sb_printf(s, "manca il %s", l.s);
-    else if (k) sb_printf(s, "mancano i %s%s", same ? "" : "supporti ", l.s);
+    if (k == 1) sb_printf(s, "%s is missing", l.s);
+    else if (k) sb_printf(s, "%s are missing", l.s);
     sb_free(&l);
 }
 
@@ -321,11 +330,11 @@ static const char *noun(const arc_box *b, int many)
 {
     int k, kinds = 0, last = MEDIA_FLOPPY;
     for (k = 0; k < MEDIA_KINDS; k++) if (b->count[k]) { kinds++; last = k; }
-    if (kinds > 1) return many ? "supporti" : "supporto";
-    return meta_kind_label(last);
+    if (kinds > 1) return many ? "media" : "medium";
+    return kind_word(last, many);
 }
 
-/* "3 floppy su 3": the types with at least one archived medium */
+/* "3 floppies out of 3": the types with at least one archived medium */
 static int done_parts(const arc_box *b, strbuf *s)
 {
     int k, i, kind, num, done[MEDIA_KINDS] = { 0 }, tot = 0, count[MEDIA_KINDS] = { 0 };
@@ -335,7 +344,7 @@ static int done_parts(const arc_box *b, strbuf *s)
         if (b->disks[i] != '-') { done[kind]++; tot++; }
     }
     for (k = 0; k < MEDIA_KINDS; k++)
-        if (done[k]) sb_printf(s, "%s%d %s su %d", s->len ? ", " : "", done[k], meta_kind_label(k), count[k]);
+        if (done[k]) sb_printf(s, "%s%d %s out of %d", s->len ? ", " : "", done[k], kind_word(k, done[k] != 1), count[k]);
     return tot;
 }
 
@@ -344,22 +353,22 @@ static void advice_open(const arc_box *b, strbuf *s)
     int kind, num, done, i, cd = 0, dvd = 0;
     strbuf p;
     if (!b->first_todo) {
-        if (b->expected == 1) sb_puts(s, "Aperto: archiviato, manca solo la chiusura. Riprendi per chiuderlo.");
-        else sb_printf(s, "Aperto: tutti i %d %s archiviati, manca solo la chiusura. "
-                          "Riprendi per chiuderlo.", b->expected, noun(b, 1));
+        if (b->expected == 1) sb_puts(s, "Open: archived, only the closing is left. Resume to close it.");
+        else sb_printf(s, "Open: all %d %s archived, only the closing is left. "
+                          "Resume to close it.", b->expected, noun(b, 1));
         return;
     }
     sb_init(&p);
     done = done_parts(b, &p);
     arc_slot(b, b->first_todo, &kind, &num);
     if (readable(kind)) {
-        if (!done) sb_printf(s, "Aperto: nessun %s ancora archiviato.", noun(b, 0));
-        else sb_printf(s, "Aperto: %s %s.", p.s, done == 1 ? "archiviato" : "archiviati");
-        sb_printf(s, " Riprendi dal %s %d.", meta_kind_label(kind), num);
+        if (!done) sb_printf(s, "Open: no %s archived yet.", noun(b, 0));
+        else sb_printf(s, "Open: %s archived.", p.s);
+        sb_printf(s, " Resume from %s %d.", meta_kind_label(kind), num);
     } else {
         /* only media the program cannot read yet are left */
-        sb_puts(s, "Aperto: ");
-        if (done) sb_printf(s, "%s %s, ", p.s, done == 1 ? "archiviato" : "archiviati");
+        sb_puts(s, "Open: ");
+        if (done) sb_printf(s, "%s archived, ", p.s);
         for (i = 0; b->disks[i]; i++) {
             if (b->disks[i] != '-') continue;
             arc_slot(b, i + 1, &kind, &num);
@@ -367,20 +376,23 @@ static void advice_open(const arc_box *b, strbuf *s)
             if (kind == MEDIA_DVD) dvd = 1;
         }
         missing_phrase(b, s);
-        sb_printf(s, ". Riprendilo quando arriva la lettura dei %s.",
-                  cd && dvd ? "CD e dei DVD" : dvd ? "DVD" : "CD");
+        sb_printf(s, ". Resume it when reading %s is available.",
+                  cd && dvd ? "CDs and DVDs" : dvd ? "DVDs" : "CDs");
     }
     sb_free(&p);
 }
 
-/* "Il floppy 3 ha", "I floppy 3, 5 hanno", "I supporti floppy 3, CD 1 hanno" */
+/* " Floppy 3", " Floppy 3, 5", " Floppy 3, CD 1": the subject of a
+ * sentence, so the first letter is a capital */
 static int subject(const arc_box *b, char c, strbuf *s)
 {
     strbuf l; int k, same;
     sb_init(&l);
     k = list_of(b, c, &l, &same);
-    if (k == 1) sb_printf(s, " Il %s", l.s);
-    else if (k) sb_printf(s, " I %s%s", same ? "" : "supporti ", l.s);
+    if (k) {
+        if (l.s[0] >= 'a' && l.s[0] <= 'z') l.s[0] = (char)(l.s[0] - 'a' + 'A');
+        sb_printf(s, " %s", l.s);
+    }
     sb_free(&l);
     return k;
 }
@@ -399,18 +411,18 @@ static void advice_damage(const arc_box *b, strbuf *s)
 {
     int k;
     if ((k = subject(b, 'e', s)) > 0)
-        sb_puts(s, k == 1 ? " ha dati danneggiati: tienilo per riprovarlo con un altro lettore."
-                          : " hanno dati danneggiati: tienili per riprovarli con un altro lettore.");
+        sb_puts(s, k == 1 ? " has damaged data: keep it to try again with another drive."
+                          : " have damaged data: keep them to try again with another drive.");
     if ((k = subject(b, 'm', s)) > 0)
-        sb_puts(s, k == 1 ? " risulta marginale: le letture non coincidevano del tutto."
-                          : " risultano marginali: le letture non coincidevano del tutto.");
+        sb_puts(s, k == 1 ? " is marginal: the reads did not fully match."
+                          : " are marginal: the reads did not fully match.");
     if ((k = subject(b, 'f', s)) > 0) {
         if (!optical_once(b))
-            sb_puts(s, k == 1 ? " risulta fragile: una sola lettura prudente."
-                              : " risultano fragili: una sola lettura prudente.");
+            sb_puts(s, k == 1 ? " is fragile: only one cautious read."
+                              : " are fragile: only one cautious read.");
         else
-            sb_puts(s, k == 1 ? " e' stato letto una volta sola: non verificato con un confronto."
-                              : " sono stati letti una volta sola: non verificati con un confronto.");
+            sb_puts(s, k == 1 ? " was read only once: not verified by a comparison."
+                              : " were read only once: not verified by a comparison.");
     }
 }
 
@@ -423,20 +435,20 @@ void arc_advice(const arc_box *b, char *out, size_t n)
         advice_open(b, &s);
         break;
     case ARC_BROKEN:
-        sb_printf(&s, "Non riesco a leggere questo cofanetto: %s.", b->error);
+        sb_printf(&s, "Cannot read this box: %s.", b->error);
         break;
     case ARC_INCOMPLETE:
-        sb_puts(&s, "Chiuso incompleto");
+        sb_puts(&s, "Closed incomplete");
         if (strchr(b->disks, '-')) { sb_puts(&s, ": "); missing_phrase(b, &s); }
-        sb_puts(&s, ". Pacchetto chiuso e verificato.");
+        sb_puts(&s, ". Package closed and verified.");
         advice_damage(b, &s);
         break;
     default:
         if (b->errors || b->marginal || b->fragile) {
-            sb_puts(&s, "Chiuso completo.");
+            sb_puts(&s, "Closed complete.");
             advice_damage(b, &s);
         } else {
-            sb_printf(&s, "Chiuso completo: tutti i %s letti e verificati.", noun(b, 1));
+            sb_printf(&s, "Closed complete: all %s read and verified.", noun(b, 1));
         }
     }
     str_copy(out, n, s.s ? s.s : "");
@@ -497,7 +509,7 @@ static int verify_closed(const char *bagdir, arc_check *c, strbuf *err)
     strbuf names; extra_ctx x;
     sb_init(&names);
     if (check_manifest(bagdir, "manifest-sha256.txt", c, &names)) {
-        sb_printf(err, "manca manifest-sha256.txt in %s: il pacchetto non e' stato chiuso bene", bagdir);
+        sb_printf(err, "manifest-sha256.txt is missing in %s: the package was not closed properly", bagdir);
         sb_free(&names);
         return -1;
     }

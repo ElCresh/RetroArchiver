@@ -18,6 +18,7 @@ int main(void)
     test_session();
     test_archive();
     test_optical();
+    test_lang();                    /* src/gui/lang.c: portable, tested here */
     printf("  %d checks, %s\n", unit_n,
            unit_fail ? "at least one FAIL." : "all green.");
     return unit_fail ? 1 : 0;

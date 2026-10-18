@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     int i, n = 0, forced = 0, rc;
     compare_result r;
 
-    printf("\ndskdiff 1.2 - confronto di piu' letture dello stesso floppy\n\n");
+    printf("\ndskdiff 1.2 - compares several reads of the same floppy\n\n");
 
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "/c")) {
@@ -51,12 +51,12 @@ int main(int argc, char **argv)
         }
     }
     if (n < 2) {
-        printf("  uso: dskdiff PRIMA.DSK SECONDA.DSK [TERZA.DSK ...] [-c CILINDRI]\n\n");
-        printf("  Con due letture mostra le differenze byte per byte.\n");
-        printf("  Con tre o piu' dice quante varianti ha ogni traccia e se\n");
-        printf("  esiste una maggioranza fra le letture.\n\n");
-        printf("  Il formato del disco viene rilevato da solo (40, 80, altro).\n");
-        printf("  Usa -c per forzarlo se il rilevamento sbaglia.\n\n");
+        printf("  usage: dskdiff FIRST.DSK SECOND.DSK [THIRD.DSK ...] [-c CYLINDERS]\n\n");
+        printf("  With two reads it shows the differences byte by byte.\n");
+        printf("  With three or more it tells how many variants each track has\n");
+        printf("  and whether the reads have a majority.\n\n");
+        printf("  The disk format is detected automatically (40, 80, other).\n");
+        printf("  Use -c to force it if the detection is wrong.\n\n");
         return 2;
     }
     compare_init(&r);

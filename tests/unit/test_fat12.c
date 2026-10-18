@@ -39,7 +39,7 @@ void test_fat12(void)
     /* directory that refers back to itself: the listing stops, the note says so */
     CHECK(edsk_load("fixtures/fat_loop.dsk", &d, &msg) == 1);
     CHECK(fat12_read(&d, &fi) == 1);
-    CHECK_STR(fi.note, "directory con riferimenti circolari: elenco parziale");
+    CHECK_STR(fi.note, "directory with circular references: partial list");
     found = 0;
     for (i = 0; i < fi.nfiles; i++)
         if (!strcmp(fi.files[i].path, "SAVE/SAVE1.SAV")) found++;
@@ -49,7 +49,7 @@ void test_fat12(void)
 
     CHECK(edsk_load("fixtures/ident_a.dsk", &d, &msg) == 1);
     CHECK(fat12_read(&d, &fi) == 0);
-    CHECK_STR(fi.note, "nessun file system FAT12 riconoscibile");
+    CHECK_STR(fi.note, "no recognizable FAT12 file system");
     fat12_free(&fi);
     edsk_free(&d);
     sb_free(&msg);

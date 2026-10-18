@@ -3,7 +3,7 @@
  * For each disk: beep, wait, then scan, two reads, comparison and, if
  * needed, a third read, all automatically. The result is one BagIt
  * package per box (images, scans, metadata.json) plus one row per disk
- * in archivio.csv. The logic lives in core/session.c, shared with the
+ * in archive.csv. The logic lives in core/session.c, shared with the
  * GUI. A box can also hold CDs and DVDs (-C, -D): they are asked for
  * after the floppies and read with DiscImageCreator (-X, -d).
  *
@@ -99,7 +99,7 @@ static void say(const char *fmt, ...)
 }
 
 static const meta_box *g_box;           /* used to name the media */
-static int npulito, nmarginale, nerrore, naltro;
+static int nclean, nmarginal, nerror, nother;
 /* last outcome of each disk: with -r a retried disk is counted once */
 static char outcome[META_MAXDISK + 1];
 
@@ -109,12 +109,12 @@ static void count_outcome(int disk, const char *text)
     if (o == 'f') o = 'm';                  /* fragile, read once: needs a look */
     else if (o == '-') o = 'a';
     if (disk >= 1 && disk <= META_MAXDISK) outcome[disk] = o;
-    npulito = nmarginale = nerrore = naltro = 0;
+    nclean = nmarginal = nerror = nother = 0;
     for (i = 1; i <= META_MAXDISK; i++) {
-        if (outcome[i] == 'p') npulito++;
-        else if (outcome[i] == 'm') nmarginale++;
-        else if (outcome[i] == 'e') nerrore++;
-        else if (outcome[i] == 'a') naltro++;
+        if (outcome[i] == 'p') nclean++;
+        else if (outcome[i] == 'm') nmarginal++;
+        else if (outcome[i] == 'e') nerror++;
+        else if (outcome[i] == 'a') nother++;
     }
 }
 
@@ -141,14 +141,14 @@ static void on_event(void *ctx, event_kind k, int disk, const char *text)
     case EV_DISK_DONE:
         count_outcome(disk, text);
         say("\n  >>> %s: %s\n", who(disk), text);
-        say("  >>> finora: %d puliti, %d marginali, %d con errori, %d saltati o da rifare\n",
-               npulito, nmarginale, nerrore, naltro);
+        say("  >>> so far: %d clean, %d marginal, %d with errors, %d skipped or to redo\n",
+               nclean, nmarginal, nerror, nother);
         break;
     case EV_BOX_DONE:
-        say("\n  >>> cofanetto %s: pacchetto chiuso e verificato.\n", text);
+        say("\n  >>> box %s: package closed and verified.\n", text);
         break;
     case EV_ERROR:
-        say("\n  ERRORE: %s\n", text);
+        say("\n  ERROR: %s\n", text);
         break;
     }
     fflush(stdout);
@@ -162,15 +162,15 @@ static int wait_disk(void *ctx, const disk_turn *t, char *label, size_t llen, ch
     say("\n");
     say("  ============================================================\n");
     if (t->readable) {
-        say("    Inserisci il %s %d di %d\n", kind, t->num, t->count);
-        say("    INVIO per leggerlo (oppure scrivi l'etichetta e INVIO)\n");
-        say("    S salta   -   F chiudi il cofanetto   -   Q esci e riprendi dopo\n");
+        say("    Insert %s %d of %d\n", kind, t->num, t->count);
+        say("    ENTER to read it (or type the label and ENTER)\n");
+        say("    S skip   -   F finish the box   -   Q quit and resume later\n");
     } else {
-        say("    %s %d di %d: la lettura dei %s non c'e' ancora\n", kind, t->num, t->count, kind);
-        say("    Il %s resta da leggere e il cofanetto aperto: lo riprenderai\n", kind);
-        say("    quando dskrun sapra' leggerlo. INVIO o S per andare avanti\n");
-        say("    (puoi scrivere l'etichetta e INVIO)\n");
-        say("    F chiudi il cofanetto (il %s risultera' mancante)   -   Q esci\n", kind);
+        say("    %s %d of %d: reading %s is not supported yet\n", kind, t->num, t->count, kind);
+        say("    The %s stays unread and the box stays open: resume it\n", kind);
+        say("    when dskrun can read it. ENTER or S to go on\n");
+        say("    (you can type the label and ENTER)\n");
+        say("    F finish the box (the %s will be missing)   -   Q quit\n", kind);
     }
     say("  ============================================================\n");
     say("  > ");
@@ -187,50 +187,50 @@ static int wait_disk(void *ctx, const disk_turn *t, char *label, size_t llen, ch
 
 static void usage(void)
 {
-    say("  uso: dskrun NUMERO_DISCHI -t TITOLO [opzioni]\n\n");
-    say("    NUMERO_DISCHI  quanti floppy ha il cofanetto (anche 0 con -C o -D)\n");
-    say("    -f N       come NUMERO_DISCHI: i floppy del cofanetto\n");
-    say("    -C N       i CD del cofanetto          (default 0)\n");
-    say("    -D N       i DVD del cofanetto         (default 0)\n");
-    say("    -t TITOLO  titolo del cofanetto: diventa la cartella del pacchetto\n");
-    say("    -P NOME    piattaforma (MS-DOS, Amiga, ...)\n");
-    say("    -p SCHEMA  nome dei file dei floppy, con segnaposto (default FLOPPY{nn})\n");
-    say("    -o DIR     cartella di archiviazione (default quella corrente)\n");
-    say("    -s N       comincia dal supporto N (default 1; i CD vengono dopo i floppy)\n");
-    say("    -m N       letture massime per disco   (default 3)\n");
-    say("    -c N       forza i cilindri per il confronto\n");
-    say("    -k         conserva tutte le letture, non solo i master\n");
-    say("    -r         un disco non riuscito si richiede subito: INVIO riprova, S salta\n");
-    say("    -x FILE    programma SAMdisk da usare  (default samdisk)\n");
-    say("    -a SORG    da dove leggere: unita' o file immagine (default a:)\n");
-    say("    -X FILE    programma DiscImageCreator  (default DiscImageCreator)\n");
-    say("    -d UNITA   lettore dei CD e DVD        (default d:)\n");
-    say("    -R DIR     cartella dei DAT di redump  (default quella di dskrun)\n\n");
-    say("  Segnaposto dello schema:\n");
-    say("    {n} {nn} {nnn}   numero del floppy, con zeri davanti\n");
-    say("    {set}            il titolo\n");
-    say("    {data}           la data di oggi\n\n");
-    say("  Esempi:\n");
-    say("    dskrun 4 -t \"Monkey Island\" -P MS-DOS -o D:\\Archivio\n");
+    say("  usage: dskrun NUM_FLOPPIES -t TITLE [options]\n\n");
+    say("    NUM_FLOPPIES  how many floppies the box has (even 0 with -C or -D)\n");
+    say("    -f N       same as NUM_FLOPPIES: the floppies in the box\n");
+    say("    -C N       the CDs in the box          (default 0)\n");
+    say("    -D N       the DVDs in the box         (default 0)\n");
+    say("    -t TITLE   title of the box: it becomes the package folder\n");
+    say("    -P NAME    platform (MS-DOS, Amiga, ...)\n");
+    say("    -p PATTERN floppy file names, with placeholders (default FLOPPY{nn})\n");
+    say("    -o DIR     archive folder (default the current one)\n");
+    say("    -s N       start from medium N (default 1; CDs come after floppies)\n");
+    say("    -m N       maximum reads per disk      (default 3)\n");
+    say("    -c N       force the cylinder count for the comparison\n");
+    say("    -k         keep all reads, not only the masters\n");
+    say("    -r         ask again for a failed disk at once: ENTER retries, S skips\n");
+    say("    -x FILE    SAMdisk program to use      (default samdisk)\n");
+    say("    -a SRC     where to read from: drive or image file (default a:)\n");
+    say("    -X FILE    DiscImageCreator program    (default DiscImageCreator)\n");
+    say("    -d DRIVE   CD and DVD drive            (default d:)\n");
+    say("    -R DIR     folder of the redump DATs   (default the dskrun folder)\n\n");
+    say("  Pattern placeholders:\n");
+    say("    {n} {nn} {nnn}   floppy number, with leading zeros\n");
+    say("    {set}            the title\n");
+    say("    {date}           today's date\n\n");
+    say("  Examples:\n");
+    say("    dskrun 4 -t \"Monkey Island\" -P MS-DOS -o D:\\Archive\n");
     say("    dskrun 3 -C 1 -t \"Windows NT Workstation 4.0\" -P \"Windows NT\"\n\n");
-    say("  Ogni cofanetto diventa un pacchetto BagIt in DIR\\TITOLO, con le\n");
-    say("  immagini, le scansioni e metadata.json. Se lo interrompi (Q),\n");
-    say("  rilancia lo stesso comando per riprendere dal disco mancante.\n");
-    say("  I CD e i DVD si chiedono dopo i floppy e si leggono con\n");
-    say("  DiscImageCreator, ognuno nella sua cartella (data\\CD01\\...):\n");
-    say("  se il disco e' nel DAT di redump basta una lettura, altrimenti\n");
-    say("  se ne fanno due e si confrontano.\n\n");
-    say("  Uscita: 0 cofanetto chiuso, 1 lasciato aperto, 2 errore.\n\n");
+    say("  Each box becomes a BagIt package in DIR\\TITLE, with the\n");
+    say("  images, the scans and metadata.json. If you stop it (Q), run\n");
+    say("  the same command again to resume from the missing disk.\n");
+    say("  CDs and DVDs are asked for after the floppies and read with\n");
+    say("  DiscImageCreator, each into its own folder (data\\CD01\\...):\n");
+    say("  if the disc is in the redump DAT one read is enough, otherwise\n");
+    say("  two are made and compared.\n\n");
+    say("  Exit code: 0 box closed, 1 left open, 2 error.\n\n");
 }
 
 int main(int argc, char **argv)
 {
     session_cfg cfg; session_host host; meta_box *box;
-    char title[256] = "", platform[64] = "non indicata", tpl[256] = "FLOPPY{nn}", outdir[512] = ".";
+    char title[256] = "", platform[64] = "unspecified", tpl[256] = "FLOPPY{nn}", outdir[512] = ".";
     char samdisk[512] = "", source[512] = "", comp[80], dic[512] = "", drive[16] = "", dats[512] = "";
     int i, rc, tot = 0, ncd = 0, ndvd = 0;
 
-    say("\ndskrun 2.2 - archiviazione a lotti di floppy, CD e DVD\n\n");
+    say("\ndskrun 2.2 - batch archiving of floppies, CDs and DVDs\n\n");
     memset(&cfg, 0, sizeof(cfg));
     memset(&host, 0, sizeof(host));
     cfg.maxread = 3; cfg.start = 1;
@@ -260,7 +260,7 @@ int main(int argc, char **argv)
         tot + ncd + ndvd > META_MAXDISK || !title[0]) { usage(); return 2; }
 
     box = meta_new();
-    if (!box) { say("  ERRORE: memoria insufficiente\n"); return 2; }
+    if (!box) { say("  ERROR: out of memory\n"); return 2; }
     str_copy(box->title, sizeof(box->title), title);
     str_copy(box->platform, sizeof(box->platform), platform);
     meta_set_counts(box, tot, ncd, ndvd);
@@ -268,7 +268,7 @@ int main(int argc, char **argv)
     if (samdisk[0]) floppy_set_samdisk(samdisk);
     if (source[0]) {
         floppy_set_source(source);
-        say("  Lettura da: %s\n", source);
+        say("  Reading from: %s\n", source);
     }
 
     cfg.box = box; cfg.outroot = outdir;
@@ -282,26 +282,26 @@ int main(int argc, char **argv)
     host.event = on_event; host.wait_disk = wait_disk; host.ctx = NULL;
 
     meta_composition(box, comp, sizeof(comp));
-    say("  Cofanetto: %s\n", title);
-    say("  %s, massimo %d letture per supporto.\n", comp, cfg.maxread);
+    say("  Box: %s\n", title);
+    say("  %s, at most %d reads per medium.\n", comp, cfg.maxread);
     if (ncd || ndvd) {
         char dat[600], date[40];
         if (optical_find_dat(dat, sizeof(dat), date, sizeof(date)))
-            say("  DAT di redump: %s (%s)\n", dat, date[0] ? date : "senza data");
+            say("  Redump DAT: %s (%s)\n", dat, date[0] ? date : "undated");
         else
-            say("  Nessun DAT di redump: ogni CD e DVD si legge due volte.\n");
+            say("  No redump DAT: every CD and DVD is read twice.\n");
     }
-    say("  Cartella di archiviazione: %s\n", outdir);
+    say("  Archive folder: %s\n", outdir);
     catch_ctrlc();
     rc = session_run(&cfg, &host);
 
     beep2();
     say("\n  ============================================================\n");
-    say("    %s\n", rc == SESSION_CLOSED ? "Cofanetto chiuso." :
-                       rc == SESSION_OPEN ? "Cofanetto aperto: si puo' riprendere." :
-                       "Archiviazione non riuscita: leggi l'errore qui sopra.");
-    say("    %d puliti, %d marginali, %d con errori, %d saltati o da rifare\n",
-           npulito, nmarginale, nerrore, naltro);
+    say("    %s\n", rc == SESSION_CLOSED ? "Box closed." :
+                       rc == SESSION_OPEN ? "Box left open: you can resume it." :
+                       "Archiving failed: read the error above.");
+    say("    %d clean, %d marginal, %d with errors, %d skipped or to redo\n",
+           nclean, nmarginal, nerror, nother);
     say("  ============================================================\n\n");
     meta_delete(box);
     return rc;

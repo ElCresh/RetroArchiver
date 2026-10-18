@@ -19,7 +19,7 @@ static void disk(meta_box *b, const char *bag, int n, const char *status, const 
     meta_disk *d = meta_disk_get(b, n);
     char p[600];
     str_copy(d->status, sizeof(d->status), status);
-    if (!strcmp(status, "mancante")) return;
+    if (!strcmp(status, "missing")) return;
     snprintf(d->master, sizeof(d->master), "DISK%02d.dsk", n);
     d->nreads = 1;
     str_copy(d->reads[0].file, sizeof(d->reads[0].file), d->master);
@@ -65,30 +65,30 @@ static void make_archive(void)
     b = box("Completo", "MS-DOS", 2);
     str_copy(b->publisher, sizeof(b->publisher), "Lucasfilm Games");
     str_copy(b->year, sizeof(b->year), "1990");
-    disk(b, ROOT "/Completo", 1, "pulito", "2026-10-12T10:00:00");
-    disk(b, ROOT "/Completo", 2, "pulito", "2026-10-12T10:05:00");
+    disk(b, ROOT "/Completo", 1, "clean", "2026-10-12T10:00:00");
+    disk(b, ROOT "/Completo", 2, "clean", "2026-10-12T10:05:00");
     bag(b, ROOT "/Completo", "2026-10-12T10:06:00");
 
     CHECK(bag_create(ROOT "/Incompleto", &err) == 0);
     b = box("Incompleto", "Windows 3.x", 3);
-    disk(b, ROOT "/Incompleto", 1, "pulito", "2026-10-13T10:00:00");
-    disk(b, ROOT "/Incompleto", 2, "errore", "2026-10-13T10:05:00");
-    disk(b, ROOT "/Incompleto", 3, "mancante", "");
+    disk(b, ROOT "/Incompleto", 1, "clean", "2026-10-13T10:00:00");
+    disk(b, ROOT "/Incompleto", 2, "error", "2026-10-13T10:05:00");
+    disk(b, ROOT "/Incompleto", 3, "missing", "");
     bag(b, ROOT "/Incompleto", "2026-10-13T11:00:00");
 
     CHECK(bag_create(ROOT "/Aperto", &err) == 0);
     b = box("Aperto", "MS-DOS", 4);
-    disk(b, ROOT "/Aperto", 1, "pulito", "2026-10-14T09:00:00");
-    disk(b, ROOT "/Aperto", 2, "marginale", "2026-10-14T09:30:00");
+    disk(b, ROOT "/Aperto", 1, "clean", "2026-10-14T09:00:00");
+    disk(b, ROOT "/Aperto", 2, "marginal", "2026-10-14T09:30:00");
     bag(b, ROOT "/Aperto", NULL);
 
     /* mixed: three floppies done, the CD still to read */
     CHECK(bag_create(ROOT "/Misto", &err) == 0);
     b = box("Misto", "Windows NT", 0);
     meta_set_counts(b, 3, 1, 0);
-    disk(b, ROOT "/Misto", 1, "pulito", "2026-10-15T09:00:00");
-    disk(b, ROOT "/Misto", 2, "pulito", "2026-10-15T09:05:00");
-    disk(b, ROOT "/Misto", 3, "marginale", "2026-10-15T09:10:00");
+    disk(b, ROOT "/Misto", 1, "clean", "2026-10-15T09:00:00");
+    disk(b, ROOT "/Misto", 2, "clean", "2026-10-15T09:05:00");
+    disk(b, ROOT "/Misto", 3, "marginal", "2026-10-15T09:10:00");
     bag(b, ROOT "/Misto", NULL);
 
     /* opened by an earlier version: retroarchiver-floppy-1 */
@@ -137,23 +137,23 @@ static void check_list(void)
     CHECK(b && !strcmp(b->disks, "pp") && b->first_todo == 0);
     CHECK(b && !strcmp(b->kinds, "ff") && b->count[MEDIA_FLOPPY] == 2);
     if (b) { arc_media(b, t, sizeof(t)); CHECK_STR(t, "2 / 2 floppy"); }
-    CHECK(b && b->bytes == 12 + (long long)u8_filesize(ROOT "/Completo/data/metadata.json"));
+    CHECK(b && b->bytes == 10 + (long long)u8_filesize(ROOT "/Completo/data/metadata.json"));
     CHECK(b && !strcmp(b->date, "2026-10-12T10:06:00"));
     CHECK(b && !strcmp(b->publisher, "Lucasfilm Games") && !strcmp(b->year, "1990"));
     CHECK(b && arc_tone(b) == TONE_OK);
-    if (b) { arc_outcome(b, t, sizeof(t)); CHECK_STR(t, "2 puliti"); }
-    if (b) { arc_advice(b, t, sizeof(t)); CHECK_STR(t, "Chiuso completo: tutti i floppy letti e verificati."); }
+    if (b) { arc_outcome(b, t, sizeof(t)); CHECK_STR(t, "2 clean"); }
+    if (b) { arc_advice(b, t, sizeof(t)); CHECK_STR(t, "Closed complete: all floppies read and verified."); }
 
     b = find(&l, "Incompleto");
     CHECK(b && b->state == ARC_INCOMPLETE);
     CHECK(b && !strcmp(b->disks, "pe-") && b->archived == 2 && b->errors == 1);
     CHECK(b && arc_tone(b) == TONE_BAD);
-    if (b) { arc_outcome(b, t, sizeof(t)); CHECK_STR(t, "1 pulito, 1 con errori"); }
+    if (b) { arc_outcome(b, t, sizeof(t)); CHECK_STR(t, "1 clean, 1 with errors"); }
     if (b) { arc_missing(b, t, sizeof(t)); CHECK_STR(t, "floppy 3"); }
     if (b) {
         arc_advice(b, t, sizeof(t));
-        CHECK_STR(t, "Chiuso incompleto: manca il floppy 3. Pacchetto chiuso e verificato. "
-                     "Il floppy 2 ha dati danneggiati: tienilo per riprovarlo con un altro lettore.");
+        CHECK_STR(t, "Closed incomplete: floppy 3 is missing. Package closed and verified. "
+                     "Floppy 2 has damaged data: keep it to try again with another drive.");
     }
 
     b = find(&l, "Aperto");
@@ -161,9 +161,9 @@ static void check_list(void)
     CHECK(b && !strcmp(b->disks, "pm--") && b->first_todo == 3);
     CHECK(b && !strcmp(b->date, "2026-10-14T09:30:00"));
     CHECK(b && arc_tone(b) == TONE_OPEN);
-    if (b) { arc_outcome(b, t, sizeof(t)); CHECK_STR(t, "1 pulito, 1 marginale"); }
+    if (b) { arc_outcome(b, t, sizeof(t)); CHECK_STR(t, "1 clean, 1 marginal"); }
     if (b) { arc_missing(b, t, sizeof(t)); CHECK_STR(t, "floppy 3, 4"); }
-    if (b) { arc_advice(b, t, sizeof(t)); CHECK_STR(t, "Aperto: 2 floppy su 4 archiviati. Riprendi dal floppy 3."); }
+    if (b) { arc_advice(b, t, sizeof(t)); CHECK_STR(t, "Open: 2 floppies out of 4 archived. Resume from floppy 3."); }
 
     b = find(&l, "Misto");
     CHECK(b && b->state == ARC_OPEN && b->expected == 4 && b->archived == 3);
@@ -173,20 +173,20 @@ static void check_list(void)
     if (b) { arc_missing(b, t, sizeof(t)); CHECK_STR(t, "CD 1"); }
     if (b) {
         arc_advice(b, t, sizeof(t));
-        CHECK_STR(t, "Aperto: 3 floppy su 3 archiviati, manca il CD 1. "
-                     "Riprendilo quando arriva la lettura dei CD.");
+        CHECK_STR(t, "Open: 3 floppies out of 3 archived, CD 1 is missing. "
+                     "Resume it when reading CDs is available.");
     }
 
     b = find(&l, "Vecchio");
     CHECK(b && b->state == ARC_OPEN && b->expected == 2 && b->count[MEDIA_FLOPPY] == 2);
     CHECK(b && !strcmp(b->disks, "p-") && !strcmp(b->kinds, "ff"));
     if (b) { arc_media(b, t, sizeof(t)); CHECK_STR(t, "1 / 2 floppy"); }
-    if (b) { arc_advice(b, t, sizeof(t)); CHECK_STR(t, "Aperto: 1 floppy su 2 archiviato. Riprendi dal floppy 2."); }
+    if (b) { arc_advice(b, t, sizeof(t)); CHECK_STR(t, "Open: 1 floppy out of 2 archived. Resume from floppy 2."); }
 
     b = find(&l, "Rotto");
     CHECK(b && b->state == ARC_BROKEN && b->error[0]);
     CHECK(b && arc_tone(b) == TONE_BAD);
-    if (b) { arc_advice(b, t, sizeof(t)); CHECK(!strncmp(t, "Non riesco a leggere questo cofanetto: ", 39)); }
+    if (b) { arc_advice(b, t, sizeof(t)); CHECK(!strncmp(t, "Cannot read this box: ", 22)); }
     arc_free(&l);
     CHECK(l.n == 0 && l.box == NULL);
 }
@@ -199,21 +199,21 @@ static void check_texts(void)
     b.state = ARC_OPEN; b.expected = 9;
     strcpy(b.disks, "---------"); b.first_todo = 1;
     arc_advice(&b, t, sizeof(t));
-    CHECK_STR(t, "Aperto: nessun floppy ancora archiviato. Riprendi dal floppy 1.");
+    CHECK_STR(t, "Open: no floppy archived yet. Resume from floppy 1.");
     arc_outcome(&b, t, sizeof(t));
-    CHECK_STR(t, "nessun supporto letto");
+    CHECK_STR(t, "no media read");
     strcpy(b.disks, "p--------"); b.clean = 1; b.first_todo = 2;
     arc_advice(&b, t, sizeof(t));
-    CHECK_STR(t, "Aperto: 1 floppy su 9 archiviato. Riprendi dal floppy 2.");
+    CHECK_STR(t, "Open: 1 floppy out of 9 archived. Resume from floppy 2.");
     strcpy(b.disks, "ppppppppp"); b.clean = 9; b.first_todo = 0;
     arc_advice(&b, t, sizeof(t));
-    CHECK_STR(t, "Aperto: tutti i 9 floppy archiviati, manca solo la chiusura. Riprendi per chiuderlo.");
+    CHECK_STR(t, "Open: all 9 floppies archived, only the closing is left. Resume to close it.");
 
     memset(&b, 0, sizeof(b));
     b.state = ARC_INCOMPLETE; b.expected = 7;
     strcpy(b.disks, "pppp-p-"); b.clean = 5;
     arc_advice(&b, t, sizeof(t));
-    CHECK_STR(t, "Chiuso incompleto: mancano i floppy 5, 7. Pacchetto chiuso e verificato.");
+    CHECK_STR(t, "Closed incomplete: floppy 5, 7 are missing. Package closed and verified.");
     CHECK(arc_tone(&b) == TONE_WARN);
 
     /* mixed: the names give the type, the box is resumable once the read exists */
@@ -222,30 +222,30 @@ static void check_texts(void)
     b.count[MEDIA_FLOPPY] = 2; b.count[MEDIA_CD] = 1; b.count[MEDIA_DVD] = 1;
     strcpy(b.disks, "p-p-"); b.clean = 2;
     arc_advice(&b, t, sizeof(t));
-    CHECK_STR(t, "Chiuso incompleto: mancano i supporti floppy 2, DVD 1. Pacchetto chiuso e verificato.");
+    CHECK_STR(t, "Closed incomplete: floppy 2, DVD 1 are missing. Package closed and verified.");
     b.state = ARC_OPEN; strcpy(b.disks, "pp--"); b.first_todo = 3;
     arc_advice(&b, t, sizeof(t));
-    CHECK_STR(t, "Aperto: 2 floppy su 2 archiviati, mancano i supporti CD 1, DVD 1. "
-                 "Riprendilo quando arriva la lettura dei CD e dei DVD.");
+    CHECK_STR(t, "Open: 2 floppies out of 2 archived, CD 1, DVD 1 are missing. "
+                 "Resume it when reading CDs and DVDs is available.");
     b.kind_archived[MEDIA_FLOPPY] = 2;
     arc_media(&b, t, sizeof(t));
     CHECK_STR(t, "2 / 2 floppy, 0 / 1 CD, 0 / 1 DVD");
     strcpy(b.disks, "pppp"); b.clean = 4; b.first_todo = 0;
     arc_advice(&b, t, sizeof(t));
-    CHECK_STR(t, "Aperto: tutti i 4 supporti archiviati, manca solo la chiusura. Riprendi per chiuderlo.");
+    CHECK_STR(t, "Open: all 4 media archived, only the closing is left. Resume to close it.");
 
     memset(&b, 0, sizeof(b));
     b.state = ARC_COMPLETE; b.expected = 4;
     strcpy(b.disks, "pmmf"); b.clean = 1; b.marginal = 2; b.fragile = 1;
     CHECK(arc_tone(&b) == TONE_WARN);
     arc_outcome(&b, t, sizeof(t));
-    CHECK_STR(t, "1 pulito, 2 marginali, 1 fragile");
+    CHECK_STR(t, "1 clean, 2 marginal, 1 fragile");
     arc_advice(&b, t, sizeof(t));
-    CHECK_STR(t, "Chiuso completo. I floppy 2, 3 risultano marginali: le letture non coincidevano del tutto. "
-                 "Il floppy 4 risulta fragile: una sola lettura prudente.");
+    CHECK_STR(t, "Closed complete. Floppy 2, 3 are marginal: the reads did not fully match. "
+                 "Floppy 4 is fragile: only one cautious read.");
     strcpy(b.disks, "eeff"); b.clean = b.marginal = 0; b.errors = 2; b.fragile = 2;
     arc_outcome(&b, t, sizeof(t));
-    CHECK_STR(t, "2 fragili, 2 con errori");
+    CHECK_STR(t, "2 fragile, 2 with errors");
 }
 
 static void check_verify(void)

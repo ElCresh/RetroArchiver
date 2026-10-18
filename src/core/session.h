@@ -12,7 +12,7 @@ typedef enum {
     EV_PHASE,       /* text: "Scansione", "Lettura 2", "Confronto" */
     EV_LINE,        /* text: a SAMdisk line or a warning */
     EV_DISK_DONE,   /* text: outcome of the disk */
-    EV_BOX_DONE,    /* text: "completo" or "incompleto" */
+    EV_BOX_DONE,    /* text: BAG_COMPLETE or BAG_INCOMPLETE */
     EV_ERROR        /* text: what went wrong and what to do */
 } event_kind;
 
@@ -63,12 +63,23 @@ int  session_run(const session_cfg *cfg, const session_host *host);
 int  session_twin(const meta_box *b, const meta_disk *d);
 
 /* the reads whose fingerprint did not match at closing: outside data/,
- * in this tag folder of the bag (not in the manifest), as
- * NAME.danneggiato */
-#define SESSION_ASIDE_DIR "messi-da-parte"
+ * in this tag folder of the bag (not in the manifest), as NAME.damaged;
+ * a read identical to another disk's as NAME.duplicate. 261017 used
+ * messi-da-parte, .danneggiato and .duplicato: a bag that already has that
+ * folder keeps using it, and those names are still recognized */
+#define SESSION_ASIDE_DIR     "set-aside"
+#define SESSION_ASIDE_DIR_OLD "messi-da-parte"
+#define SESSION_DAMAGED       ".damaged"
+#define SESSION_DAMAGED_OLD   ".danneggiato"
+#define SESSION_DUPLICATE     ".duplicate"
+/* the folder of the files set aside in this bag: the old one if only that exists */
+const char *session_aside_dir(const char *bagdir);
+/* the archive's log, one row per disk, next to the boxes; 261017 wrote
+ * archivio.csv, which stays as it is */
+#define SESSION_CSV "archive.csv"
 /* the names of the files set aside in the bag, one per line ('\n'); how many */
 int  session_aside_list(const char *bagdir, strbuf *out);
-/* {n} {nn} {nnn} {set} {data}; the result is truncated to n bytes */
+/* {n} {nn} {nnn} {set} {date} ({data} as in 261017); the result is truncated to n bytes */
 void session_expand(char *out, size_t n, const char *tpl, int disk, const char *title);
 /* bag folder: outroot + cleaned-up title */
 void session_bagdir(char *out, size_t n, const char *outroot, const char *title);

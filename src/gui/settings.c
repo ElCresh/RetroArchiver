@@ -46,27 +46,85 @@ void set_init_paths(settings *s, const wchar_t *defaults, const wchar_t *user)
     copy_w(s->user, MAX_PATH, user);
 }
 
-/* an empty file name must not reach the APIs: they would look up win.ini */
-static void read_one(const wchar_t *file, const wchar_t *sec, const wchar_t *key,
-                     const wchar_t *def, wchar_t *out, int n)
+/* the Italian keys of 261017 and the English ones that replace them */
+static const struct { const wchar_t *sec, *key, *old_sec, *old_key; } aliases[] = {
+    { SEC_GENERAL, KEY_FOLDER,     L"Archiviazione", L"Cartella" },
+    { SEC_GENERAL, KEY_MAXREADS,   L"Archiviazione", L"LettureMax" },
+    { SEC_GENERAL, KEY_SOUNDS,     L"Archiviazione", L"Suoni" },
+    { SEC_GENERAL, KEY_UILANG,     L"Finestra",      L"UILanguage" },
+    { SEC_FLOPPY,  KEY_SAMDISK,    L"Archiviazione", L"SAMdisk" },
+    { SEC_FLOPPY,  KEY_READFROM,   L"Archiviazione", L"LeggiDa" },
+    { SEC_FLOPPY,  KEY_FLOPPYNAME, L"Archiviazione", L"NomeFloppy" },
+    { SEC_OPTICAL, KEY_DIC,        L"Archiviazione", L"DiscImageCreator" },
+    { SEC_OPTICAL, KEY_DRIVE,      L"Archiviazione", L"LettoreCD" },
+    { SEC_OPTICAL, KEY_CDNAME,     L"Archiviazione", L"NomeCD" },
+    { SEC_OPTICAL, KEY_DVDNAME,    L"Archiviazione", L"NomeDVD" },
+    { SEC_AUTO,    KEY_ENABLED,    L"Archiviazione", L"AutoMode" },
+    { SEC_BOX,     KEY_PLATFORM,   L"Archiviazione", L"Piattaforma" },
+    { SEC_BOX,     KEY_LANGUAGE,   L"Archiviazione", L"Lingua" },
+    { SEC_WINDOW,  L"X",           L"Finestra",      L"X" },
+    { SEC_WINDOW,  L"Y",           L"Finestra",      L"Y" },
+    { SEC_WINDOW,  L"Width",       L"Finestra",      L"Larghezza" },
+    { SEC_WINDOW,  L"Height",      L"Finestra",      L"Altezza" },
+    { SEC_WINDOW,  L"Maximized",   L"Finestra",      L"Massimizzata" },
+    { NULL, NULL, NULL, NULL }
+};
+/* old keys that mean nothing any more: they go when converting */
+static const struct { const wchar_t *sec, *key; } obsolete[] = {
+    { L"Archiviazione", L"NomeFile" }, { NULL, NULL }
+};
+static const wchar_t *const old_sections[] = { L"Archiviazione", L"Finestra", NULL };
+
+#define SET_ABSENT L"\x01"               /* no ini value can be this */
+
+static int alias_of(const wchar_t *sec, const wchar_t *key)
 {
-    if (file[0]) GetPrivateProfileStringW(sec, key, def, out, n, file);
-    else copy_w(out, n, def);
+    int i;
+    for (i = 0; aliases[i].sec; i++)
+        if (!_wcsicmp(aliases[i].sec, sec) && !_wcsicmp(aliases[i].key, key)) return i;
+    return -1;
+}
+
+/* the key in one file: 1 found (in out), 0 absent. An empty file name must
+ * not reach the APIs: they would look up win.ini */
+static int read_raw(const wchar_t *file, const wchar_t *sec, const wchar_t *key, wchar_t *out, int n)
+{
+    if (!file[0]) return 0;
+    GetPrivateProfileStringW(sec, key, SET_ABSENT, out, n, file);
+    return wcscmp(out, SET_ABSENT) != 0;
+}
+
+/* the English key, else the Italian one it replaces */
+static int read_file(const wchar_t *file, const wchar_t *sec, const wchar_t *key, wchar_t *out, int n)
+{
+    int a;
+    if (read_raw(file, sec, key, out, n)) return 1;
+    a = alias_of(sec, key);
+    return a >= 0 && read_raw(file, aliases[a].old_sec, aliases[a].old_key, out, n);
+}
+
+/* the default: the installer's ini, else def */
+static void read_default(const settings *s, const wchar_t *sec, const wchar_t *key,
+                         const wchar_t *def, wchar_t *out, int n)
+{
+    if (!read_file(s->defaults, sec, key, out, n)) copy_w(out, n, def);
 }
 
 void set_get(const settings *s, const wchar_t *sec, const wchar_t *key,
              const wchar_t *def, wchar_t *out, int n)
 {
-    wchar_t mid[SET_MAXVAL];
-    read_one(s->defaults, sec, key, def ? def : L"", mid, SET_MAXVAL);
-    read_one(s->user, sec, key, mid, out, n < SET_MAXVAL ? n : SET_MAXVAL);
+    wchar_t v[SET_MAXVAL];
+    if (!read_file(s->user, sec, key, v, SET_MAXVAL)) read_default(s, sec, key, def, v, SET_MAXVAL);
+    copy_w(out, n, v);
 }
 
 int set_int(const settings *s, const wchar_t *sec, const wchar_t *key, int def)
 {
-    if (s->defaults[0]) def = (int)GetPrivateProfileIntW(sec, key, def, s->defaults);
-    if (s->user[0]) def = (int)GetPrivateProfileIntW(sec, key, def, s->user);
-    return def;
+    wchar_t v[64], *end;
+    long k;
+    set_get(s, sec, key, L"", v, 64);
+    k = wcstol(v, &end, 10);
+    return end == v ? def : (int)k;
 }
 
 /* the user's ini folder, and the ini with the UTF-16 BOM: this way
@@ -91,10 +149,14 @@ static int user_create(const settings *s)
     return GetFileAttributesW(s->user) != INVALID_FILE_ATTRIBUTES;
 }
 
+/* writes the English key; the Italian one it replaces goes, or it would
+ * come back as soon as the English one is removed */
 int set_put(const settings *s, const wchar_t *sec, const wchar_t *key, const wchar_t *v)
 {
+    int a = alias_of(sec, key);
     if (!v && s->user[0] && GetFileAttributesW(s->user) == INVALID_FILE_ATTRIBUTES) return 1;
     if (!user_create(s)) return 0;
+    if (a >= 0) WritePrivateProfileStringW(aliases[a].old_sec, aliases[a].old_key, NULL, s->user);
     return WritePrivateProfileStringW(sec, key, v, s->user) != 0;
 }
 
@@ -102,8 +164,38 @@ int set_save(const settings *s, const wchar_t *sec, const wchar_t *key,
              const wchar_t *def, const wchar_t *v)
 {
     wchar_t d[SET_MAXVAL];
-    read_one(s->defaults, sec, key, def ? def : L"", d, SET_MAXVAL);
+    read_default(s, sec, key, def ? def : L"", d, SET_MAXVAL);
     return set_put(s, sec, key, wcscmp(d, v) ? v : NULL);
+}
+
+/* a section with no keys left */
+static int section_empty(const wchar_t *file, const wchar_t *sec)
+{
+    wchar_t buf[8];
+    return GetPrivateProfileSectionW(sec, buf, 8, file) == 0;
+}
+
+int set_convert(const wchar_t *file)
+{
+    wchar_t v[SET_MAXVAL], cur[SET_MAXVAL];
+    int i, n = 0;
+    if (!file[0] || GetFileAttributesW(file) == INVALID_FILE_ATTRIBUTES) return 0;
+    for (i = 0; aliases[i].sec; i++) {
+        if (!read_raw(file, aliases[i].old_sec, aliases[i].old_key, v, SET_MAXVAL)) continue;
+        /* the English key, if already there, is the newer choice */
+        if (!read_raw(file, aliases[i].sec, aliases[i].key, cur, SET_MAXVAL) &&
+            !WritePrivateProfileStringW(aliases[i].sec, aliases[i].key, v, file)) return -1;
+        if (!WritePrivateProfileStringW(aliases[i].old_sec, aliases[i].old_key, NULL, file)) return -1;
+        n++;
+    }
+    for (i = 0; obsolete[i].sec; i++)
+        if (read_raw(file, obsolete[i].sec, obsolete[i].key, v, SET_MAXVAL)) {
+            WritePrivateProfileStringW(obsolete[i].sec, obsolete[i].key, NULL, file);
+            n++;
+        }
+    for (i = 0; old_sections[i]; i++)
+        if (section_empty(file, old_sections[i])) WritePrivateProfileStringW(old_sections[i], NULL, NULL, file);
+    return n;
 }
 
 int set_put_int(const settings *s, const wchar_t *sec, const wchar_t *key, int v)

@@ -12,9 +12,9 @@ motherboard. USB floppy drives give no control over retries and cannot
 read non-standard formats, and SAMdisk's `fdrawcmd.sys` driver needs a
 native controller.
 
-> **Status:** in active development. The user interface (the window,
-> the installer and the console messages) is currently in Italian;
-> multi-language support is planned. The guides in `docs/` are in
+> **Status:** in active development. The window and the installer speak
+> English and Italian; the console tools, the settings file and the
+> messages of the core are in English. The guides in `docs/` are in
 > English: [setup](docs/setup.md) and [archiving procedure](docs/procedure.md).
 >
 > Releases are named after their date, `YYMMDD`: 261017 is the release
@@ -82,7 +82,9 @@ hashes, the comparison verdict, the detected format and the file
 listing (FAT12 for floppies, ISO 9660 with Joliet long names for
 optical discs), plus tracks, C2/EDC errors and the redump match for CDs
 and DVDs. The package rules are in
-[`docs/bagit-profile.json`](docs/bagit-profile.json).
+[`docs/bagit-profile.json`](docs/bagit-profile.json); boxes closed by
+version 261017, with the outcomes in Italian, follow
+[`docs/bagit-profile-2.json`](docs/bagit-profile-2.json) and are still read.
 
 An interrupted box can be resumed at any time: from the archive view in
 the GUI, or by running the same `dskrun` command again.
@@ -114,6 +116,15 @@ Settings are kept per user in `Application Data\RetroArchiver`; the
 default archive folder is `RetroArchive` on the system drive. Running
 the installer again updates an existing installation without touching
 settings or archive.
+
+The installer and the window speak English and Italian. The installer
+asks at the start, and the window starts in the same language; later it
+can be changed from Program language in the box preparation (Same as
+Windows follows it). The window's texts are in
+`lang\en.lng` and `lang\it.lng`: another language is one more file,
+see [docs/setup.md](docs/setup.md). The console tools are always in
+English, and so are the core's messages the window shows as they are (the
+log lines, the outcomes and advice in the archive).
 
 Use the **3.x** series of SAMdisk: the 4.0 alphas lost access to real
 floppy drives on Windows.
@@ -163,7 +174,8 @@ with version, download URL, SHA-256 and license; download them into
 ```
 src/core/     portable core: session, EDSK comparison, BagIt, metadata,
               FAT12 and ISO 9660 readers, SHA-256, JSON, process runner
-src/gui/      RetroArchiver (Win32 GUI)
+src/gui/      RetroArchiver (Win32 GUI); lang.c, its texts by key
+lang/         the window's languages, one key=text file each
 src/dskrun.c  console archiver
 src/dskdiff.c read comparison tool
 installer/    NSIS installer and third-party manifest

@@ -1,5 +1,5 @@
 /* archive - the boxes already present in an archive folder.
- * Reads each bag (metadata.json, bag-info.txt, .in-corso) and makes a
+ * Reads each bag (metadata.json, bag-info.txt, the open marker) and makes a
  * summary of it: the archive window shows it, without redoing the sums. */
 #ifndef ARCHIVE_H
 #define ARCHIVE_H

@@ -1,26 +1,26 @@
 
-dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+dskdiff 1.2 - compares several reads of the same floppy
 
-  A: fixtures/short_a.dsk          1.534.720 byte   82 cilindri, 2 facce
-  B: fixtures/short_b.dsk          1.544.192 byte   83 cilindri, 2 facce
-  tracce formattate: 80 cilindri, 18 settori per traccia
+  A: fixtures/short_a.dsk          1,534,720 bytes   82 cylinders, 2 sides
+  B: fixtures/short_b.dsk          1,544,192 bytes   83 cylinders, 2 sides
+  formatted tracks: 80 cylinders, 18 sectors per track
 
-  ATTENZIONE: i file hanno dimensioni diverse.
-              Le due letture hanno catturato un numero di cilindri
-              diverso (82 contro 83). Per un confronto pulito rileggi
-              entrambe con -c80.
-              Confronto limitato alla parte in comune.
+  WARNING: the files have different sizes.
+           The two reads captured a different number of
+           cylinders (82 versus 83). For a clean comparison
+           reread both with -c80.
+           Comparing only the part the two files share.
 
-  byte diversi: 2   (il primo a 0x00000030)
+  differing bytes: 2   (the first at 0x00000030)
 
-  intestazione .............. 2
+  header .................... 2
 
-  ESITO: i cilindri 0-79 sono IDENTICI.
+  RESULT: cylinders 0-79 are IDENTICAL.
 
-  Tutte le differenze stanno nei cilindri extra o nell'intestazione.
-  Li' il disco non e' formattato e la testina legge rumore magnetico,
-  diverso a ogni passata: non dice nulla sullo stato del supporto.
+  All the differences are in the extra cylinders or in the header.
+  There the disk is not formatted and the head reads magnetic noise,
+  different on every pass: it says nothing about the media.
 
-  Il disco e' stabile. Catalogalo come pulito.
+  The disk is stable. Catalog it as clean.
 
 exit=0

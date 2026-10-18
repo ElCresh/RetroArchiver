@@ -14,7 +14,7 @@
 #endif
 
 #define CP(dst, src) str_copy(dst, sizeof(dst), src)
-#define FIXIT ": se il cofanetto e' danneggiato spostane la cartella e ricomincia"
+#define FIXIT ": if the box is damaged, move its folder away and start over"
 
 static const char *const kind_keys[MEDIA_KINDS] = { "floppy", "cd", "dvd" };
 static const char *const kind_labels[MEDIA_KINDS] = { "floppy", "CD", "DVD" };
@@ -91,7 +91,7 @@ void meta_composition_counts(const int count[MEDIA_KINDS], char *out, size_t n)
     sb_init(&s);
     for (k = 0; k < MEDIA_KINDS; k++)
         if (count[k]) sb_printf(&s, "%s%d %s", s.len ? ", " : "", count[k], meta_kind_label(k));
-    str_copy(out, n, s.len ? s.s : "nessun supporto");
+    str_copy(out, n, s.len ? s.s : "no media");
     sb_free(&s);
 }
 
@@ -108,20 +108,42 @@ int meta_disk_done(const meta_disk *d)
 }
 
 /* the floppy outcomes and the CD and DVD ones (optical.c) */
+const char *meta_status_english(const char *s)
+{
+    static const char *const old[][2] = {
+        { "pulito", ST_CLEAN },
+        { "marginale", ST_MARGINAL },
+        { "errore", ST_ERROR },
+        { "errori", ST_ERRORS },
+        { "instabile", ST_UNSTABLE },
+        { "letto una volta", ST_READ_ONCE },
+        { "verificato redump", ST_REDUMP },
+        { "lettura fallita", ST_FAILED },
+        { "interrotto", ST_INTERRUPTED },
+        { "mancante", ST_MISSING },
+        { "duplicato", ST_DUPLICATE },
+        { "da leggere", ST_TO_READ },
+        { NULL, NULL }
+    };
+    int i;
+    for (i = 0; old[i][0]; i++) if (!strcmp(s, old[i][0])) return old[i][1];
+    return s;
+}
+
 int meta_status_done(const char *s)
 {
-    return !strcmp(s, "pulito") || !strcmp(s, "marginale") ||
-           !strcmp(s, "errore") || !strcmp(s, "fragile") ||
-           !strcmp(s, "verificato redump") || !strcmp(s, "instabile") ||
-           !strcmp(s, "errori") || !strcmp(s, "letto una volta");
+    return !strcmp(s, ST_CLEAN) || !strcmp(s, ST_MARGINAL) ||
+           !strcmp(s, ST_ERROR) || !strcmp(s, "fragile") ||
+           !strcmp(s, ST_REDUMP) || !strcmp(s, ST_UNSTABLE) ||
+           !strcmp(s, ST_ERRORS) || !strcmp(s, ST_READ_ONCE);
 }
 
 char meta_status_class(const char *s)
 {
-    if (!strcmp(s, "pulito") || !strcmp(s, "verificato redump")) return 'p';
-    if (!strcmp(s, "marginale") || !strcmp(s, "instabile")) return 'm';
-    if (!strcmp(s, "fragile") || !strcmp(s, "letto una volta")) return 'f';
-    if (!strcmp(s, "errore") || !strcmp(s, "errori")) return 'e';
+    if (!strcmp(s, ST_CLEAN) || !strcmp(s, ST_REDUMP)) return 'p';
+    if (!strcmp(s, ST_MARGINAL) || !strcmp(s, ST_UNSTABLE)) return 'm';
+    if (!strcmp(s, "fragile") || !strcmp(s, ST_READ_ONCE)) return 'f';
+    if (!strcmp(s, ST_ERROR) || !strcmp(s, ST_ERRORS)) return 'e';
     return '-';
 }
 
@@ -175,7 +197,7 @@ static void write_disk(json_writer *w, const meta_disk *d, const char *datadir,
     jw_int(w, "number", d->num);
     jw_str(w, "label", d->label);
     jw_str(w, "note", d->note);
-    jw_str(w, "status", d->status[0] ? d->status : "da leggere");
+    jw_str(w, "status", d->status[0] ? d->status : ST_TO_READ);
     /* only when there is one: older readers do not know the field */
     if (d->duplicate_of > 0) jw_int(w, "duplicate_of", d->duplicate_of);
     opt(w, "master", d->master);
@@ -261,7 +283,7 @@ int meta_save(const meta_box *b, const char *datadir, meta_tech_fn tech, void *c
     if (f && fclose(f) != 0) ok = 0;
     if (ok && u8_rename_replace(tmp, path) != 0) ok = 0;
     if (!ok) {
-        sb_printf(err, "non riesco a scrivere %s: il disco di destinazione e' pieno o protetto?", path);
+        sb_printf(err, "cannot write %s: is the destination disk full or write-protected?", path);
         u8_remove(tmp);
     }
     jw_free(&w);
@@ -287,8 +309,8 @@ static void load_disk(meta_box *b, const jval *e)
     if (!d) return;
     CP(d->label, json_str(e, "label"));
     CP(d->note, json_str(e, "note"));
-    CP(d->status, json_str(e, "status"));
-    if (!strcmp(d->status, "da leggere")) d->status[0] = 0;
+    CP(d->status, meta_status_english(json_str(e, "status")));
+    if (!strcmp(d->status, ST_TO_READ)) d->status[0] = 0;
     d->duplicate_of = (int)json_int(e, "duplicate_of", 0);     /* absent in older boxes */
     CP(d->master, json_str(e, "master"));
     CP(d->scan, json_str(e, "scan"));
@@ -330,18 +352,18 @@ int meta_load(meta_box *b, const char *datadir, strbuf *err)
 
     u8_join(path, sizeof(path), datadir, "metadata.json");
     text = slurp(path);
-    if (!text) { sb_printf(err, "non trovo %s" FIXIT, path); return -1; }
+    if (!text) { sb_printf(err, "cannot find %s" FIXIT, path); return -1; }
     root = json_parse(text, perr, sizeof(perr));
     free(text);
-    if (!root) { sb_printf(err, "%s non e' leggibile (%s)" FIXIT, path, perr); return -1; }
+    if (!root) { sb_printf(err, "%s cannot be read (%s)" FIXIT, path, perr); return -1; }
     schema = json_str(root, "schema");
     old = schema && !strcmp(schema, "retroarchiver-floppy-1");
-    if (!schema || (!old && strcmp(schema, META_SCHEMA))) {
+    if (!schema || (!old && strcmp(schema, META_SCHEMA) && strcmp(schema, META_SCHEMA_2))) {
         if (schema && !strncmp(schema, "retroarchiver-", 14))
-            sb_printf(err, "%s viene da una versione piu' recente di RetroArchiver: "
-                           "aggiorna il programma per aprire questo cofanetto", path);
+            sb_printf(err, "%s comes from a newer version of RetroArchiver: "
+                           "update the program to open this box", path);
         else
-            sb_printf(err, "%s non e' un cofanetto di RetroArchiver" FIXIT, path);
+            sb_printf(err, "%s is not a RetroArchiver box" FIXIT, path);
         json_free(root);
         return -1;
     }

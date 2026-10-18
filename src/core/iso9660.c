@@ -119,7 +119,7 @@ static void walk(disc *d, unsigned long lba, unsigned long len, const char *pref
     for (done = 0; done < len; done += 2048) {
         int pos = 0;
         if (sector(d, (long)(lba + done / 2048), buf)) {
-            str_copy(d->out->note, sizeof(d->out->note), "una cartella del CD non si legge");
+            str_copy(d->out->note, sizeof(d->out->note), "a folder of the CD cannot be read");
             return;
         }
         while (pos < 2048 && buf[pos]) {
@@ -131,7 +131,7 @@ static void walk(disc *d, unsigned long lba, unsigned long len, const char *pref
             if (nlen == 1 && (r[33] == 0 || r[33] == 1)) continue;     /* . and .. */
             if (d->joliet) field_ucs2(name, sizeof(name), r + 33, (size_t)nlen);
             else field(name, sizeof(name), r + 33, (size_t)nlen);
-            if (!isdir) {                                               /* "LEGGIMI.TXT;1" */
+            if (!isdir) {                                                /* "README.TXT;1" */
                 char *semi = strchr(name, ';');
                 if (semi) *semi = 0;
                 if (name[0] && name[strlen(name) - 1] == '.') name[strlen(name) - 1] = 0;
@@ -157,7 +157,7 @@ int iso_read(const char *path, int sector_size, int data_offset, iso_info *out)
     memset(out, 0, sizeof(*out));
     d.f = u8_fopen(path, "rb");
     d.ssize = sector_size; d.off = data_offset; d.out = out; d.joliet = 0;
-    if (!d.f) { str_copy(out->note, sizeof(out->note), "immagine non leggibile"); return 0; }
+    if (!d.f) { str_copy(out->note, sizeof(out->note), "the image cannot be read"); return 0; }
     /* the descriptors go from sector 16 up to the terminator: the primary
      * and, if present, the Joliet supplementary one with the long names */
     for (lba = 16; lba < 32; lba++) {
@@ -167,7 +167,7 @@ int iso_read(const char *path, int sector_size, int data_offset, iso_info *out)
     }
     if (!has_pvd) {
         fclose(d.f);
-        str_copy(out->note, sizeof(out->note), "nessun file system ISO 9660 (disco audio, o un altro file system)");
+        str_copy(out->note, sizeof(out->note), "no ISO 9660 file system (an audio disc, or another file system)");
         return 0;
     }
     field(out->system_id, sizeof(out->system_id), pvd + 8, 32);
@@ -178,7 +178,7 @@ int iso_read(const char *path, int sector_size, int data_offset, iso_info *out)
     desc_date(out->modified, pvd + 830);
     out->volume_bytes = (long long)le32(pvd + 80) * (pvd[128] | (pvd[129] << 8));
     out->files = (iso_file *)calloc(ISO_MAXFILES, sizeof(iso_file));
-    if (!out->files) { fclose(d.f); str_copy(out->note, sizeof(out->note), "memoria insufficiente"); return 0; }
+    if (!out->files) { fclose(d.f); str_copy(out->note, sizeof(out->note), "out of memory"); return 0; }
     if (has_svd) {
         d.joliet = 1;
         walk(&d, le32(svd + 156 + 2), le32(svd + 156 + 10), "", 0);
@@ -195,7 +195,7 @@ int iso_read(const char *path, int sector_size, int data_offset, iso_info *out)
     fclose(d.f);
     if (out->nfiles) qsort(out->files, (size_t)out->nfiles, sizeof(iso_file), by_path);
     if (out->truncated)
-        snprintf(out->note, sizeof(out->note), "elenco dei file troncato a %d voci", ISO_MAXFILES);
+        snprintf(out->note, sizeof(out->note), "file list truncated at %d entries", ISO_MAXFILES);
     return 1;
 }
 

@@ -1,0 +1,361 @@
+# RetroArchiver - the window's texts in Italian
+#
+# UTF-8, one key=text per line; lines starting with # are comments.
+# Blanks around the key and the text are dropped.
+# Escapes in the texts: \n new line, \t tab, \s space (for a text that
+# starts or ends with one), \\ backslash.
+# A text with %ls, %d, %lu... is a format: a translation keeps the same
+# conversions in the same order (%% for a percent sign), otherwise the
+# window uses the English text. Arguments cannot be reordered: rephrase.
+# The reference is en.lng, next to this file.
+
+# the language itself
+language.name=Italiano
+format.decimal=,
+format.date=DD/MM/YYYY
+
+# window title
+title.archive=RetroArchiver %ls - archivio
+title.session=RetroArchiver %ls - archiviazione
+
+# media kinds
+kind.floppy=floppy
+kind.floppy.plural=floppy
+kind.floppy.title=Floppy
+kind.cd=CD
+kind.cd.plural=CD
+kind.cd.title=CD
+kind.dvd=DVD
+kind.dvd.plural=DVD
+kind.dvd.title=DVD
+kind.mixed=supporto
+kind.mixed.plural=supporti
+noun.diskette=dischetto
+noun.disc=disco
+
+# setup
+setup.title=Titolo *
+setup.resume=Riprendi...
+setup.platform=Piattaforma *
+setup.year=Anno
+setup.publisher=Editore
+setup.language=Lingua
+setup.edition=Versione
+setup.notes=Note
+setup.media=Supporti *
+setup.hint=Per continuare un cofanetto lasciato a metà: Riprendi..., oppure lo stesso titolo esatto.
+setup.folder=Cartella
+setup.maxreads=Letture max
+setup.readfrom=Leggi da
+setup.uilanguage=Lingua del programma
+setup.uilanguage.windows=Come Windows
+setup.sounds=Suoni di Windows
+setup.auto=Automatico: legge da solo il disco nuovo
+setup.archive=Archivio
+setup.start=Inizia
+setup.resuming=Riprendo «%ls»: premi Inizia.
+setup.bagpath=Il pacchetto sarà creato in %ls%ls
+setup.bagpath.notitle=Il pacchetto sarà creato in %ls%ls<titolo>%ls
+setup.files=\s· file\s
+setup.files.and=\se\s
+setup.browse=Cartella dove salvare i cofanetti
+setup.resume.none=Nella cartella %ls non c'è nessun cofanetto aperto da riprendere.\n\nSe è in un'altra cartella, scegli quella in Cartella e premi di nuovo Riprendi.
+setup.resume.item.one=%ls  (%d di %d %ls fatto)
+setup.resume.item.many=%ls  (%d di %d %ls fatti)
+
+# the group boxes
+group.box=Cofanetto
+group.archiving=Archiviazione
+group.bag=Pacchetto BagIt
+group.selected=Il cofanetto scelto
+
+# what is missing before starting
+missing.title=Manca il titolo del cofanetto.
+missing.platform=Manca la piattaforma: scegline una dall'elenco o scrivila.
+missing.media=Mancano i supporti del cofanetto: quanti floppy, CD e DVD (da 1 a 64 in tutto).
+missing.folder=Manca la cartella dove salvare i cofanetti.
+missing.toolong=Il percorso della cartella è troppo lungo: scegline uno più corto.
+
+# status bar, right part: the first thing missing, or Ready
+ready.notitle=Manca il titolo
+ready.noplatform=Manca la piattaforma
+ready.media=Supporti: da 1 a 64
+ready.nofolder=Manca la cartella
+ready.samdisk.bad=SAMdisk da sistemare
+ready.ok=Pronto
+ready.archive.loading=Leggo l'archivio...
+ready.verifying=Ricontrollo le impronte...
+ready.dic.bad=DiscImageCreator da sistemare
+
+# SAMdisk, the floppy drive, DiscImageCreator
+samdisk.checking=Controllo SAMdisk...
+samdisk.ok=SAMdisk %ls
+samdisk.notfound=SAMdisk non trovato: controlla il campo SAMdisk
+samdisk.v4=SAMdisk 4.x: serve la serie 3.x (la 4.0 non legge i floppy veri)
+samdisk.notsamdisk=Il programma indicato non sembra SAMdisk
+samdisk.wait=Sto ancora controllando SAMdisk: riprova fra un attimo.
+samdisk.fix=%ls.\n\nNel campo SAMdisk scrivi il percorso completo di samdisk.exe della serie 3.x (per esempio C:\\SAMdisk\\samdisk.exe), oppure copia samdisk.exe accanto a RetroArchiver.exe e lascia scritto solo samdisk.
+drive.checking=Controllo il lettore %ls...
+drive.ok=Lettore %ls %d rpm
+drive.dead=Lettore %ls non risponde (dischetto inserito?)
+dic.checking=Controllo DiscImageCreator...
+dic.ok=DiscImageCreator %ls, %ls
+dic.notfound.brief=DiscImageCreator non trovato
+dic.notfound=DiscImageCreator non trovato: controlla il campo
+dic.nodll.brief=DiscImageCreator: mancano i runtime Visual C++
+dic.nodll=DiscImageCreator non parte: mancano i runtime di Visual C++ 2015-2019 x86
+dic.notdic.brief=non è DiscImageCreator
+dic.notdic=Il programma indicato non sembra DiscImageCreator
+dat.none.brief=senza DAT redump
+dat.none=nessun DAT di redump: due letture per disco
+dat.old.brief=DAT redump %.10ls, vecchio
+dat.old=DAT di redump del %.10ls, vecchio: scaricane uno nuovo
+dat.ok.brief=DAT redump %.10ls
+dat.ok=DAT di redump del %.10ls
+dic.wait=Sto ancora controllando DiscImageCreator: riprova fra un attimo.
+dic.fix=%ls.\n\nNel campo DiscImageCreator scrivi il percorso completo di DiscImageCreator.exe (per esempio C:\\DIC\\DiscImageCreator.exe), oppure copialo accanto a RetroArchiver.exe con le sue DLL. Su Windows XP servono i runtime di Visual C++ 2015-2019 x86, versione 14.27.
+
+# the archive
+archive.folder=Archivio
+archive.search=Cerca
+archive.search.cue=titolo, editore...
+archive.allplatforms=Tutte le piattaforme
+column.title=Titolo
+column.platform=Piattaforma
+column.year=Anno
+column.media=Supporti
+column.outcome=Esito
+column.archived=Archiviato
+archive.resume=Riprendi
+archive.open=Apri cartella
+archive.verify=Ricontrolla impronte
+archive.hint=Doppio clic su un cofanetto aperto per riprenderlo dal supporto che manca.
+archive.new=Nuovo cofanetto
+archive.browse=Cartella dell'archivio dei cofanetti
+archive.empty.title=L'archivio è ancora vuoto
+archive.empty.missing=La cartella %ls non esiste ancora: la creo con il primo cofanetto. Compili titolo, piattaforma e supporti, poi inserisci i dischetti uno alla volta.
+archive.empty.none=In %ls non c'è ancora nessun cofanetto. Comincia dal primo: compili titolo, piattaforma e supporti, poi inserisci i dischetti uno alla volta.
+archive.empty.hint=Hai già un archivio altrove? Scegli la sua cartella con il pulsante «...» qui sopra.
+archive.status.reading=Leggo %ls
+archive.status.nofolder=La cartella %ls non esiste ancora
+archive.status.noboxes=Nessun cofanetto in %ls
+archive.status.box.one=cofanetto letto
+archive.status.box.many=cofanetti letti
+archive.status.from=%ls da %ls
+archive.box.one=cofanetto
+archive.box.many=cofanetti
+archive.nomedia=nessun supporto
+archive.complete.one=completo
+archive.complete.many=completi
+archive.incomplete.one=incompleto
+archive.incomplete.many=incompleti
+archive.open.one=aperto, da riprendere
+archive.open.many=aperti, da riprendere
+archive.errors.one=disco con errori
+archive.errors.many=dischi con errori
+archive.errors.none=nessun disco con errori
+archive.unreadable.one=illeggibile
+archive.unreadable.many=illeggibili
+archive.nomatch=Nessun cofanetto corrisponde alla ricerca: cambia le parole cercate o la piattaforma.
+archive.detail.version=versione\s
+archive.detail.media=Supporti
+archive.detail.notes=Note: %ls
+archive.detail.nonotes=Nessuna nota.
+
+# Check hashes
+verify.changed.one=file cambiato
+verify.changed.many=file cambiati
+verify.missing.one=file mancante
+verify.missing.many=file mancanti
+verify.extra.one=file in più che il manifest non elenca
+verify.extra.many=file in più che il manifest non elenca
+verify.cannot=Non riesco a ricontrollare le impronte di «%ls»: %ls.
+verify.empty=«%ls» non ha ancora dischi letti: non c'è niente da ricontrollare.
+verify.ok.open=«%ls»: %d file ricontrollati, tutti identici a subito dopo la lettura.
+verify.ok.closed=«%ls»: %d file ricontrollati, tutti identici a quando il pacchetto è stato chiuso.
+verify.bad=In «%ls» ci sono %ls (il primo: %ls).\n\n%ls
+verify.bad.open=Riprendi il cofanetto: alla chiusura il disco con l'impronta diversa viene messo da parte e richiesto di nuovo.
+verify.bad.closed=Il pacchetto non è più integro: rimetti quei file da una copia dell'archivio, oppure rileggi i dischi con un nuovo cofanetto.
+verify.extra.only=Togli da data i file in più: il resto del pacchetto è integro.
+
+# the session: list, bars, buttons
+column.medium=Supporto
+column.label=Etichetta
+column.reads=Letture
+wait.label=Etichetta
+wait.note=Nota
+wait.label.tip=Leggi l'etichetta dal disco inserito (F2)
+button.finish=Fine cofanetto
+button.skip=Salta
+button.read=Leggi
+button.retry=Riprova
+button.reread=Rileggi
+button.stop=Interrompi
+button.open=Apri cartella
+button.new=Nuovo cofanetto
+button.archive=Archivio
+bar.disk=Disco
+bar.box=Cofanetto
+bar.cylinder=Cilindro %d di %d
+bar.optical.min=%d%%, ancora %lu min
+bar.optical.sec=%d%%, ancora %lu s
+bar.progress=%d di %d %ls
+bag.folder=Cartella
+bag.contents=Contenuto
+bag.hashes=Impronte
+bag.aside=Messi da parte
+bag.image.one=immagine
+bag.image.many=immagini
+bag.scan.one=scansione
+bag.scan.many=scansioni
+bag.hashes.ok=SHA-256 calcolate e ricontrollate: tutte coincidono
+
+# the phases of a disk
+phase.scan=Scansione
+phase.read=Lettura %d
+phase.compare=Confronto
+phase.c2=Controllo C2
+phase.redump=Redump
+phase.toc=TOC
+phase.result=Esito
+
+# the outcome of a disk, in the list
+outcome.toread=da leggere
+outcome.clean=pulito
+outcome.marginal=marginale
+outcome.marginal.agree=marginale (%d concordano)
+outcome.fragile=fragile: una sola lettura
+outcome.error=errore
+outcome.redump=verificato con redump
+outcome.once=letto una volta: non verificato
+outcome.unstable=instabile
+outcome.unstable.agree=instabile (%d letture uguali)
+outcome.errors=errori non risolti
+outcome.failed=lettura fallita
+outcome.interrupted=interrotto
+outcome.skipped=saltato
+outcome.duplicate=duplicato
+outcome.duplicate.of=duplicato del %ls
+outcome.skipped.duplicate=saltato: era un duplicato del %ls
+
+# status bar during the session
+status.slot=%ls %d di %d
+status.archived.one=archiviato
+status.archived.many=archiviati
+status.errors=, %d con errori
+status.bag.closed=Bag: chiuso
+status.bag.open=Bag: aperto
+status.session=Sessione %ls
+
+# the box summary
+summary.clean.one=pulito
+summary.clean.many=puliti
+summary.redump.one=\s(%d verificato con redump)
+summary.redump.many=\s(%d verificati con redump)
+summary.marginal.one=marginale
+summary.marginal.many=marginali
+summary.errors=%d con errori
+summary.other.one=saltato o da rifare
+summary.other.many=saltati o da rifare
+summary.toread=%d %ls da leggere
+
+# automatic mode
+auto.waiting=Lettura automatica: aspetto il disco nel lettore %ls
+auto.count.one=Leggo il %ls fra un secondo
+auto.count.many=Leggo il %ls fra %d secondi
+auto.count.label=Etichetta: %ls.\s
+auto.count.text=Esc ferma il conto alla rovescia e aspetta che premi Leggi (F5); Invio legge subito, Alt+S salta il disco.
+auto.ask.title=Sembra lo stesso %ls del %ls: lo rileggo?
+auto.ask.text=Ha lo stesso numero di serie (%04lX-%04lX)%ls del %ls già letto. Se è davvero il %ls premi Leggi (F5); altrimenti metti il %ls giusto e riparto da solo, oppure Salta (Alt+S).
+auto.ask.samelabel=\se la stessa etichetta
+auto.removed=Dischetto tolto dal lettore %ls: inserisci il successivo
+auto.disc.removed=Disco tolto dal lettore %ls: inserisci il successivo
+auto.slow=Il lettore risponde lento: noto il cambio solo se togli il dischetto e poi lo inserisci
+auto.nodriver=Lettura automatica non disponibile: fdrawcmd.sys non risponde sul lettore %ls. Premi Leggi (F5) quando il dischetto è inserito.
+auto.stopped=Lettura automatica fermata per questo disco: premi Leggi (F5) quando sei pronto.
+auto.typing=Stai scrivendo: leggo quando premi Invio o Leggi (F5).
+
+# the volume label
+label.reading=Leggo l'etichetta del disco...
+label.kept=Etichetta del disco: %ls (resta quella che hai scritto)
+label.read=Etichetta letta dal disco: %ls
+label.none=Il disco non ha un'etichetta di volume
+label.nodisk=Nessun disco nel lettore %ls
+label.unknown=Windows non riconosce il disco: l'etichetta si prende dall'immagine dopo la lettura
+
+# the banners while waiting for a disk
+insert.floppy=Inserisci il %ls %d di %d
+insert.floppy.manual=Poi premi Invio o Leggi (F5); F2 rilegge l'etichetta, Alt+S salta il disco. Etichetta del disco (facoltativa):
+insert.floppy.auto=Lettura automatica: appena il dischetto è nel lettore parto da solo. Invio o F5 legge subito, Alt+S salta, Esc torna alla lettura a mano. Etichetta del disco (facoltativa):
+insert.floppy.auto.next=Lettura automatica: togli il dischetto appena letto e inserisci questo, parto da solo. Invio o F5 legge subito, Alt+S salta, Esc torna alla lettura a mano. Etichetta del disco (facoltativa):
+insert.optical=Inserisci il %ls %d di %d nel lettore %ls
+insert.optical.one=Inserisci il %ls nel lettore %ls
+insert.optical.manual=Chiudi il lettore, aspetta che la spia smetta di lampeggiare, poi premi Invio o Leggi (F5); F2 rilegge l'etichetta, Alt+S salta. La lettura con DiscImageCreator dura da 10 a 30 minuti. Etichetta del %ls (facoltativa):
+insert.optical.auto=Lettura automatica: %ls, quando Windows lo vede parto da solo (da 10 a 30 minuti). Invio o F5 legge subito, Alt+S salta, Esc torna alla lettura a mano. Etichetta del %ls (facoltativa):
+insert.optical.first=inserisci il disco
+insert.optical.next=togli il disco appena letto e inserisci questo
+unreadable.title=%ls %d di %d: la lettura dei %ls non c'è ancora
+unreadable.text=Il %ls resta da leggere e il cofanetto aperto: lo riprenderai con Riprendi quando RetroArchiver saprà leggere i %ls. Premi Salta per continuare.
+duplicate.title=Il %ls è identico al %ls
+duplicate.other=un altro disco
+duplicate.text.auto=Togli il %ls e inserisci il %ls giusto: riparto da solo. Oppure Rileggi (F5) o Salta (Alt+S). Le letture sbagliate sono in set-aside, non cancellate; se i due dischi sono davvero uguali, rileggilo: alla seconda volta lo tengo.
+duplicate.text=Togli il %ls, inserisci il %ls giusto e premi Rileggi (F5), oppure Salta (Alt+S). Le letture sbagliate sono in set-aside, non cancellate; se i due dischi sono davvero uguali, rileggilo: alla seconda volta lo tengo.
+retry.interrupted=%ls %d: lettura interrotta
+retry.failed=%ls %d: lettura non riuscita
+retry.text.interrupted=Premi Riprova per rileggerlo, Salta per passare al successivo, oppure chiudi la finestra: il cofanetto resta aperto e lo riprendi dall'archivio
+retry.text.floppy.auto=Controlla il dischetto e rimettilo nel lettore: riparto da solo. Oppure premi Riprova (F5) o Salta (Alt+S).
+retry.text.floppy=Controlla il dischetto, rimettilo nel lettore e premi Riprova (F5), oppure Salta (Alt+S).
+retry.text.why=%ls\nPoi premi Riprova (F5), oppure Salta (Alt+S).
+retry.text.disc=Controlla il disco (il tipo giusto, pulito), rimettilo nel lettore e premi Riprova (F5), oppure Salta (Alt+S).
+
+# the banners during the read
+start.title=Preparo il cofanetto...
+start.text=Creo il pacchetto o riprendo quello aperto.
+work.floppy.text=%ls %d di %d%ls. Non togliere il dischetto finché la lettura non è finita.
+work.reread=Le letture non coincidono: faccio un'altra lettura
+work.fragile=Disco fragile: una sola lettura prudente
+work.reading=Lettura in corso: non togliere il dischetto
+work.optical.text=%ls %d di %d nel lettore %ls%ls. Non aprire il lettore finché la lettura non è finita: un CD intero richiede da 10 a 30 minuti.
+work.optical.reread=Una lettura non basta: rileggo il %ls per il confronto
+work.optical.reading=Lettura in corso: non togliere il %ls
+answer.skip=Salto il %ls.
+answer.later=Il %ls resta da leggere.
+answer.closing=Chiudo il cofanetto...
+answer.closing.text=Calcolo e ricontrollo le impronte SHA-256 dei file.
+stop.title=Interrompo la lettura...
+stop.dic=DiscImageCreator si ferma fra poco. La lettura a metà non resta nel pacchetto.
+stop.samdisk=SAMdisk si ferma fra poco.
+stop.compare=Il confronto finisce da solo fra poco
+stop.compare.last=È l'ultimo disco del cofanetto: aspetta qui l'esito, non c'è un disco successivo da chiedere
+stop.compare.next=Quando ti chiede il disco successivo puoi chiudere la finestra: il cofanetto resta aperto e lo riprendi dall'archivio
+stop.none=Qui non c'è una lettura da fermare
+stop.none.text=Aspetta qualche secondo.
+
+# the log
+log.box.done=Cofanetto %ls: pacchetto chiuso e verificato.
+log.box.complete=completo
+log.box.incomplete=incompleto
+log.error=ERRORE: %ls
+banner.error=Errore
+
+# the end of the box
+end.complete=Cofanetto completo: %ls su %d
+end.incomplete=Cofanetto chiuso incompleto: %ls su %d
+end.closed.text=%ls.\nIl pacchetto è chiuso e verificato.%ls
+end.aside=\sFuori dai dati restano le letture messe da parte: guardale e, se non servono, cancellale.
+end.later=\nRiprendilo dall'archivio quando RetroArchiver saprà leggere %ls.
+end.later.both=i CD e i DVD
+end.later.cd=i CD
+end.later.dvd=i DVD
+end.open=Cofanetto lasciato aperto
+end.open.how=\nPer riprenderlo: Archivio, poi doppio clic sul cofanetto.
+end.failed=Archiviazione non riuscita
+end.failed.text=%ls%lsLeggi il registro qui sotto, correggi e riprova con Nuovo cofanetto.
+summary.nothing=nessun supporto
+
+# questions and errors
+finish.ask.one=Manca ancora: %ls.\n\nSe chiudo il cofanetto adesso risulterà incompleto, con quel supporto mancante, e non si potrà più riprendere dall'archivio.\n\nChiudo il cofanetto?
+finish.ask.many=Mancano ancora: %ls.\n\nSe chiudo il cofanetto adesso risulterà incompleto, con quei supporti mancanti, e non si potrà più riprendere dall'archivio.\n\nChiudo il cofanetto?
+close.ask=C'è un cofanetto in corso. Lo lascio aperto (si riprende dall'archivio) e chiudo?
+error.memory=Memoria insufficiente.
+error.nostart=Non riesco ad avviare la sessione.

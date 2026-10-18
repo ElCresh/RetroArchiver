@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "media.h"
+#include "meta.h"
 #include "fsu8.h"
 #include "iso9660.h"
 #include "sha256.h"
@@ -37,6 +38,11 @@
 #define C2_REREAD "20"
 #define CONSOLE   "dic-console.txt"
 #define MAXTRK    100
+
+/* the line RetroArchiver adds to dic-console.txt when DIC exits with an
+ * error on a complete read; reads made by 261017 have the Italian one */
+#define EXIT_MARK        "RetroArchiver: DiscImageCreator exited with code "
+#define EXIT_MARK_261017 "RetroArchiver: DiscImageCreator e' uscito con il codice "
 
 /* DIC starts but Windows cannot find a DLL: on XP the Visual C++ runtimes */
 #define DLL_NOT_FOUND ((int)0xC0000135)
@@ -204,12 +210,12 @@ static int no_tool(int code, runner_line_fn on_line, void *ctx)
 {
     char line[900];
     if (dll_missing(code))
-        snprintf(line, sizeof(line), "%s non parte: mancano i runtime di Visual C++ 2015-2019 x86 "
-                                     "(VCRUNTIME140.dll). Su Windows XP installa la versione 14.27 "
-                                     "del Visual C++ Redistributable.", dic);
+        snprintf(line, sizeof(line), "%s does not start: the Visual C++ 2015-2019 x86 runtimes are missing "
+                                     "(VCRUNTIME140.dll). On Windows XP install version 14.27 "
+                                     "of the Visual C++ Redistributable.", dic);
     else
-        snprintf(line, sizeof(line), "Non trovo %s: mettilo nella stessa cartella del programma "
-                                     "o nel PATH, oppure indica il percorso completo di "
+        snprintf(line, sizeof(line), "Cannot find %s: put it in the same folder as the program "
+                                     "or in the PATH, or give the full path of "
                                      "DiscImageCreator.exe.", dic);
     if (on_line) on_line(ctx, line);
     return MEDIA_NOTOOL;
@@ -229,24 +235,24 @@ static int check(strbuf *msg)
     memset(&t, 0, sizeof(t));
     rc = runner_run(argv, tee_line, &t, &code);
     if (rc == RUNNER_NOSTART) {
-        sb_printf(msg, "Non trovo %s: mettilo nella stessa cartella del programma o nel PATH.", dic);
+        sb_printf(msg, "Cannot find %s: put it in the same folder as the program or in the PATH.", dic);
         return -1;
     }
     if (rc != RUNNER_DONE) {
-        sb_printf(msg, "Controllo del lettore %s: annullato, riprova quando vuoi.", drive);
+        sb_printf(msg, "Check of drive %s: canceled, try again when you like.", drive);
         return -1;
     }
     if (dll_missing(code)) {
-        sb_printf(msg, "%s non parte: mancano i runtime di Visual C++ 2015-2019 x86.", dic);
+        sb_printf(msg, "%s does not start: the Visual C++ 2015-2019 x86 runtimes are missing.", dic);
         return -1;
     }
     if (code != 0) {
         if (t.denied)
-            sb_printf(msg, "Non riesco ad aprire il lettore %s: (accesso negato): controlla la lettera "
-                           "dell'unita' e lancia il programma da un utente amministratore.", drive);
+            sb_printf(msg, "Cannot open drive %s: (access denied): check the drive letter "
+                           "and run the program as an administrator.", drive);
         else
-            sb_printf(msg, "Il lettore %s: non risponde (DiscImageCreator ls ha dato errore %d): "
-                           "controlla la lettera dell'unita'.", drive, code);
+            sb_printf(msg, "Drive %s: does not respond (DiscImageCreator ls gave error %d): "
+                           "check the drive letter.", drive, code);
         return -1;
     }
     return 0;
@@ -276,8 +282,8 @@ static void write_toc(FILE *f, runner_line_fn on_line, void *ctx)
     toc_sectors = -1;
     if (h == INVALID_HANDLE_VALUE ||
         !DeviceIoControl(h, RA_IOCTL_CDROM_READ_TOC, NULL, 0, &toc, sizeof(toc), &got, NULL)) {
-        snprintf(line, sizeof(line), "TOC: non la leggo dal lettore %c: (nessun disco, o il lettore non "
-                                     "risponde; errore %lu)", toupper((unsigned char)drive[0]),
+        snprintf(line, sizeof(line), "TOC: cannot read it from drive %c: (no disc, or the drive does not "
+                                     "respond; error %lu)", toupper((unsigned char)drive[0]),
                  (unsigned long)GetLastError());
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
         fprintf(f, "%s\n", line);
@@ -287,14 +293,14 @@ static void write_toc(FILE *f, runner_line_fn on_line, void *ctx)
     CloseHandle(h);
     n = toc.last - toc.first + 1;
     if (n < 1 || n > 99) n = 0;
-    snprintf(line, sizeof(line), "TOC del disco nel lettore %c: tracce %d-%d",
+    snprintf(line, sizeof(line), "TOC of the disc in drive %c: tracks %d-%d",
              toupper((unsigned char)drive[0]), toc.first, toc.last);
     fprintf(f, "%s\n", line);
     say(on_line, ctx, line);
     for (i = 0; i < n; i++) {
         long a = msf_lba(toc.t[i].addr), b = msf_lba(toc.t[i + 1].addr);
-        snprintf(line, sizeof(line), "  Traccia %2d  %-5s  LBA %7ld  %7ld settori (%02ld:%02ld)",
-                 toc.t[i].track, (toc.t[i].control_adr & 4) ? "dati" : "audio", a, b - a,
+        snprintf(line, sizeof(line), "  Track %2d  %-5s  LBA %7ld  %7ld sectors (%02ld:%02ld)",
+                 toc.t[i].track, (toc.t[i].control_adr & 4) ? "data" : "audio", a, b - a,
                  (b - a) / 75 / 60, (b - a) / 75 % 60);
         fprintf(f, "%s\n", line);
         say(on_line, ctx, line);
@@ -302,8 +308,8 @@ static void write_toc(FILE *f, runner_line_fn on_line, void *ctx)
     if (n) {
         long end = msf_lba(toc.t[n].addr);
         toc_sectors = end;
-        snprintf(line, sizeof(line), "  Totale %ld settori (%ld MB di dati utente)%s", end,
-                 end * 2048L / 1048576L, end > 405000 ? ": piu' lungo di un CD, forse e' un DVD" : "");
+        snprintf(line, sizeof(line), "  Total %ld sectors (%ld MB of user data)%s", end,
+                 end * 2048L / 1048576L, end > 405000 ? ": longer than a CD, maybe it is a DVD" : "");
         fprintf(f, "%s\n", line);
         say(on_line, ctx, line);
     }
@@ -311,7 +317,7 @@ static void write_toc(FILE *f, runner_line_fn on_line, void *ctx)
 #else
 static void write_toc(FILE *f, runner_line_fn on_line, void *ctx)
 {
-    const char *line = "TOC: la lettura diretta dal lettore c'e' solo su Windows";
+    const char *line = "TOC: reading it directly from the drive works only on Windows";
     fprintf(f, "%s\n", line);
     say(on_line, ctx, line);
 }
@@ -335,9 +341,9 @@ static int scan(const char *out_txt, runner_line_fn on_line, void *ctx)
     if (code != 0) {
         char line[300];
         snprintf(line, sizeof(line), t.denied
-                 ? "ATTENZIONE: non riesco ad aprire il lettore %s: (accesso negato): serve un utente "
-                   "amministratore, o la lettera dell'unita' e' sbagliata."
-                 : "ATTENZIONE: il lettore %s: non risponde a DiscImageCreator.", drive);
+                 ? "WARNING: cannot open drive %s: (access denied): run the program as an "
+                   "administrator, or check the drive letter."
+                 : "WARNING: drive %s: does not respond to DiscImageCreator.", drive);
         fprintf(t.f, "%s\n", line);
         say(on_line, ctx, line);
     }
@@ -364,8 +370,8 @@ static long long need_bytes(int dvd)
 int optical_fs_ok(const char *fsname, long long biggest, strbuf *why)
 {
     if (fsname && !strncmp(fsname, "FAT", 3) && biggest > FAT_MAX) {
-        sb_printf(why, "la cartella e' su un disco %s, che non regge file oltre 4 GB, e l'immagine di "
-                       "questo disco sara' di %lld MB: scegli una cartella su un disco NTFS", fsname, biggest / MB);
+        sb_printf(why, "the folder is on a %s drive, which cannot hold files over 4 GB, and the image of "
+                       "this disc will be %lld MB: choose a folder on an NTFS drive", fsname, biggest / MB);
         return -1;
     }
     return 0;
@@ -429,9 +435,9 @@ int optical_dic_path(const char *dir, const char *file, char *out, size_t n, str
         free(wf);
     }
     free(w);
-    sb_printf(why, "la cartella %s ha nel nome caratteri che DiscImageCreator (un programma ANSI) non sa "
-                   "leggere, e non ha un nome corto 8.3: scegli una cartella dell'archivio con un nome "
-                   "senza lettere straniere", dir);
+    sb_printf(why, "the name of folder %s has characters that DiscImageCreator (an ANSI program) cannot "
+                   "read, and it has no 8.3 short name: choose an archive folder whose name has "
+                   "no foreign letters", dir);
     return -1;
 }
 
@@ -502,8 +508,8 @@ int optical_room(const char *dir, long long need, long long biggest, strbuf *why
     fs_name(dir, fs, sizeof(fs));
     if (optical_fs_ok(fs, biggest, why)) return -1;
     if (avail >= 0 && avail < need) {
-        sb_printf(why, "in %s ci sono %lld MB liberi e la lettura ne richiede circa %lld: libera spazio o "
-                       "scegli un'altra cartella dell'archivio", dir, avail / MB, need / MB);
+        sb_printf(why, "%s has %lld MB free and the read needs about %lld: free some space or "
+                       "choose another archive folder", dir, avail / MB, need / MB);
         return -1;
     }
     return 0;
@@ -513,10 +519,10 @@ int optical_room(const char *dir, long long need, long long biggest, strbuf *why
 static void stop_message(char *p, size_t n, int code, const tee *t, const char *dir)
 {
     char last[320]; long long avail = optical_free_bytes(dir);
-    if (t->last[0]) snprintf(last, sizeof(last), " Ultima riga: \"%.280s\".", t->last);
+    if (t->last[0]) snprintf(last, sizeof(last), " Last line: \"%.280s\".", t->last);
     else last[0] = 0;
-    snprintf(p, n, "DiscImageCreator si e' fermato con l'errore %d.%s Controlla che il disco sia nel "
-                   "lettore %s: e pulito, e lo spazio nella cartella %s (%lld MB liberi), poi riprova.",
+    snprintf(p, n, "DiscImageCreator stopped with error %d.%s Check that the disc is in "
+                   "drive %s: and clean, and the space in folder %s (%lld MB free), then try again.",
              code, last, drive, dir, avail >= 0 ? avail / MB : -1LL);
 }
 
@@ -537,13 +543,13 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
     if (sep) *sep = 0;
     sb_init(&why);
     if (optical_room(u8_isdir(parent) ? parent : out_dir, need, dvd ? need : 0, &why)) {
-        snprintf(p, sizeof(p), "Non leggo il %s: %s.", dvd ? "DVD" : "CD", why.s);
+        snprintf(p, sizeof(p), "Cannot read the %s: %s.", dvd ? "DVD" : "CD", why.s);
         say(on_line, ctx, p);
         sb_free(&why);
         return -1;
     }
     if (u8_mkdirs(out_dir)) {
-        snprintf(p, sizeof(p), "Non riesco a creare la cartella %s: controlla il disco di destinazione.", out_dir);
+        snprintf(p, sizeof(p), "Cannot create folder %s: check the destination drive.", out_dir);
         say(on_line, ctx, p);
         sb_free(&why);
         return -1;
@@ -551,7 +557,7 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
     snprintf(p, sizeof(p), "%s%s", base, dvd ? ".iso" : ".bin");
     u8_join(img, sizeof(img), out_dir, p);
     if (optical_dic_path(out_dir, p, arg, sizeof(arg), &why)) {
-        snprintf(p, sizeof(p), "Non leggo il %s: %s.", dvd ? "DVD" : "CD", why.s);
+        snprintf(p, sizeof(p), "Cannot read the %s: %s.", dvd ? "DVD" : "CD", why.s);
         say(on_line, ctx, p);
         sb_free(&why);
         u8_rmtree(out_dir);
@@ -582,27 +588,27 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
      * On a dying disc it may be the only good one: it is kept, and the
      * verification will tell whether it has errors */
     have = u8_filesize(dat) > 0 && (dvd ? u8_filesize(img) > 0 : u8_filesize(cue) > 0);
-    if (have && code != 0 && t.f) fprintf(t.f, "RetroArchiver: DiscImageCreator e' uscito con il codice %d\n", code);
+    if (have && code != 0 && t.f) fprintf(t.f, EXIT_MARK "%d\n", code);
     if (t.f) fclose(t.f);
     if (have) {
         if (code != 0) {
-            snprintf(p, sizeof(p), "DiscImageCreator e' uscito con l'errore %d, ma la lettura e' completa: "
-                                   "la tengo e la verifica dira' se e' buona.", code);
+            snprintf(p, sizeof(p), "DiscImageCreator exited with error %d, but the read is complete: "
+                                   "keeping it, the verification will tell whether it is good.", code);
             say(on_line, ctx, p);
         }
         return 0;
     }
     if (t.wrong)
-        snprintf(p, sizeof(p), "Nel lettore non c'e' un %s: DiscImageCreator dice che il disco e' di un "
-                               "altro tipo. Controlla il disco, o la composizione del cofanetto.",
+        snprintf(p, sizeof(p), "The drive does not hold a %s: DiscImageCreator says the disc is of "
+                               "another type. Check the disc, or the contents of the box.",
                  dvd ? "DVD" : "CD");
     else if (t.denied)
-        snprintf(p, sizeof(p), "DiscImageCreator non apre il lettore %s: (accesso negato): serve un "
-                               "utente amministratore.", drive);
+        snprintf(p, sizeof(p), "DiscImageCreator cannot open drive %s: (access denied): run the program "
+                               "as an administrator.", drive);
     else if (code != 0)
         stop_message(p, sizeof(p), code, &t, out_dir);
     else
-        snprintf(p, sizeof(p), "DiscImageCreator ha finito ma manca %.200s: lettura incompleta.",
+        snprintf(p, sizeof(p), "DiscImageCreator finished but %.200s is missing: the read is incomplete.",
                  u8_filesize(dat) > 0 ? base_of(dvd ? img : cue) : base_of(dat));
     say(on_line, ctx, p);
     u8_rmtree(out_dir);         /* the .dat or the image is missing: it is not a read */
@@ -695,8 +701,8 @@ static void scan_logs(const char *dir, dump *d)
             else if ((q = strstr(line, "Remains ")) && strstr(q, "c2 error")) d->c2 = last_number(q + 8);
             /* "[WARNING] This drive doesn't support reporting C2 error. Disabled /c2" */
             if (strstr(line, "doesn't support reporting C2 error")) d->no_c2 = 1;
-            if ((q = strstr(line, "RetroArchiver: DiscImageCreator e' uscito con il codice ")) != NULL)
-                d->dic_exit = atoi(q + 56);
+            if ((q = strstr(line, EXIT_MARK)) != NULL) d->dic_exit = atoi(q + strlen(EXIT_MARK));
+            else if ((q = strstr(line, EXIT_MARK_261017)) != NULL) d->dic_exit = atoi(q + strlen(EXIT_MARK_261017));
             /* "Detected protection [SafeDisc]", "Detected a protected [x]. LBA..." */
             if ((q = strstr(line, "Detected protection [")) || (q = strstr(line, "Detected a protected ["))) {
                 char *a = strchr(q, '['), *b = a ? strchr(a, ']') : NULL;
@@ -783,7 +789,7 @@ static int load_dump(const char *dir, dump *d, strbuf *why)
     snprintf(name, sizeof(name), "%s.dat", d->base);
     u8_join(p, sizeof(p), dir, name);
     if (!(f = u8_fopen(p, "rb"))) {
-        sb_printf(why, "manca %s, le impronte che DiscImageCreator scrive alla fine", name);
+        sb_printf(why, "%s is missing, the fingerprints DiscImageCreator writes at the end", name);
         return -1;
     }
     while (fgets(line, sizeof(line), f) && d->n < MAXTRK) {
@@ -806,7 +812,7 @@ static int load_dump(const char *dir, dump *d, strbuf *why)
         d->n++;
     }
     fclose(f);
-    if (!d->n) { sb_printf(why, "%s non elenca nessuna traccia", name); return -1; }
+    if (!d->n) { sb_printf(why, "%s lists no tracks", name); return -1; }
     scan_logs(dir, d);
     e.d = d; e.dir = dir;
     u8_listdir(dir, find_edc, &e);
@@ -992,16 +998,16 @@ static int redump_cached(const char *path, const dump *d, redump_hit *hit)
 static void describe(strbuf *o, const char *what, const dump *d)
 {
     int i;
-    sb_printf(o, "  %s: %d tracc%s\n", d->base, d->n, d->n == 1 ? "ia" : "e");
+    sb_printf(o, "  %s: %d track%s\n", d->base, d->n, d->n == 1 ? "" : "s");
     for (i = 0; i < d->n; i++)
-        sb_printf(o, "    %-11s %10lld byte  crc %s  sha1 %s  %s\n", d->t[i].mode[0] ? d->t[i].mode : what,
+        sb_printf(o, "    %-11s %10lld bytes  crc %s  sha1 %s  %s\n", d->t[i].mode[0] ? d->t[i].mode : what,
                   d->t[i].size, d->t[i].crc, d->t[i].sha1, d->t[i].name);
     if (d->c2 >= 0 || d->edc >= 0 || d->readerr >= 0)
-        sb_printf(o, "    errori: C2 non risolti %d, settori con EDC/ECC sbagliati %d, settori illeggibili %d\n",
+        sb_printf(o, "    errors: unresolved C2 %d, sectors with bad EDC/ECC %d, unreadable sectors %d\n",
                   d->c2 > 0 ? d->c2 : 0, d->edc > 0 ? d->edc : 0, d->readerr > 0 ? d->readerr : 0);
-    if (d->protection[0]) sb_printf(o, "    protezione rilevata da DiscImageCreator: %s\n", d->protection);
-    if (d->no_c2) sb_puts(o, "    controllo C2 non disponibile su questo lettore: gli errori C2 non sono stati cercati\n");
-    if (d->dic_exit) sb_printf(o, "    DiscImageCreator e' uscito con l'errore %d, ma la lettura e' completa\n", d->dic_exit);
+    if (d->protection[0]) sb_printf(o, "    protection detected by DiscImageCreator: %s\n", d->protection);
+    if (d->no_c2) sb_puts(o, "    C2 check not available on this drive: C2 errors were not looked for\n");
+    if (d->dic_exit) sb_printf(o, "    DiscImageCreator exited with error %d, but the read is complete\n", d->dic_exit);
 }
 
 static int same_tracks(const dump *a, const dump *b)
@@ -1028,15 +1034,15 @@ static int compare_media(const char *what, const char *const *imgs, int n, compa
     strbuf *o = &r->detail, why;
     int i, k, best = 0, agree, rc;
 
-    if (!d) { sb_puts(o, "Memoria insufficiente per il confronto.\n"); return finish(r, 2, "errori", "error"); }
+    if (!d) { sb_puts(o, "Out of memory for the comparison.\n"); return finish(r, 2, ST_ERRORS, "error"); }
     sb_init(&why);
-    sb_printf(o, "Verifica del %s con DiscImageCreator e redump\n\n", what);
+    sb_printf(o, "Verification of the %s with DiscImageCreator and redump\n\n", what);
     for (i = 0; i < n; i++) {
         if (load_dump(imgs[i], &d[i], &why)) {
-            sb_printf(o, "  %s: %s.\n\n  La lettura non e' completa: rileggi il %s.\n", base_of(imgs[i]), why.s, what);
+            sb_printf(o, "  %s: %s.\n\n  The read is not complete: read the %s again.\n", base_of(imgs[i]), why.s, what);
             sb_free(&why);
             free(d);
-            return finish(r, 2, "errori", "error");
+            return finish(r, 2, ST_ERRORS, "error");
         }
         describe(o, what, &d[i]);
     }
@@ -1047,19 +1053,19 @@ static int compare_media(const char *what, const char *const *imgs, int n, compa
         redump_hit hit; char dir[600]; int dats, m = redump_match(&d[0], &hit, dir, sizeof(dir), &dats);
         r->agree = 1;
         if (m == 1) {
-            sb_printf(o, "  Redump: coincide con \"%s\"\n  (DAT %s, del %s).\n\n", hit.game, hit.dat,
-                      hit.date[0] ? hit.date : "data non indicata");
-            sb_printf(o, "  Il %s e' identico a quello verificato da altri archivisti: una lettura basta.\n", what);
+            sb_printf(o, "  Redump: matches \"%s\"\n  (DAT %s, dated %s).\n\n", hit.game, hit.dat,
+                      hit.date[0] ? hit.date : "date not given");
+            sb_printf(o, "  The %s is identical to the one verified by other archivists: one read is enough.\n", what);
             free(d);
-            return finish(r, 0, "verificato redump", "redump");
+            return finish(r, 0, ST_REDUMP, "redump");
         }
-        if (m < 0) sb_printf(o, "  Redump: nessun DAT di redump in %s.\n", dir[0] ? dir : "(cartella del programma)");
-        else sb_printf(o, "  Redump: non trovato in %d DAT di %s.\n", dats, dir);
+        if (m < 0) sb_printf(o, "  Redump: no redump DAT in %s.\n", dir[0] ? dir : "(the program's folder)");
+        else sb_printf(o, "  Redump: not found in %d DATs in %s.\n", dats, dir);
         if (errors_of(&d[0]))
-            sb_printf(o, "  La lettura ha %d errori: una seconda lettura dira' se sono del disco.\n", errors_of(&d[0]));
-        sb_printf(o, "  Una lettura sola non e' verificata: serve una seconda lettura da confrontare.\n");
+            sb_printf(o, "  The read has %d errors: a second read will tell whether they are on the disc.\n", errors_of(&d[0]));
+        sb_printf(o, "  A single read is not verified: a second read is needed to compare.\n");
         free(d);
-        return finish(r, 1, "letto una volta", "single");
+        return finish(r, 1, ST_READ_ONCE, "single");
     }
 
     /* two or more reads: one that redump knows is good even if the others
@@ -1070,13 +1076,13 @@ static int compare_media(const char *what, const char *const *imgs, int n, compa
             for (k = i + 1; k < n && !same_tracks(&d[i], &d[k]); k++) ;
             if (k < n) continue;                /* already looked up with the same tracks */
             if (redump_match(&d[i], &hit, dir, sizeof(dir), &dats) != 1) continue;
-            sb_printf(o, "  Redump: la lettura %s coincide con \"%s\"\n  (DAT %s, del %s).\n\n", d[i].base,
-                      hit.game, hit.dat, hit.date[0] ? hit.date : "data non indicata");
-            sb_printf(o, "  Il %s e' identico a quello verificato da altri archivisti: tengo %s.\n", what, d[i].base);
+            sb_printf(o, "  Redump: read %s matches \"%s\"\n  (DAT %s, dated %s).\n\n", d[i].base,
+                      hit.game, hit.dat, hit.date[0] ? hit.date : "date not given");
+            sb_printf(o, "  The %s is identical to the one verified by other archivists: keeping %s.\n", what, d[i].base);
             r->master = i + 1;
             for (k = 0; k < n; k++) r->agree += same_tracks(&d[i], &d[k]);
             free(d);
-            return finish(r, 0, "verificato redump", "redump");
+            return finish(r, 0, ST_REDUMP, "redump");
         }
     }
 
@@ -1096,19 +1102,19 @@ static int compare_media(const char *what, const char *const *imgs, int n, compa
             }
     if (agree == n) {
         if (errors_of(&d[0])) {
-            sb_printf(o, "  Le %d letture coincidono, ma con %d errori non risolti: il disco e' rovinato\n"
-                         "  (o ha una protezione che redump non conosce). Prova un altro lettore e\n"
-                         "  catalogalo con errori.\n", n, errors_of(&d[0]));
-            rc = finish(r, 2, "errori", "identical");
+            sb_printf(o, "  The %d reads match, but with %d unresolved errors: the disc is damaged\n"
+                         "  (or has a protection redump does not know). Try another drive and\n"
+                         "  catalog it with errors.\n", n, errors_of(&d[0]));
+            rc = finish(r, 2, ST_ERRORS, "identical");
         } else {
-            sb_printf(o, "  Le %d letture coincidono traccia per traccia: catalogalo come pulito.\n", n);
-            rc = finish(r, 0, "pulito", "identical");
+            sb_printf(o, "  The %d reads match track by track: catalog it as clean.\n", n);
+            rc = finish(r, 0, ST_CLEAN, "identical");
         }
     } else {
-        sb_printf(o, "  Le letture non coincidono (%d tracce diverse, %d letture su %d uguali):\n"
-                     "  il disco non si legge in modo stabile. Puliscilo e rileggilo.\n",
+        sb_printf(o, "  The reads do not match (%d tracks differ, %d of %d reads are the same):\n"
+                     "  the disc does not read consistently. Clean it and read it again.\n",
                   r->unstable_tracks, agree, n);
-        rc = finish(r, 1, "instabile", "data_differ");
+        rc = finish(r, 1, ST_UNSTABLE, "data_differ");
     }
     free(d);
     return rc;
@@ -1147,7 +1153,7 @@ static void tech_iso(const char *dir, const dump *d, json_writer *w)
     found = data_track(d, &ssize, &off);
     if (found < 0) {
         jw_null(w, "filesystem");
-        jw_str(w, "filesystem_note", "nessuna traccia dati: e' un CD audio");
+        jw_str(w, "filesystem_note", "no data track: it is an audio CD");
         return;
     }
     u8_join(p, sizeof(p), dir, d->t[found].name);
@@ -1177,7 +1183,7 @@ static void tech_iso(const char *dir, const dump *d, json_writer *w)
     jw_end_arr(w);
     jw_end_obj(w);
     if (fi.note[0]) jw_str(w, "filesystem_note", fi.note);
-    else if (!fi.joliet) jw_str(w, "filesystem_note", "solo nomi ISO 9660: il disco non ha Joliet");
+    else if (!fi.joliet) jw_str(w, "filesystem_note", "ISO 9660 names only: the disc has no Joliet");
     iso_free(&fi);
 }
 
@@ -1196,7 +1202,7 @@ static void tech(void *ctx, const char *img, json_writer *w)
     if (!d || load_dump(img, d, &why)) {
         jw_null(w, "disc");
         jw_null(w, "filesystem");
-        jw_str(w, "filesystem_note", why.s ? why.s : "lettura non leggibile");
+        jw_str(w, "filesystem_note", why.s ? why.s : "the read cannot be loaded");
         sb_free(&why);
         free(d);
         return;
@@ -1250,7 +1256,7 @@ static const char *phase_of(const char *line)
     if (strstr(line, "C2 error") || strstr(line, "c2 error") || strstr(line, "(c2)") ||
         strstr(line, "Reread") || strstr(line, "reread sector") || strstr(line, "EccEdc") ||
         strstr(line, "Checking sectors"))
-        return "Controllo C2";
+        return "C2 check";
     return NULL;
 }
 

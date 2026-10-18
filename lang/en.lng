@@ -1,0 +1,365 @@
+# RetroArchiver - the window's texts in English
+#
+# UTF-8, one key=text per line; lines starting with # are comments.
+# Blanks around the key and the text are dropped.
+# Escapes in the texts: \n new line, \t tab, \s space (for a text that
+# starts or ends with one), \\ backslash.
+# A text with %ls, %d, %lu... is a format: a translation keeps the same
+# conversions in the same order (%% for a percent sign), otherwise the
+# window uses the English text. Arguments cannot be reordered: rephrase.
+#
+# A new language: copy this file to lang\<code>.lng, with the ISO 639
+# code of the language (de.lng, fr.lng...), and translate the texts.
+# language.name is the name shown in the window's menu. Keys that are
+# missing stay in English.
+
+# the language itself
+language.name=English
+format.decimal=.
+format.date=YYYY-MM-DD
+
+# window title
+title.archive=RetroArchiver %ls - archive
+title.session=RetroArchiver %ls - archiving
+
+# media kinds
+kind.floppy=floppy
+kind.floppy.plural=floppies
+kind.floppy.title=Floppy
+kind.cd=CD
+kind.cd.plural=CDs
+kind.cd.title=CD
+kind.dvd=DVD
+kind.dvd.plural=DVDs
+kind.dvd.title=DVD
+kind.mixed=medium
+kind.mixed.plural=media
+noun.diskette=disk
+noun.disc=disc
+
+# setup
+setup.title=Title *
+setup.resume=Resume...
+setup.platform=Platform *
+setup.year=Year
+setup.publisher=Publisher
+setup.language=Language
+setup.edition=Version
+setup.notes=Notes
+setup.media=Media *
+setup.hint=To continue a box left halfway: Resume..., or the very same title.
+setup.folder=Folder
+setup.maxreads=Max reads
+setup.readfrom=Read from
+setup.uilanguage=Program language
+setup.uilanguage.windows=Same as Windows
+setup.sounds=Windows sounds
+setup.auto=Automatic: reads each new disk by itself
+setup.archive=Archive
+setup.start=Start
+setup.resuming=Resuming “%ls”: press Start.
+setup.bagpath=The package will be created in %ls%ls
+setup.bagpath.notitle=The package will be created in %ls%ls<title>%ls
+setup.files=\s· files\s
+setup.files.and=\sand\s
+setup.browse=Folder where the boxes are saved
+setup.resume.none=There is no open box to resume in the folder %ls.\n\nIf it is in another folder, choose that one in Folder and press Resume again.
+setup.resume.item.one=%ls  (%d of %d %ls done)
+setup.resume.item.many=%ls  (%d of %d %ls done)
+
+# the group boxes
+group.box=Box
+group.archiving=Archiving
+group.bag=BagIt package
+group.selected=Selected box
+
+# what is missing before starting
+missing.title=The box title is missing.
+missing.platform=The platform is missing: choose one from the list or type it.
+missing.media=The box media are missing: how many floppies, CDs and DVDs (1 to 64 in all).
+missing.folder=The folder where the boxes are saved is missing.
+missing.toolong=The folder path is too long: choose a shorter one.
+
+# status bar, right part: the first thing missing, or Ready
+ready.notitle=Title missing
+ready.noplatform=Platform missing
+ready.media=Media: 1 to 64
+ready.nofolder=Folder missing
+ready.samdisk.bad=SAMdisk needs fixing
+ready.ok=Ready
+ready.archive.loading=Reading the archive...
+ready.verifying=Checking the hashes again...
+ready.dic.bad=DiscImageCreator needs fixing
+
+# SAMdisk, the floppy drive, DiscImageCreator
+samdisk.checking=Checking SAMdisk...
+samdisk.ok=SAMdisk %ls
+samdisk.notfound=SAMdisk not found: check the SAMdisk field
+samdisk.v4=SAMdisk 4.x: the 3.x series is needed (4.0 cannot read real floppies)
+samdisk.notsamdisk=The program given does not look like SAMdisk
+samdisk.wait=Still checking SAMdisk: try again in a moment.
+samdisk.fix=%ls.\n\nIn the SAMdisk field write the full path of samdisk.exe from the 3.x series (for example C:\\SAMdisk\\samdisk.exe), or copy samdisk.exe next to RetroArchiver.exe and leave just samdisk in the field.
+drive.checking=Checking drive %ls...
+drive.ok=Drive %ls %d rpm
+drive.dead=Drive %ls does not answer (is a disk in?)
+dic.checking=Checking DiscImageCreator...
+dic.ok=DiscImageCreator %ls, %ls
+dic.notfound.brief=DiscImageCreator not found
+dic.notfound=DiscImageCreator not found: check the field
+dic.nodll.brief=DiscImageCreator: Visual C++ runtime missing
+dic.nodll=DiscImageCreator does not start: the Visual C++ 2015-2019 x86 runtime is missing
+dic.notdic.brief=not DiscImageCreator
+dic.notdic=The program given does not look like DiscImageCreator
+dat.none.brief=no redump DAT
+dat.none=no redump DAT: two reads per disc
+dat.old.brief=redump DAT %.10ls, old
+dat.old=redump DAT of %.10ls, old: download a new one
+dat.ok.brief=redump DAT %.10ls
+dat.ok=redump DAT of %.10ls
+dic.wait=Still checking DiscImageCreator: try again in a moment.
+dic.fix=%ls.\n\nIn the DiscImageCreator field write the full path of DiscImageCreator.exe (for example C:\\DIC\\DiscImageCreator.exe), or copy it next to RetroArchiver.exe with its DLLs. Windows XP needs the Visual C++ 2015-2019 x86 runtime, version 14.27.
+
+# the archive
+archive.folder=Archive
+archive.search=Search
+archive.search.cue=title, publisher...
+archive.allplatforms=All platforms
+column.title=Title
+column.platform=Platform
+column.year=Year
+column.media=Media
+column.outcome=Outcome
+column.archived=Archived
+archive.resume=Resume
+archive.open=Open folder
+archive.verify=Check hashes
+archive.hint=Double-click an open box to resume it from the medium that is missing.
+archive.new=New box
+archive.browse=Folder of the box archive
+archive.empty.title=The archive is still empty
+archive.empty.missing=The folder %ls does not exist yet: it will be created with the first box. Fill in title, platform and media, then insert the disks one at a time.
+archive.empty.none=There is no box in %ls yet. Start with the first one: fill in title, platform and media, then insert the disks one at a time.
+archive.empty.hint=Already have an archive somewhere else? Choose its folder with the “...” button above.
+archive.status.reading=Reading %ls
+archive.status.nofolder=The folder %ls does not exist yet
+archive.status.noboxes=No boxes in %ls
+archive.status.box.one=box read
+archive.status.box.many=boxes read
+archive.status.from=%ls from %ls
+archive.box.one=box
+archive.box.many=boxes
+archive.nomedia=no media
+archive.complete.one=complete
+archive.complete.many=complete
+archive.incomplete.one=incomplete
+archive.incomplete.many=incomplete
+archive.open.one=open, to resume
+archive.open.many=open, to resume
+archive.errors.one=disk with errors
+archive.errors.many=disks with errors
+archive.errors.none=no disks with errors
+archive.unreadable.one=unreadable
+archive.unreadable.many=unreadable
+archive.nomatch=No box matches the search: change the words or the platform.
+archive.detail.version=version\s
+archive.detail.media=Media
+archive.detail.notes=Notes: %ls
+archive.detail.nonotes=No notes.
+
+# Check hashes
+verify.changed.one=changed file
+verify.changed.many=changed files
+verify.missing.one=missing file
+verify.missing.many=missing files
+verify.extra.one=extra file the manifest does not list
+verify.extra.many=extra files the manifest does not list
+verify.cannot=Cannot check the hashes of “%ls” again: %ls.
+verify.empty=“%ls” has no disks read yet: there is nothing to check.
+verify.ok.open=“%ls”: %d files checked, all identical to right after the read.
+verify.ok.closed=“%ls”: %d files checked, all identical to when the package was closed.
+verify.bad=In “%ls” there are %ls (the first: %ls).\n\n%ls
+verify.bad.open=Resume the box: when it closes, the disk with the different hash is set aside and asked for again.
+verify.bad.closed=The package is no longer intact: put those files back from a copy of the archive, or read the disks again in a new box.
+verify.extra.only=Remove the extra files from data: the rest of the package is intact.
+
+# the session: list, bars, buttons
+column.medium=Medium
+column.label=Label
+column.reads=Reads
+wait.label=Label
+wait.note=Note
+wait.label.tip=Read the label from the inserted disk (F2)
+button.finish=Finish box
+button.skip=Skip
+button.read=Read
+button.retry=Retry
+button.reread=Read again
+button.stop=Stop
+button.open=Open folder
+button.new=New box
+button.archive=Archive
+bar.disk=Disk
+bar.box=Box
+bar.cylinder=Cylinder %d of %d
+bar.optical.min=%d%%, %lu min left
+bar.optical.sec=%d%%, %lu s left
+bar.progress=%d of %d %ls
+bag.folder=Folder
+bag.contents=Contents
+bag.hashes=Hashes
+bag.aside=Set aside
+bag.image.one=image
+bag.image.many=images
+bag.scan.one=scan
+bag.scan.many=scans
+bag.hashes.ok=SHA-256 computed and checked again: all of them match
+
+# the phases of a disk
+phase.scan=Scan
+phase.read=Read %d
+phase.compare=Compare
+phase.c2=C2 check
+phase.redump=Redump
+phase.toc=TOC
+phase.result=Outcome
+
+# the outcome of a disk, in the list
+outcome.toread=to read
+outcome.clean=clean
+outcome.marginal=marginal
+outcome.marginal.agree=marginal (%d agree)
+outcome.fragile=fragile: a single read
+outcome.error=error
+outcome.redump=verified with redump
+outcome.once=read once: not verified
+outcome.unstable=unstable
+outcome.unstable.agree=unstable (%d identical reads)
+outcome.errors=unresolved errors
+outcome.failed=read failed
+outcome.interrupted=interrupted
+outcome.skipped=skipped
+outcome.duplicate=duplicate
+outcome.duplicate.of=duplicate of %ls
+outcome.skipped.duplicate=skipped: it was a duplicate of %ls
+
+# status bar during the session
+status.slot=%ls %d of %d
+status.archived.one=archived
+status.archived.many=archived
+status.errors=, %d with errors
+status.bag.closed=Bag: closed
+status.bag.open=Bag: open
+status.session=Session %ls
+
+# the box summary
+summary.clean.one=clean
+summary.clean.many=clean
+summary.redump.one=\s(%d verified with redump)
+summary.redump.many=\s(%d verified with redump)
+summary.marginal.one=marginal
+summary.marginal.many=marginal
+summary.errors=%d with errors
+summary.other.one=skipped or to redo
+summary.other.many=skipped or to redo
+summary.toread=%d %ls to read
+
+# automatic mode
+auto.waiting=Automatic read: waiting for the disk in drive %ls
+auto.count.one=Reading %ls in one second
+auto.count.many=Reading %ls in %d seconds
+auto.count.label=Label: %ls.\s
+auto.count.text=Esc stops the countdown and waits for you to press Read (F5); Enter reads now, Alt+S skips the disk.
+auto.ask.title=This looks like the same %ls as %ls: read it again?
+auto.ask.text=It has the same serial number (%04lX-%04lX)%ls as %ls, already read. If it really is %ls press Read (F5); otherwise insert the right %ls and it starts by itself, or Skip (Alt+S).
+auto.ask.samelabel=\sand the same label
+auto.removed=Disk removed from drive %ls: insert the next one
+auto.disc.removed=Disc removed from drive %ls: insert the next one
+auto.slow=The drive answers slowly: a change is noticed only if you remove the disk and then insert it
+auto.nodriver=Automatic read not available: fdrawcmd.sys does not answer on drive %ls. Press Read (F5) when the disk is in.
+auto.stopped=Automatic read stopped for this disk: press Read (F5) when you are ready.
+auto.typing=You are typing: the read starts when you press Enter or Read (F5).
+
+# the volume label
+label.reading=Reading the disk label...
+label.kept=Disk label: %ls (the one you typed stays)
+label.read=Label read from the disk: %ls
+label.none=The disk has no volume label
+label.nodisk=No disk in drive %ls
+label.unknown=Windows does not recognise the disk: the label is taken from the image after the read
+
+# the banners while waiting for a disk
+insert.floppy=Insert %ls %d of %d
+insert.floppy.manual=Then press Enter or Read (F5); F2 reads the label again, Alt+S skips the disk. Disk label (optional):
+insert.floppy.auto=Automatic read: as soon as the disk is in the drive it starts by itself. Enter or F5 reads now, Alt+S skips, Esc goes back to reading by hand. Disk label (optional):
+insert.floppy.auto.next=Automatic read: remove the disk just read and insert this one, it starts by itself. Enter or F5 reads now, Alt+S skips, Esc goes back to reading by hand. Disk label (optional):
+insert.optical=Insert %ls %d of %d in drive %ls
+insert.optical.one=Insert the %ls in drive %ls
+insert.optical.manual=Close the drive, wait until its light stops blinking, then press Enter or Read (F5); F2 reads the label again, Alt+S skips. Reading with DiscImageCreator takes 10 to 30 minutes. Label of the %ls (optional):
+insert.optical.auto=Automatic read: %ls, it starts by itself when Windows sees it (10 to 30 minutes). Enter or F5 reads now, Alt+S skips, Esc goes back to reading by hand. Label of the %ls (optional):
+insert.optical.first=insert the disc
+insert.optical.next=remove the disc just read and insert this one
+unreadable.title=%ls %d of %d: reading %ls is not available yet
+unreadable.text=The %ls stays to be read and the box stays open: resume it with Resume when RetroArchiver can read %ls. Press Skip to go on.
+duplicate.title=%ls is identical to %ls
+duplicate.other=another disk
+duplicate.text.auto=Remove the %ls and insert the right %ls: it starts by itself. Or Read again (F5) or Skip (Alt+S). The wrong reads are in set-aside, not deleted; if the two disks really are the same, read it again: the second time it is kept.
+duplicate.text=Remove the %ls, insert the right %ls and press Read again (F5), or Skip (Alt+S). The wrong reads are in set-aside, not deleted; if the two disks really are the same, read it again: the second time it is kept.
+retry.interrupted=%ls %d: read interrupted
+retry.failed=%ls %d: read failed
+retry.text.interrupted=Press Retry to read it again, Skip to go to the next one, or close the window: the box stays open and you resume it from the archive
+retry.text.floppy.auto=Check the disk and put it back in the drive: it starts by itself. Or press Retry (F5) or Skip (Alt+S).
+retry.text.floppy=Check the disk, put it back in the drive and press Retry (F5), or Skip (Alt+S).
+retry.text.why=%ls\nThen press Retry (F5), or Skip (Alt+S).
+retry.text.disc=Check the disc (the right type, clean), put it back in the drive and press Retry (F5), or Skip (Alt+S).
+
+# the banners during the read
+start.title=Preparing the box...
+start.text=Creating the package or resuming the open one.
+work.floppy.text=%ls %d of %d%ls. Do not remove the disk until the read is finished.
+work.reread=The reads do not match: one more read
+work.fragile=Fragile disk: a single careful read
+work.reading=Reading: do not remove the disk
+work.optical.text=%ls %d of %d in drive %ls%ls. Do not open the drive until the read is finished: a whole CD takes 10 to 30 minutes.
+work.optical.reread=One read is not enough: reading the %ls again to compare
+work.optical.reading=Reading: do not remove the %ls
+answer.skip=Skipping %ls.
+answer.later=%ls stays to be read.
+answer.closing=Closing the box...
+answer.closing.text=Computing the SHA-256 hashes of the files and checking them again.
+stop.title=Stopping the read...
+stop.dic=DiscImageCreator stops in a moment. The half-finished read does not stay in the package.
+stop.samdisk=SAMdisk stops in a moment.
+stop.compare=The comparison finishes by itself in a moment
+stop.compare.last=This is the last disk of the box: wait here for the outcome, there is no next disk to ask for
+stop.compare.next=When it asks for the next disk you can close the window: the box stays open and you resume it from the archive
+stop.none=There is no read to stop here
+stop.none.text=Wait a few seconds.
+
+# the log
+log.box.done=Box %ls: package closed and verified.
+log.box.complete=complete
+log.box.incomplete=incomplete
+log.error=ERROR: %ls
+banner.error=Error
+
+# the end of the box
+end.complete=Box complete: %ls of %d
+end.incomplete=Box closed incomplete: %ls of %d
+end.closed.text=%ls.\nThe package is closed and verified.%ls
+end.aside=\sThe reads set aside stay outside the data: look at them and, if they are not needed, delete them.
+end.later=\nResume it from the archive when RetroArchiver can read %ls.
+end.later.both=CDs and DVDs
+end.later.cd=CDs
+end.later.dvd=DVDs
+end.open=Box left open
+end.open.how=\nTo resume it: Archive, then double-click the box.
+end.failed=Archiving failed
+end.failed.text=%ls%lsRead the log below, fix the problem and try again with New box.
+summary.nothing=no media
+
+# questions and errors
+finish.ask.one=Still missing: %ls.\n\nIf the box is closed now it will be incomplete, with that medium missing, and it can no longer be resumed from the archive.\n\nClose the box?
+finish.ask.many=Still missing: %ls.\n\nIf the box is closed now it will be incomplete, with those media missing, and it can no longer be resumed from the archive.\n\nClose the box?
+close.ask=A box is in progress. Leave it open (it can be resumed from the archive) and close?
+error.memory=Not enough memory.
+error.nostart=Cannot start the session.

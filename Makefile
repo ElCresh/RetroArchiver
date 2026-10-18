@@ -19,6 +19,10 @@ WINFLAGS  = $(CFLAGS) $(INC) $(WINDEFS) -ffunction-sections -Wl,--gc-sections -s
 CORE   = $(wildcard src/core/*.c)
 CORE_H = $(wildcard src/core/*.h)
 UNIT   = $(wildcard tests/unit/*.c)
+# the window's languages: portable C, tested with the core
+LANG_C = src/gui/lang.c
+LANG_H = src/gui/lang.h src/gui/lang_en.h
+LANGS  = $(wildcard lang/*.lng)
 
 BIN = dskdiff.exe dskrun.exe RetroArchiver.exe
 NAT = build/dskdiff build/dskrun build/unit build/fake_samdisk build/fake_dic
@@ -35,14 +39,14 @@ dskrun.exe: src/dskrun.c $(CORE) $(CORE_H)
 	$(WINCC) $(WINFLAGS) -o $@ src/dskrun.c $(CORE)
 
 # the window: Windows only
-GUI     = src/gui/settings.c src/gui/settings.h
+GUI     = src/gui/settings.c src/gui/settings.h $(LANG_C) $(LANG_H)
 GUILIBS = -lcomctl32 -lshell32 -lole32 -lgdi32 -luser32
 
 build/retroarchiver_res.o: src/gui/retroarchiver.rc src/gui/retroarchiver.manifest src/gui/retroarchiver.ico | build
 	i686-w64-mingw32-windres -I src/gui -O coff -o $@ src/gui/retroarchiver.rc
 
 RetroArchiver.exe: src/gui/main.c $(GUI) build/retroarchiver_res.o $(CORE) $(CORE_H)
-	$(WINCC) $(WINFLAGS) -municode -mwindows -o $@ src/gui/main.c src/gui/settings.c build/retroarchiver_res.o $(CORE) $(GUILIBS)
+	$(WINCC) $(WINFLAGS) -municode -mwindows -o $@ src/gui/main.c src/gui/settings.c $(LANG_C) build/retroarchiver_res.o $(CORE) $(GUILIBS)
 
 native: $(NAT)
 
@@ -55,8 +59,8 @@ build/dskdiff: src/dskdiff.c $(CORE) $(CORE_H) | build
 build/dskrun: src/dskrun.c $(CORE) $(CORE_H) | build
 	$(CC) $(CFLAGS) $(INC) -o $@ src/dskrun.c $(CORE)
 
-build/unit: $(UNIT) $(CORE) $(CORE_H) tests/unit/unit.h build/fake_samdisk build/fake_dic | build
-	$(CC) $(CFLAGS) $(INC) -Itests/unit -o $@ $(UNIT) $(CORE)
+build/unit: $(UNIT) $(CORE) $(CORE_H) $(LANG_C) $(LANG_H) tests/unit/unit.h build/fake_samdisk build/fake_dic | build
+	$(CC) $(CFLAGS) $(INC) -Itests/unit -o $@ $(UNIT) $(CORE) $(LANG_C)
 
 build/fake_samdisk: tests/fake_samdisk.c | build
 	$(CC) $(CFLAGS) -o $@ $<
@@ -64,8 +68,8 @@ build/fake_samdisk: tests/fake_samdisk.c | build
 # core tests and fake SAMdisk for the XP VM
 xp-tests: build/unit.exe build/fake_samdisk.exe build/fake_dic.exe build/settings_test.exe build/tty_test.exe build/fdcheck.exe
 
-build/unit.exe: $(UNIT) $(CORE) $(CORE_H) tests/unit/unit.h | build
-	$(WINCC) $(WINFLAGS) -Itests/unit -o $@ $(UNIT) $(CORE)
+build/unit.exe: $(UNIT) $(CORE) $(CORE_H) $(LANG_C) $(LANG_H) tests/unit/unit.h | build
+	$(WINCC) $(WINFLAGS) -Itests/unit -o $@ $(UNIT) $(CORE) $(LANG_C)
 
 # the window settings in two ini files: Windows only (host or XP VM)
 build/settings_test.exe: tests/xp/test_settings.c $(GUI) | build
@@ -109,7 +113,7 @@ MAKENSIS   ?= makensis
 VERSION    := $(shell sed -n 's/^.define RA_VERSION "\(.*\)"/\1/p' src/core/version.h)
 VIVERSION  := $(shell echo $(VERSION) | awk '{printf "%d.%d.%d.0", substr($$0,1,2), substr($$0,3,2), substr($$0,5,2)}')
 SETUPTXT    = build/setup/README.txt build/setup/setup.txt build/setup/procedure.txt \
-              build/setup/THIRD-PARTY-NOTICES.txt
+              build/setup/THIRD-PARTY-NOTICES.txt $(patsubst lang/%,build/setup/lang/%,$(LANGS))
 
 setup: $(BIN) check-imports $(SETUPTXT)
 	python3 -I installer/third_party.py installer/third-party.txt $(THIRDPARTY) build/third-party
@@ -129,6 +133,11 @@ build/setup/procedure.txt: docs/procedure.md | build/setup
 	{ printf '\357\273\277'; sed 's/$$/\r/' $<; } > $@
 
 build/setup/%.txt: docs/%.md | build/setup
+	{ printf '\357\273\277'; sed 's/$$/\r/' $<; } > $@
+
+# the window's languages, also readable in XP's Notepad: BOM and CRLF (lang.c accepts both)
+build/setup/lang/%.lng: lang/%.lng
+	mkdir -p build/setup/lang
 	{ printf '\357\273\277'; sed 's/$$/\r/' $<; } > $@
 
 # in English and ASCII only: no BOM, also for the installer page

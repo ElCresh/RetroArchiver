@@ -103,7 +103,7 @@ typedef struct { const char *p; char *err; size_t errlen; } jp;
 static void fail(jp *s, const char *what)
 {
     if (s->err && s->errlen && !s->err[0])
-        snprintf(s->err, s->errlen, "%s vicino a \"%.20s\"", what, s->p);
+        snprintf(s->err, s->errlen, "%s near \"%.20s\"", what, s->p);
 }
 
 static void ws(jp *s)
@@ -174,7 +174,7 @@ static char *pstring(jp *s)
         case 't':  sb_puts(&b, "\t"); break;
         case 'u': {
             unsigned long cp, lo;
-            if (!hex4(s->p + 1, &cp)) { fail(s, "\\u non valido"); sb_free(&b); return NULL; }
+            if (!hex4(s->p + 1, &cp)) { fail(s, "invalid \\u"); sb_free(&b); return NULL; }
             s->p += 4;
             if (cp >= 0xD800 && cp <= 0xDBFF && s->p[1] == '\\' && s->p[2] == 'u' &&
                 hex4(s->p + 3, &lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
@@ -185,11 +185,11 @@ static char *pstring(jp *s)
             break;
         }
         default:
-            fail(s, "escape non valido"); sb_free(&b); return NULL;
+            fail(s, "invalid escape"); sb_free(&b); return NULL;
         }
         s->p++;
     }
-    if (*s->p != '"') { fail(s, "stringa non chiusa"); sb_free(&b); return NULL; }
+    if (*s->p != '"') { fail(s, "unterminated string"); sb_free(&b); return NULL; }
     s->p++;
     return b.s;
 }
@@ -209,11 +209,11 @@ static jval *pcontainer(jp *s, int depth, int obj)
         char *key = NULL;
         ws(s);
         if (obj) {
-            if (*s->p != '"') { fail(s, "manca il nome del membro"); json_free(v); return NULL; }
+            if (*s->p != '"') { fail(s, "missing member name"); json_free(v); return NULL; }
             key = pstring(s);
             if (!key) { json_free(v); return NULL; }
             ws(s);
-            if (*s->p != ':') { fail(s, "mancano i due punti"); free(key); json_free(v); return NULL; }
+            if (*s->p != ':') { fail(s, "missing colon"); free(key); json_free(v); return NULL; }
             s->p++;
         }
         e = pvalue(s, depth + 1);
@@ -224,7 +224,7 @@ static jval *pcontainer(jp *s, int depth, int obj)
         ws(s);
         if (*s->p == ',') { s->p++; continue; }
         if (*s->p == close) { s->p++; return v; }
-        fail(s, obj ? "manca , o }" : "manca , o ]");
+        fail(s, obj ? "missing , or }" : "missing , or ]");
         json_free(v);
         return NULL;
     }
@@ -234,7 +234,7 @@ static jval *pvalue(jp *s, int depth)
 {
     jval *v;
     ws(s);
-    if (depth > JSON_MAXDEPTH) { fail(s, "annidamento troppo profondo"); return NULL; }
+    if (depth > JSON_MAXDEPTH) { fail(s, "nesting too deep"); return NULL; }
     switch (*s->p) {
     case '{': return pcontainer(s, depth, 1);
     case '[': return pcontainer(s, depth, 0);
@@ -264,7 +264,7 @@ static jval *pvalue(jp *s, int depth)
             return v;
         }
     }
-    fail(s, "valore non valido");
+    fail(s, "invalid value");
     return NULL;
 }
 
@@ -276,7 +276,7 @@ jval *json_parse(const char *text, char *err, size_t errlen)
     v = pvalue(&s, 0);
     if (!v) return NULL;
     ws(&s);
-    if (*s.p) { fail(&s, "testo in piu' dopo il JSON"); json_free(v); return NULL; }
+    if (*s.p) { fail(&s, "extra text after the JSON"); json_free(v); return NULL; }
     return v;
 }
 

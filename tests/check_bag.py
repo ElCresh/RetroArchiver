@@ -7,6 +7,7 @@ runs wherever Python 3 is available.
 
 Without a profile, the one the bag declares in BagIt-Profile-Identifier
 is used: docs/bagit-profile.json for today's boxes (mixed ones too),
+docs/bagit-profile-2.json for those closed by version 261017,
 docs/bagit-profile-floppy.json for those closed before mixed media.
 """
 import hashlib
@@ -36,7 +37,8 @@ def read_manifest(path):
 
 DOCS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs")
 PROFILES = {
-    "urn:retroarchiver:bagit-profile:2": os.path.join(DOCS, "bagit-profile.json"),
+    "urn:retroarchiver:bagit-profile:3": os.path.join(DOCS, "bagit-profile.json"),
+    "urn:retroarchiver:bagit-profile:2": os.path.join(DOCS, "bagit-profile-2.json"),
     "urn:retroarchiver:bagit-profile:floppy:1": os.path.join(DOCS, "bagit-profile-floppy.json"),
 }
 
@@ -65,8 +67,9 @@ TAG_FILES = ("bagit.txt", "bag-info.txt", "manifest-sha256.txt", "tagmanifest-sh
 
 def check(bag, profile_path=None):
     errors = []
-    if os.path.exists(os.path.join(bag, ".in-corso")):
-        errors.append("the bag is still open (.in-corso)")
+    # .in-corso: the open marker of version 261017
+    if os.path.exists(os.path.join(bag, ".in-progress")) or os.path.exists(os.path.join(bag, ".in-corso")):
+        errors.append("the bag is still open (.in-progress)")
     for name in TAG_FILES:
         if not os.path.isfile(os.path.join(bag, name)):
             errors.append("%s is missing" % name)
@@ -91,7 +94,8 @@ def check(bag, profile_path=None):
             errors.append("%s is missing in bag-info.txt" % key)
         if key in info and "values" in rule and info[key] not in rule["values"]:
             errors.append("%s is %r, allowed %r" % (key, info[key], rule["values"]))
-    if profile["BagIt-Profile-Info"]["BagIt-Profile-Identifier"] == "urn:retroarchiver:bagit-profile:2":
+    if profile["BagIt-Profile-Info"]["BagIt-Profile-Identifier"] in ("urn:retroarchiver:bagit-profile:2",
+                                                                    "urn:retroarchiver:bagit-profile:3"):
         errors += check_media(info)
     payload = []
     for root, _, files in os.walk(os.path.join(bag, "data")):

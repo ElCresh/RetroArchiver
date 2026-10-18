@@ -1,29 +1,29 @@
 
-dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+dskdiff 1.2 - compares several reads of the same floppy
 
-  3 letture a confronto
+  3 reads compared
 
-  1) fixtures/weak_1.dsk           1.534.720 byte
-  2) fixtures/weak_2.dsk           1.534.720 byte
-  3) fixtures/weak_3.dsk           1.534.720 byte
+  1) fixtures/weak_1.dsk           1,534,720 bytes
+  2) fixtures/weak_2.dsk           1,534,720 bytes
+  3) fixtures/weak_3.dsk           1,534,720 bytes
 
-  tracce formattate: 80 cilindri, 18 settori per traccia
-  area standard considerata: 0-79
+  formatted tracks: 80 cylinders, 18 sectors per track
+  standard area checked: 0-79
 
-  cil  5 faccia 1 : 2 varianti su 3 letture   (2 concordano)
-  cil 30 faccia 0 : 3 varianti su 3 letture   (nessuna coppia concorde)
+  cyl  5 side 1 : 2 variants in 3 reads   (2 agree)
+  cyl 30 side 0 : 3 variants in 3 reads   (no two agree)
 
-  tracce instabili nei cilindri extra: 2 (rumore, normale)
+  unstable tracks in the extra cylinders: 2 (noise, normal)
 
-  ESITO: 2 tracce dell'area dati cambiano fra una lettura e l'altra.
+  RESULT: 2 tracks of the data area change from one read to the next.
 
-  Se le letture segnalano errori dc o nd, il supporto e' degradato:
-  rileggi con --retries=30 --rescans=5, pulisci le testine, prova un altro drive.
+  If the reads report dc or nd errors, the media is degraded:
+  reread with --retries=30 --rescans=5, clean the heads, try another drive.
 
-  Se invece NON segnalano errori, sono settori deboli scritti apposta
-  per essere instabili, cioe' una protezione anticopia. In quel caso
-  nessun tentativo in piu' aiuta: serve la cattura in flux.
+  If instead they report NO errors, these are weak sectors written
+  to be unstable on purpose, that is, copy protection. In that case
+  no amount of retries helps: you need a flux capture.
 
-  Dove alcune letture concordano puoi tenere la variante di maggioranza.
+  Where some reads agree you can keep the majority variant.
 
 exit=1

@@ -37,7 +37,7 @@ void test_compare(void)
     CHECK(run("fixtures/ident_a.dsk", "fixtures/ident_b.dsk", NULL, &r) == 0);
     CHECK(r.v == V_IDENTICAL);
     CHECK(r.stdcyl == 80 && r.heads == 2 && r.nsec0 == 18);
-    CHECK(strstr(r.detail.s, "IDENTICI") != NULL);
+    CHECK(strstr(r.detail.s, "IDENTICAL") != NULL);
     compare_free(&r);
 
     CHECK(run("fixtures/extra_a.dsk", "fixtures/extra_b.dsk", NULL, &r) == 0);
@@ -66,7 +66,7 @@ void test_compare(void)
 
     CHECK(run("fixtures/missing.dsk", "fixtures/ident_a.dsk", NULL, &r) == 2);
     CHECK(r.v == V_ERROR);
-    CHECK(strstr(r.detail.s, "non riesco ad aprire") != NULL);
+    CHECK(strstr(r.detail.s, "cannot open") != NULL);
     compare_free(&r);
 
     /* with names the text refers to reads by name, without the path */
@@ -80,7 +80,7 @@ void test_compare(void)
         compare_free(&r);
         compare_init(&r); r.names = nm;
         CHECK(compare_files(p, 3, 0, &r) == 2);
-        CHECK(strstr(r.detail.s, "non riesco ad aprire FLOPPY01_c.dsk") && !strstr(r.detail.s, "fixtures/"));
+        CHECK(strstr(r.detail.s, "cannot open FLOPPY01_c.dsk") && !strstr(r.detail.s, "fixtures/"));
         compare_free(&r);
         p[2] = "fixtures/weak_3.dsk";
         compare_init(&r); r.names = nm;

@@ -17,6 +17,34 @@
 
 #include <windows.h>
 
+/* Sections and keys, in English and grouped as the settings are shown:
+ * General, Floppy, Optical (CDs and DVDs), Automatic; Box keeps the last
+ * choices of the box preparation, Window the window's position.
+ * Version 261017 wrote them in Italian ([Archiviazione] Cartella...,
+ * [Finestra] X...): set_get still reads those when the English key is
+ * missing, set_convert turns a whole file into the English keys. */
+#define SEC_GENERAL   L"General"
+#define SEC_FLOPPY    L"Floppy"
+#define SEC_OPTICAL   L"Optical"
+#define SEC_AUTO      L"Automatic"
+#define SEC_BOX       L"Box"
+#define SEC_WINDOW    L"Window"
+
+#define KEY_FOLDER     L"ArchiveFolder"    /* General: where the boxes go */
+#define KEY_MAXREADS   L"MaxReads"         /* General */
+#define KEY_SOUNDS     L"Sounds"           /* General: 1 = Windows sounds */
+#define KEY_UILANG     L"UILanguage"       /* General: it, en...; empty = Windows' one */
+#define KEY_SAMDISK    L"SAMdisk"          /* Floppy */
+#define KEY_READFROM   L"ReadFrom"         /* Floppy: a:, or a .dsk file */
+#define KEY_FLOPPYNAME L"FileName"         /* Floppy: FLOPPY{nn} */
+#define KEY_DIC        L"DiscImageCreator" /* Optical */
+#define KEY_DRIVE      L"Drive"            /* Optical: D: */
+#define KEY_CDNAME     L"CDFileName"       /* Optical: CD{nn} */
+#define KEY_DVDNAME    L"DVDFileName"      /* Optical: DVD{nn} */
+#define KEY_ENABLED    L"Enabled"          /* Automatic */
+#define KEY_PLATFORM   L"Platform"         /* Box */
+#define KEY_LANGUAGE   L"Language"         /* Box: the box's language, not the program's */
+
 #define SET_FILE        L"RetroArchiver.ini"
 #define SET_USER_DIR    L"RetroArchiver"     /* inside Application Data */
 #define SET_ARCHIVE_DIR L"RetroArchive"      /* the default archive, at the root of the system drive */
@@ -42,6 +70,12 @@ int  set_put(const settings *s, const wchar_t *sec, const wchar_t *key, const wc
 int  set_save(const settings *s, const wchar_t *sec, const wchar_t *key,
               const wchar_t *def, const wchar_t *v);
 int  set_put_int(const settings *s, const wchar_t *sec, const wchar_t *key, int v);
+
+/* A file written with the Italian keys of 261017 becomes English: each old
+ * key's value goes to the new key (unless that is already there), the old
+ * key and the emptied old sections go. Running it again changes nothing.
+ * Returns the keys converted, 0 if none, -1 if the file cannot be written */
+int  set_convert(const wchar_t *file);
 
 /* "C:\RetroArchive": the archive folder on the system drive */
 void set_default_archive(wchar_t *out, int n);

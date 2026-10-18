@@ -42,44 +42,44 @@ absent() {
 
 echo
 echo "two reads"
-check "identical reads"              "IDENTICI"                    $FIX/ident_a.dsk $FIX/ident_b.dsk
-check "noise in the extra cylinders" "cilindri 0-79 sono IDENTICI" $FIX/extra_a.dsk $FIX/extra_b.dsk
-check "damage in the data area"      "differenze nei DATI"         $FIX/bad_a.dsk $FIX/bad_b.dsk
-check "different geometries"         "dimensioni diverse"          $FIX/short_a.dsk $FIX/short_b.dsk
+check "identical reads"              "IDENTICAL"                   $FIX/ident_a.dsk $FIX/ident_b.dsk
+check "noise in the extra cylinders" "cylinders 0-79 are IDENTICAL" $FIX/extra_a.dsk $FIX/extra_b.dsk
+check "damage in the data area"      "differences in the disk DATA"      $FIX/bad_a.dsk $FIX/bad_b.dsk
+check "different geometries"         "different sizes"       $FIX/short_a.dsk $FIX/short_b.dsk
 
 echo
 echo "40-cylinder format"
-check "720K, extra noise only"       "cilindri 0-39 sono IDENTICI" $FIX/dd40_a.dsk $FIX/dd40_b.dsk
-check "720K, real damage"            "differenze nei DATI"         $FIX/dd40bad_a.dsk $FIX/dd40bad_b.dsk
-check "720K single-sided"            "cilindri 0-39 sono IDENTICI" $FIX/ss40_a.dsk $FIX/ss40_b.dsk
+check "720K, extra noise only"       "cylinders 0-39 are IDENTICAL" $FIX/dd40_a.dsk $FIX/dd40_b.dsk
+check "720K, real damage"            "differences in the disk DATA"      $FIX/dd40bad_a.dsk $FIX/dd40bad_b.dsk
+check "720K single-sided"            "cylinders 0-39 are IDENTICAL" $FIX/ss40_a.dsk $FIX/ss40_b.dsk
 
 echo
 echo "three or more reads"
-check "three reads, healthy disk"    "area dati e' IDENTICA"       $FIX/good_1.dsk $FIX/good_2.dsk $FIX/good_3.dsk
-check "track without a majority"     "nessuna coppia concorde"     $FIX/weak_1.dsk $FIX/weak_2.dsk $FIX/weak_3.dsk
-check "track with a majority"        "2 concordano"                $FIX/weak_1.dsk $FIX/weak_2.dsk $FIX/weak_3.dsk
-check "growing track"                "DIMENSIONE DIVERSA"          $FIX/grow_1.dsk $FIX/grow_2.dsk $FIX/grow_3.dsk
+check "three reads, healthy disk"    "data area is IDENTICAL"       $FIX/good_1.dsk $FIX/good_2.dsk $FIX/good_3.dsk
+check "track without a majority"     "no two agree"     $FIX/weak_1.dsk $FIX/weak_2.dsk $FIX/weak_3.dsk
+check "track with a majority"        "2 agree"                $FIX/weak_1.dsk $FIX/weak_2.dsk $FIX/weak_3.dsk
+check "growing track"                "SIZE DIFFERS"          $FIX/grow_1.dsk $FIX/grow_2.dsk $FIX/grow_3.dsk
 
 echo
 echo "regressions"
-absent "no false positive on the size" "DIMENSIONE DIVERSA" \
+absent "no false positive on the size" "SIZE DIFFERS" \
        $FIX/weak_1.dsk $FIX/weak_2.dsk $FIX/weak_3.dsk
 # noise tracks must not be counted as formatted:
 # if detection breaks, 83 would show up here instead of 80
-check  "detection ignores noise tracks"  "tracce formattate: 80 cilindri" \
+check  "detection ignores noise tracks"  "formatted tracks: 80 cylinders" \
        $FIX/extra_a.dsk $FIX/extra_b.dsk
-check  "720K detection"                  "tracce formattate: 40 cilindri" \
+check  "720K detection"                  "formatted tracks: 40 cylinders" \
        $FIX/dd40_a.dsk $FIX/dd40_b.dsk
 
 echo
 echo "arguments and errors"
-check "no arguments"        "uso: dskdiff"
-check "a single file"       "uso: dskdiff"         $FIX/ident_a.dsk
-check "missing file"        "non riesco ad aprire" $FIX/missing.dsk $FIX/ident_a.dsk
+check "no arguments"        "usage: dskdiff"
+check "a single file"       "usage: dskdiff"         $FIX/ident_a.dsk
+check "missing file"        "cannot open" $FIX/missing.dsk $FIX/ident_a.dsk
 printf 'x' > $FIX/_truncated.dsk
-check "file too short"      "troppo corto"         $FIX/_truncated.dsk $FIX/ident_a.dsk
+check "file too short"      "is too short"         $FIX/_truncated.dsk $FIX/ident_a.dsk
 rm -f $FIX/_truncated.dsk
-check "forced threshold -c" "differenze nei DATI"  $FIX/dd40bad_a.dsk $FIX/dd40bad_b.dsk -c 20
+check "forced threshold -c" "differences in the disk DATA"  $FIX/dd40bad_a.dsk $FIX/dd40bad_b.dsk -c 20
 
 echo
 if [ $fail -eq 0 ]; then

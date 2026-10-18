@@ -10,6 +10,10 @@
  * Five views: the archive (the first one, with the boxes already done),
  * setup, waiting for the disk, reading, end. The window is resizable:
  * layout() recomputes the positions on every WM_SIZE.
+ *
+ * The texts come from lang.c, tr(T_...): the language chosen in setup or
+ * Windows' one, English compiled in as the fallback. The core's texts (log
+ * lines, the archive's outcomes and advice) stay as the core writes them.
  */
 #include <windows.h>
 #include <commctrl.h>
@@ -25,6 +29,7 @@
 #include "core/fsu8.h"
 #include "core/archive.h"
 #include "gui/settings.h"
+#include "gui/lang.h"
 
 #define WM_APP_EVENT (WM_APP + 1)   /* there is an event in g_qhead   */
 #define WM_APP_WAIT  (WM_APP + 2)   /* the requested medium is in g_turn_in */
@@ -62,7 +67,7 @@ enum {
     ID_TITLE = 100, ID_RESUME, ID_PLATFORM, ID_COUNT, ID_PUBLISHER, ID_YEAR,
     ID_LANGUAGE, ID_EDITION, ID_NOTES, ID_MEDIA, ID_CD, ID_DVD, ID_ICFLOP, ID_ICCD, ID_ICDVD,
     ID_HINT, ID_DIR, ID_BROWSE, ID_MAXREAD, ID_SAMDISK, ID_SOURCE, ID_DIC, ID_DRIVE, ID_SOUNDS, ID_AUTO, ID_BAGPATH,
-    ID_BACK, ID_START,
+    ID_UILANG, ID_BACK, ID_START,
     /* session */
     ID_BANNER = 200, ID_PILLS, ID_LABEL, ID_NOTE, ID_READ, ID_SKIP, ID_FINISH,
     ID_STOP, ID_LIST, ID_LOG, ID_NEW, ID_OPEN, ID_BOXBAR, ID_BOXTXT,
@@ -118,14 +123,11 @@ static disk_turn g_turn_in, g_turn;     /* the requested medium: from the worker
 static disk_info g_disk[META_MAXDISK + 1];
 static int      g_total, g_last_done, g_cur;
 static int      g_bag_closed, g_bag_complete, g_reread, g_fragile;
-static int      g_aside_n;              /* files in messi-da-parte in the closed bag */
+static int      g_aside_n;              /* files set aside in the closed bag */
 static wchar_t  g_phase_name[128], g_last_err[600];
 static wchar_t  g_drive_w[8];           /* the CD and DVD drive, "D:", for the texts */
 static wchar_t  g_why[600];             /* why DiscImageCreator did not read the disc */
 static DWORD    g_t_sess, g_t_phase;
-
-static const wchar_t HINT[] =
-    L"Per continuare un cofanetto lasciato a metà: Riprendi..., oppure lo stesso titolo esatto.";
 
 /* setup, waiting for the disk, reading, end; and the archive, where it starts */
 enum { V_SETUP, V_WAIT, V_WORK, V_END, V_ARCHIVE };
@@ -205,17 +207,28 @@ static void fmt_time(DWORD ms, wchar_t *out, int n)
     out[n - 1] = 0;
 }
 
-/* "1 pulito" / "2 puliti" */
-static void plural(wchar_t *out, int n, int k, const wchar_t *one, const wchar_t *many)
+/* "1 clean" / "2 clean": the two texts are T_... ids */
+static void plural(wchar_t *out, int n, int k, int one, int many)
 {
-    _snwprintf(out, n, L"%d %ls", k, k == 1 ? one : many);
+    _snwprintf(out, n, L"%d %ls", k, tr(k == 1 ? one : many));
     out[n - 1] = 0;
 }
 
 /* ---- media kinds ---- */
 
-static const wchar_t *const kind_w[MEDIA_KINDS] = { L"floppy", L"CD", L"DVD" };
-static const wchar_t *const kind_cap[MEDIA_KINDS] = { L"Floppy", L"CD", L"DVD" };
+/* the name of a kind: "floppy", "floppies" (KN_MANY), "Floppy" (KN_CAP,
+ * at the start of a sentence) */
+enum { KN_ONE, KN_MANY, KN_CAP };
+static const int kind_ids[MEDIA_KINDS][3] = {
+    { T_KIND_FLOPPY, T_KIND_FLOPPY_PL, T_KIND_FLOPPY_CAP },
+    { T_KIND_CD, T_KIND_CD_PL, T_KIND_CD_CAP },
+    { T_KIND_DVD, T_KIND_DVD_PL, T_KIND_DVD_CAP }
+};
+
+static const wchar_t *kind_name(int kind, int form)
+{
+    return tr(kind_ids[kind][form]);
+}
 
 /* kind, and number within the kind, of medium n of the current box */
 static void slot(int n, int *kind, int *num)
@@ -228,29 +241,47 @@ static void slot_name(int n, int cap, wchar_t *out, int len)
 {
     int kind, num;
     slot(n, &kind, &num);
-    _snwprintf(out, len, L"%ls %d", cap ? kind_cap[kind] : kind_w[kind], num);
+    _snwprintf(out, len, L"%ls %d", kind_name(kind, cap ? KN_CAP : KN_ONE), num);
     out[len - 1] = 0;
 }
 
-/* "3 floppy + 1 CD"; empty if there are no media */
+/* "3 floppies + 1 CD"; empty if there are no media */
 static void comp_text(const int c[MEDIA_KINDS], wchar_t *out, int len)
 {
-    wchar_t p[32]; int k;
+    wchar_t p[64]; int k;
     out[0] = 0;
     for (k = 0; k < MEDIA_KINDS; k++) {
         if (!c[k]) continue;
-        _snwprintf(p, 32, L"%ls%d %ls", out[0] ? L" + " : L"", c[k], kind_w[k]); p[31] = 0;
+        _snwprintf(p, 64, L"%ls%d %ls", out[0] ? L" + " : L"", c[k], kind_name(k, c[k] == 1 ? KN_ONE : KN_MANY));
+        p[63] = 0;
         wcsncat(out, p, len - wcslen(out) - 1);
     }
 }
 
-/* all of the same kind: its name ("floppy"); otherwise "supporto" or "supporti" */
+/* all of the same kind: its name ("floppy"); otherwise "medium" or "media" */
 static const wchar_t *noun(const int c[MEDIA_KINDS], int many)
 {
     int k, kinds = 0, last = MEDIA_FLOPPY;
     for (k = 0; k < MEDIA_KINDS; k++) if (c[k]) { kinds++; last = k; }
-    if (kinds > 1) return many ? L"supporti" : L"supporto";
-    return kind_w[last];
+    if (kinds > 1) return tr(many ? T_KIND_MIXED_PL : T_KIND_MIXED);
+    return kind_name(last, many ? KN_MANY : KN_ONE);
+}
+
+/* the core names the phases in English ("Scan", "Read 2"): the window
+ * keeps those names and shows them in its language */
+static void phase_text(const wchar_t *p, wchar_t *out, int n)
+{
+    static const struct { const wchar_t *core; int id; } names[] = {
+        { L"Scan", T_PHASE_SCAN }, { L"Compare", T_PHASE_COMPARE }, { L"C2 check", T_PHASE_C2 },
+        { L"Redump", T_PHASE_REDUMP }, { L"TOC", T_PHASE_TOC }, { L"Outcome", T_PHASE_RESULT }, { NULL, 0 }
+    };
+    int i;
+    if (!wcsncmp(p, L"Read ", 5)) _snwprintf(out, n, tr(T_PHASE_READ), _wtoi(p + 5));
+    else {
+        for (i = 0; names[i].core && wcscmp(p, names[i].core); i++) ;
+        wcsncpy(out, names[i].core ? tr(names[i].id) : p, n);
+    }
+    out[n - 1] = 0;
 }
 
 /* ---- log at the bottom of the window ---- */
@@ -421,10 +452,43 @@ static HWND make(const wchar_t *cls, const wchar_t *text, DWORD style, int x, in
     return c;
 }
 
-static void field(const wchar_t *label, int y, int id, const wchar_t *value, int w)
+/* the controls with a fixed text, set again when the language changes */
+#define MAX_FIXED 80
+static struct { int ctl, text; } g_fixed[MAX_FIXED];
+static int g_nfixed;
+
+static void fixed_add(int ctl, int text)
+{
+    if (g_nfixed >= MAX_FIXED) return;
+    g_fixed[g_nfixed].ctl = ctl;
+    g_fixed[g_nfixed].text = text;
+    g_nfixed++;
+}
+
+/* make, with the text in the current language */
+static HWND make_t(const wchar_t *cls, int text, DWORD style, int x, int y, int w, int h, int id)
+{
+    fixed_add(id, text);
+    return make(cls, tr(text), style, x, y, w, h, id);
+}
+
+static void fixed_texts(void)
+{
+    int i;
+    for (i = 0; i < g_nfixed; i++) SetDlgItemTextW(g_wnd, g_fixed[i].ctl, tr(g_fixed[i].text));
+}
+
+/* label (a program's name, the same in every language) and edit field */
+static void field_w(const wchar_t *label, int y, int id, const wchar_t *value, int w)
 {
     make(L"STATIC", label, 0, 12, y + 3, 110, 18, id + LBL);
     make(L"EDIT", value, WS_TABSTOP | ES_AUTOHSCROLL, 125, y, w, 21, id);
+}
+
+static void field(int label, int y, int id, const wchar_t *value, int w)
+{
+    field_w(tr(label), y, id, value, w);
+    fixed_add(id + LBL, label);
 }
 
 /* the user cannot type more than what gets saved: up to 3 UTF-8 bytes
@@ -449,48 +513,51 @@ static void build_setup(void)
     HWND cb; int i;
     wchar_t arc[MAX_PATH];
 
-    field(L"Titolo *", 24, ID_TITLE, L"", 380);
-    make(L"BUTTON", L"Riprendi...", WS_TABSTOP, 520, 23, 95, 23, ID_RESUME);
-    make(L"STATIC", L"Piattaforma *", 0, 12, 55, 110, 18, ID_PLATFORM + LBL);
+    field(T_SETUP_TITLE, 24, ID_TITLE, L"", 380);
+    make_t(L"BUTTON", T_SETUP_RESUME, WS_TABSTOP, 520, 23, 95, 23, ID_RESUME);
+    make_t(L"STATIC", T_SETUP_PLATFORM, 0, 12, 55, 110, 18, ID_PLATFORM + LBL);
     cb = make(L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWN | WS_VSCROLL, 125, 52, 200, 200, ID_PLATFORM);
     for (i = 0; platforms[i]; i++) SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)platforms[i]);
-    make(L"STATIC", L"Anno", 0, 345, 55, 60, 18, ID_YEAR + LBL);
+    make_t(L"STATIC", T_SETUP_YEAR, 0, 345, 55, 60, 18, ID_YEAR + LBL);
     make(L"EDIT", L"", WS_TABSTOP | ES_NUMBER, 410, 52, 50, 21, ID_YEAR);
-    field(L"Editore", 82, ID_PUBLISHER, L"", 200);
-    make(L"STATIC", L"Lingua", 0, 345, 85, 60, 18, ID_LANGUAGE + LBL);
+    field(T_SETUP_PUBLISHER, 82, ID_PUBLISHER, L"", 200);
+    make_t(L"STATIC", T_SETUP_LANGUAGE, 0, 345, 85, 60, 18, ID_LANGUAGE + LBL);
     make(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, 410, 82, 210, 21, ID_LANGUAGE);
-    field(L"Versione", 110, ID_EDITION, L"", 200);
-    field(L"Note", 138, ID_NOTES, L"", 495);
+    field(T_SETUP_EDITION, 110, ID_EDITION, L"", 200);
+    field(T_SETUP_NOTES, 138, ID_NOTES, L"", 495);
     /* the make-up: how many floppies, CDs and DVDs, each with its kind's symbol */
-    make(L"STATIC", L"Supporti *", 0, 12, 169, 110, 18, ID_MEDIA);
+    make_t(L"STATIC", T_SETUP_MEDIA, 0, 12, 169, 110, 18, ID_MEDIA);
     make(L"STATIC", L"", SS_OWNERDRAW, 125, 169, 14, 14, ID_ICFLOP);
-    make(L"STATIC", L"Floppy", 0, 143, 169, 40, 18, ID_COUNT + LBL);
+    make_t(L"STATIC", T_KIND_FLOPPY_CAP, 0, 143, 169, 40, 18, ID_COUNT + LBL);
     make(L"EDIT", L"0", WS_TABSTOP | ES_NUMBER, 185, 166, 36, 21, ID_COUNT);
     make(L"STATIC", L"", SS_OWNERDRAW, 239, 169, 14, 14, ID_ICCD);
-    make(L"STATIC", L"CD", 0, 257, 169, 22, 18, ID_CD + LBL);
+    make_t(L"STATIC", T_KIND_CD_CAP, 0, 257, 169, 22, 18, ID_CD + LBL);
     make(L"EDIT", L"0", WS_TABSTOP | ES_NUMBER, 281, 166, 36, 21, ID_CD);
     make(L"STATIC", L"", SS_OWNERDRAW, 335, 169, 14, 14, ID_ICDVD);
-    make(L"STATIC", L"DVD", 0, 353, 169, 28, 18, ID_DVD + LBL);
+    make_t(L"STATIC", T_KIND_DVD_CAP, 0, 353, 169, 28, 18, ID_DVD + LBL);
     make(L"EDIT", L"0", WS_TABSTOP | ES_NUMBER, 383, 166, 36, 21, ID_DVD);
-    make(L"STATIC", HINT, SS_NOPREFIX, 12, 198, 610, 18, ID_HINT);
+    make_t(L"STATIC", T_SETUP_HINT, SS_NOPREFIX, 12, 198, 610, 18, ID_HINT);
 
     set_default_archive(arc, MAX_PATH);         /* with no ini at all: C:\RetroArchive */
-    field(L"Cartella", 254, ID_DIR, arc, 460);
+    field(T_SETUP_FOLDER, 254, ID_DIR, arc, 460);
     make(L"BUTTON", L"...", WS_TABSTOP, 590, 254, 30, 21, ID_BROWSE);
-    field(L"Letture max", 282, ID_MAXREAD, L"3", 40);
+    field(T_SETUP_MAXREAD, 282, ID_MAXREAD, L"3", 40);
+    /* the program's own language, on the right of the short field */
+    make_t(L"STATIC", T_SETUP_UILANG, SS_RIGHT, 330, 285, 140, 18, ID_UILANG + LBL);
+    make(L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 474, 282, 150, 200, ID_UILANG);
     /* the two programs, each with where it reads from: same row, same label */
-    field(L"SAMdisk", 310, ID_SAMDISK, L"samdisk", 300);
-    make(L"STATIC", L"Leggi da", 0, 435, 313, 60, 18, ID_SOURCE + LBL);
+    field_w(L"SAMdisk", 310, ID_SAMDISK, L"samdisk", 300);
+    make_t(L"STATIC", T_SETUP_READFROM, 0, 435, 313, 60, 18, ID_SOURCE + LBL);
     make(L"EDIT", L"a:", WS_TABSTOP | ES_AUTOHSCROLL, 500, 310, 120, 21, ID_SOURCE);
-    field(L"DiscImageCreator", 338, ID_DIC, L"DiscImageCreator", 300);
-    make(L"STATIC", L"Leggi da", 0, 435, 341, 60, 18, ID_DRIVE + LBL);
+    field_w(L"DiscImageCreator", 338, ID_DIC, L"DiscImageCreator", 300);
+    make_t(L"STATIC", T_SETUP_READFROM, 0, 435, 341, 60, 18, ID_DRIVE + LBL);
     make(L"EDIT", L"D:", WS_TABSTOP | ES_AUTOHSCROLL, 500, 338, 120, 21, ID_DRIVE);
     make(L"STATIC", L"", SS_NOPREFIX | SS_PATHELLIPSIS, 12, 369, 610, 18, ID_BAGPATH);
 
-    make(L"BUTTON", L"Suoni di Windows", WS_TABSTOP | BS_AUTOCHECKBOX, 12, 428, 140, 20, ID_SOUNDS);
-    make(L"BUTTON", L"Automatico: legge da solo il disco nuovo", WS_TABSTOP | BS_AUTOCHECKBOX, 160, 428, 260, 20, ID_AUTO);
-    make(L"BUTTON", L"Archivio", WS_TABSTOP, 426, 423, 100, 28, ID_BACK);
-    make(L"BUTTON", L"Inizia", WS_TABSTOP | BS_DEFPUSHBUTTON, 534, 423, 100, 28, ID_START);
+    make_t(L"BUTTON", T_SETUP_SOUNDS, WS_TABSTOP | BS_AUTOCHECKBOX, 12, 428, 140, 20, ID_SOUNDS);
+    make_t(L"BUTTON", T_SETUP_AUTO, WS_TABSTOP | BS_AUTOCHECKBOX, 160, 428, 260, 20, ID_AUTO);
+    make_t(L"BUTTON", T_SETUP_ARCHIVE, WS_TABSTOP, 426, 423, 100, 28, ID_BACK);
+    make_t(L"BUTTON", T_SETUP_START, WS_TABSTOP | BS_DEFPUSHBUTTON, 534, 423, 100, 28, ID_START);
 }
 
 /* list dots: grey, green, ochre, red; blue for open boxes */
@@ -528,15 +595,32 @@ static HIMAGELIST make_dots(void)
     return il;
 }
 
-static void add_column(HWND lv, int i, const wchar_t *name, int w, int fmt)
+static void add_column(HWND lv, int i, int name, int w, int fmt)
 {
     LVCOLUMNW c;
     memset(&c, 0, sizeof(c));
     c.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT;
     c.fmt = fmt;
     c.cx = w;
-    c.pszText = (wchar_t *)name;
+    c.pszText = (wchar_t *)tr(name);
     SendMessageW(lv, LVM_INSERTCOLUMNW, i, (LPARAM)&c);
+}
+
+/* the column titles of the two lists, for a language change */
+static const int list_cols[] = { T_COL_MEDIUM, T_COL_LABEL, T_COL_READS, T_COL_OUTCOME, -1 };
+static const int arc_cols[] = { T_COL_TITLE, T_COL_PLATFORM, T_COL_YEAR, T_COL_MEDIA, T_COL_OUTCOME,
+                                T_COL_ARCHIVED, -1 };
+
+static void column_titles(HWND lv, const int *ids)
+{
+    LVCOLUMNW c;
+    int i;
+    for (i = 0; ids[i] >= 0; i++) {
+        memset(&c, 0, sizeof(c));
+        c.mask = LVCF_TEXT;
+        c.pszText = (wchar_t *)tr(ids[i]);
+        SendMessageW(lv, LVM_SETCOLUMNW, i, (LPARAM)&c);
+    }
 }
 
 static void build_list(void)
@@ -546,10 +630,10 @@ static void build_list(void)
     SendMessageW(g_list, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
                  LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
     SendMessageW(g_list, LVM_SETIMAGELIST, LVSIL_SMALL, (LPARAM)make_dots());
-    add_column(g_list, 0, L"Supporto", 130, LVCFMT_LEFT);
-    add_column(g_list, 1, L"Etichetta", 200, LVCFMT_LEFT);
-    add_column(g_list, 2, L"Letture", 60, LVCFMT_RIGHT);
-    add_column(g_list, 3, L"Esito", 190, LVCFMT_LEFT);
+    add_column(g_list, 0, list_cols[0], 130, LVCFMT_LEFT);
+    add_column(g_list, 1, list_cols[1], 200, LVCFMT_LEFT);
+    add_column(g_list, 2, list_cols[2], 60, LVCFMT_RIGHT);
+    add_column(g_list, 3, list_cols[3], 190, LVCFMT_LEFT);
 }
 
 /* the archive: folder, search, summary, list of boxes, the chosen box */
@@ -565,13 +649,11 @@ static RECT     g_empty;                /* the white panel of the empty archive 
 
 static void build_archive(void)
 {
-    make(L"STATIC", L"Archivio", 0, 8, 0, 52, 18, ID_ADIR + LBL);
+    make_t(L"STATIC", T_ARC_FOLDER, 0, 8, 0, 52, 18, ID_ADIR + LBL);
     make(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, 62, 0, 300, 21, ID_ADIR);
     make(L"BUTTON", L"...", WS_TABSTOP, 0, 0, 30, 21, ID_ABROWSE);
-    make(L"STATIC", L"Cerca", 0, 0, 0, 34, 18, ID_ASEARCH + LBL);
+    make_t(L"STATIC", T_ARC_SEARCH, 0, 0, 0, 34, 18, ID_ASEARCH + LBL);
     make(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 150, 21, ID_ASEARCH);
-    /* with the comctl32 6 manifest the grey placeholder text works on XP too */
-    SendDlgItemMessageW(g_wnd, ID_ASEARCH, EM_SETCUEBANNER, 0, (LPARAM)L"titolo, editore...");
     make(L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | CBS_SORT | WS_VSCROLL, 0, 0, 150, 240, ID_APLAT);
     g_asum = make(L"STATIC", L"", SS_OWNERDRAW, 8, 0, 600, 22, ID_ASUM);
     g_alist = make(WC_LISTVIEWW, L"", WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS | LVS_SINGLESEL |
@@ -579,42 +661,56 @@ static void build_archive(void)
     SendMessageW(g_alist, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
                  LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
     SendMessageW(g_alist, LVM_SETIMAGELIST, LVSIL_SMALL, (LPARAM)make_dots());
-    add_column(g_alist, 0, L"Titolo", 220, LVCFMT_LEFT);
-    add_column(g_alist, 1, L"Piattaforma", 92, LVCFMT_LEFT);
-    add_column(g_alist, 2, L"Anno", 44, LVCFMT_LEFT);
-    add_column(g_alist, 3, L"Supporti", 132, LVCFMT_LEFT);
-    add_column(g_alist, 4, L"Esito", 168, LVCFMT_LEFT);
-    add_column(g_alist, 5, L"Archiviato", 76, LVCFMT_LEFT);
+    add_column(g_alist, 0, arc_cols[0], 220, LVCFMT_LEFT);
+    add_column(g_alist, 1, arc_cols[1], 92, LVCFMT_LEFT);
+    add_column(g_alist, 2, arc_cols[2], 44, LVCFMT_LEFT);
+    add_column(g_alist, 3, arc_cols[3], 132, LVCFMT_LEFT);
+    add_column(g_alist, 4, arc_cols[4], 168, LVCFMT_LEFT);
+    add_column(g_alist, 5, arc_cols[5], 76, LVCFMT_LEFT);
     g_adetail = make(L"STATIC", L"", SS_OWNERDRAW, 0, 0, 400, 140, ID_ADETAIL);
-    make(L"BUTTON", L"Riprendi", WS_TABSTOP, 0, 0, 130, 26, ID_ARESUME);
-    make(L"BUTTON", L"Apri cartella", WS_TABSTOP, 0, 0, 130, 26, ID_AOPEN);
-    make(L"BUTTON", L"Ricontrolla impronte", WS_TABSTOP, 0, 0, 130, 26, ID_AVERIFY);
-    make(L"STATIC", L"Doppio clic su un cofanetto aperto per riprenderlo dal supporto che manca.",
-         SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_AHINT);
-    make(L"BUTTON", L"Nuovo cofanetto", WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 150, 28, ID_ANEW);
+    make_t(L"BUTTON", T_ARC_RESUME, WS_TABSTOP, 0, 0, 130, 26, ID_ARESUME);
+    make_t(L"BUTTON", T_ARC_OPEN, WS_TABSTOP, 0, 0, 130, 26, ID_AOPEN);
+    make_t(L"BUTTON", T_ARC_VERIFY, WS_TABSTOP, 0, 0, 130, 26, ID_AVERIFY);
+    make_t(L"STATIC", T_ARC_HINT, SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_AHINT);
+    make_t(L"BUTTON", T_ARC_NEW, WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 150, 28, ID_ANEW);
     SendDlgItemMessageW(g_wnd, ID_ARESUME, WM_SETFONT, (WPARAM)g_bold, TRUE);
     SendDlgItemMessageW(g_wnd, ID_ANEW, WM_SETFONT, (WPARAM)g_bold, TRUE);
 }
 
 /* the square magnifier button next to the Etichetta field: the magnifier
  * is the Webdings "L", which XP has too; the tooltip says what it does */
-static void label_button(void)
+static HWND g_tip;
+
+static void label_tip(void)
 {
-    HWND b = make(L"BUTTON", L"L", WS_TABSTOP, 0, 0, 24, 21, ID_LABELREAD);
-    HWND tip; TOOLINFOW ti;
-    HFONT f = CreateFontW(-15, 0, 0, 0, FW_NORMAL, 0, 0, 0, SYMBOL_CHARSET, OUT_DEFAULT_PRECIS,
-                          CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, L"Webdings");
-    if (f) SendMessageW(b, WM_SETFONT, (WPARAM)f, TRUE);
-    tip = CreateWindowExW(0, TOOLTIPS_CLASSW, NULL, WS_POPUP | TTS_ALWAYSTIP, 0, 0, 0, 0,
-                          g_wnd, NULL, GetModuleHandleW(NULL), NULL);
-    if (!tip) return;
+    TOOLINFOW ti;
+    if (!g_tip) return;
     memset(&ti, 0, sizeof(ti));
     ti.cbSize = TTTOOLINFOW_V2_SIZE;        /* works with common controls 5 too */
     ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
     ti.hwnd = g_wnd;
+    ti.uId = (UINT_PTR)GetDlgItem(g_wnd, ID_LABELREAD);
+    ti.lpszText = (wchar_t *)tr(T_WAIT_LABEL_TIP);
+    SendMessageW(g_tip, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
+}
+
+static void label_button(void)
+{
+    HWND b = make(L"BUTTON", L"L", WS_TABSTOP, 0, 0, 24, 21, ID_LABELREAD);
+    TOOLINFOW ti;
+    HFONT f = CreateFontW(-15, 0, 0, 0, FW_NORMAL, 0, 0, 0, SYMBOL_CHARSET, OUT_DEFAULT_PRECIS,
+                          CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, L"Webdings");
+    if (f) SendMessageW(b, WM_SETFONT, (WPARAM)f, TRUE);
+    g_tip = CreateWindowExW(0, TOOLTIPS_CLASSW, NULL, WS_POPUP | TTS_ALWAYSTIP, 0, 0, 0, 0,
+                            g_wnd, NULL, GetModuleHandleW(NULL), NULL);
+    if (!g_tip) return;
+    memset(&ti, 0, sizeof(ti));
+    ti.cbSize = TTTOOLINFOW_V2_SIZE;
+    ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+    ti.hwnd = g_wnd;
     ti.uId = (UINT_PTR)b;
-    ti.lpszText = (wchar_t *)L"Leggi l'etichetta dal disco inserito (F2)";
-    SendMessageW(tip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+    ti.lpszText = (wchar_t *)tr(T_WAIT_LABEL_TIP);
+    SendMessageW(g_tip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
 }
 
 /* running session: banner, phases, bars, list, log, buttons */
@@ -622,26 +718,26 @@ static void build_work(void)
 {
     g_banner = make(L"STATIC", L"", SS_OWNERDRAW, 8, 8, 600, 64, ID_BANNER);
     g_pills = make(L"STATIC", L"", SS_OWNERDRAW, 8, 80, 600, 24, ID_PILLS);
-    make(L"STATIC", L"Etichetta", 0, 8, 0, 60, 18, ID_LABEL + LBL);
+    make_t(L"STATIC", T_WAIT_LABEL, 0, 8, 0, 60, 18, ID_LABEL + LBL);
     g_label = make(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, 70, 0, 200, 21, ID_LABEL);
     label_button();
-    make(L"STATIC", L"Nota", 0, 280, 0, 40, 18, ID_NOTE + LBL);
+    make_t(L"STATIC", T_WAIT_NOTE, 0, 280, 0, 40, 18, ID_NOTE + LBL);
     g_note = make(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, 320, 0, 280, 21, ID_NOTE);
     build_list();
-    make(L"BUTTON", L"Fine cofanetto", WS_TABSTOP, 0, 0, 110, 26, ID_FINISH);
-    make(L"BUTTON", L"Salta", WS_TABSTOP, 0, 0, 90, 26, ID_SKIP);
-    make(L"BUTTON", L"Leggi", WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 90, 26, ID_READ);
-    make(L"BUTTON", L"Interrompi", WS_TABSTOP, 0, 0, 100, 26, ID_STOP);
-    make(L"BUTTON", L"Apri cartella", WS_TABSTOP, 0, 0, 110, 26, ID_OPEN);
-    make(L"BUTTON", L"Nuovo cofanetto", WS_TABSTOP, 0, 0, 120, 26, ID_NEW);
-    make(L"BUTTON", L"Archivio", WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 100, 26, ID_TOARCH);
+    make_t(L"BUTTON", T_BTN_FINISH, WS_TABSTOP, 0, 0, 110, 26, ID_FINISH);
+    make_t(L"BUTTON", T_BTN_SKIP, WS_TABSTOP, 0, 0, 90, 26, ID_SKIP);
+    make_t(L"BUTTON", T_BTN_READ, WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 90, 26, ID_READ);
+    make_t(L"BUTTON", T_BTN_STOP, WS_TABSTOP, 0, 0, 100, 26, ID_STOP);
+    make_t(L"BUTTON", T_BTN_OPEN, WS_TABSTOP, 0, 0, 110, 26, ID_OPEN);
+    make_t(L"BUTTON", T_BTN_NEW, WS_TABSTOP, 0, 0, 120, 26, ID_NEW);
+    make_t(L"BUTTON", T_BTN_ARCHIVE, WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 100, 26, ID_TOARCH);
 
-    make(L"STATIC", L"Disco", 0, 0, 0, 60, 18, ID_DISKBAR + LBL);
+    make_t(L"STATIC", T_BAR_DISK, 0, 0, 0, 60, 18, ID_DISKBAR + LBL);
     g_diskbar = make(PROGRESS_CLASSW, L"", 0, 0, 0, 300, 16, ID_DISKBAR);
     SendMessageW(g_diskbar, PBM_SETRANGE32, 0, CYL_MAX);
     g_cyltxt = make(L"STATIC", L"", SS_LEFT, 0, 0, 120, 18, ID_CYLTXT);
     g_elapsed = make(L"STATIC", L"", SS_RIGHT, 0, 0, 52, 18, ID_ELAPSED);
-    make(L"STATIC", L"Cofanetto", 0, 0, 0, 60, 18, ID_BOXBAR + LBL);
+    make_t(L"STATIC", T_BAR_BOX, 0, 0, 0, 60, 18, ID_BOXBAR + LBL);
     g_boxbar = make(PROGRESS_CLASSW, L"", 0, 0, 0, 300, 16, ID_BOXBAR);
     g_boxtxt = make(L"STATIC", L"", SS_LEFT, 0, 0, 180, 18, ID_BOXTXT);
 
@@ -651,13 +747,13 @@ static void build_work(void)
     /* without this the EDIT stops at about 32K characters and rejects the rest */
     SendMessageW(g_log, EM_SETLIMITTEXT, LOG_LIMIT, 0);
 
-    make(L"STATIC", L"Cartella", 0, 0, 0, 80, 18, ID_BAGDIR + LBL);
+    make_t(L"STATIC", T_BAG_FOLDER, 0, 0, 0, 80, 18, ID_BAGDIR + LBL);
     make(L"STATIC", L"", SS_NOPREFIX | SS_PATHELLIPSIS, 0, 0, 400, 18, ID_BAGDIR);
-    make(L"STATIC", L"Contenuto", 0, 0, 0, 80, 18, ID_BAGCONT + LBL);
+    make_t(L"STATIC", T_BAG_CONTENTS, 0, 0, 0, 80, 18, ID_BAGCONT + LBL);
     make(L"STATIC", L"", SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_BAGCONT);
-    make(L"STATIC", L"Impronte", 0, 0, 0, 80, 18, ID_BAGHASH + LBL);
+    make_t(L"STATIC", T_BAG_HASHES, 0, 0, 0, 80, 18, ID_BAGHASH + LBL);
     make(L"STATIC", L"", SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_BAGHASH);
-    make(L"STATIC", L"Messi da parte", 0, 0, 0, 80, 18, ID_BAGASIDE + LBL);
+    make_t(L"STATIC", T_BAG_ASIDE, 0, 0, 0, 80, 18, ID_BAGASIDE + LBL);
     make(L"STATIC", L"", SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_BAGASIDE);
 
     g_sbar = CreateWindowExW(0, STATUSCLASSNAMEW, L"", WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
@@ -747,6 +843,10 @@ static void banner(int kind, const wchar_t *sym, int icon, const wchar_t *title,
     wcsncpy(g_ban.sym, sym ? sym : L"", 7); g_ban.sym[7] = 0;
     wcsncpy(g_ban.title, title, 199); g_ban.title[199] = 0;
     wcsncpy(g_ban.text, text ? text : L"", 699); g_ban.text[699] = 0;
+    /* a translation may start with the medium's name ("%ls is identical..."):
+     * the first letter of a sentence is a capital */
+    CharUpperBuffW(g_ban.title, 1);
+    if (g_ban.text[0]) CharUpperBuffW(g_ban.text, 1);
     if (banner_height(r.right) != before) layout();
     repaint(g_banner);
 }
@@ -862,7 +962,7 @@ static int last_read(void)
 {
     int i, k = 0;
     for (i = 0; i <= g_pcur && i < g_npill; i++)
-        if (!wcsncmp(g_pill[i], L"Lettura ", 8) && _wtoi(g_pill[i] + 8) > k) k = _wtoi(g_pill[i] + 8);
+        if (!wcsncmp(g_pill[i], L"Read ", 5) && _wtoi(g_pill[i] + 5) > k) k = _wtoi(g_pill[i] + 5);
     return k;
 }
 
@@ -870,24 +970,24 @@ static int last_read(void)
 static int cur_optical(void);
 static int cur_cd(void);
 
-/* CDs and DVDs: TOC, Lettura 1, Controllo C2 (CD only), Redump; if redump
- * does not know it, Lettura 2, Controllo C2, Confronto */
+/* CDs and DVDs: TOC, Read 1, C2 check (CD only), Redump; if redump
+ * does not know it, Read 2, C2 check, Compare */
 static void pills_future_optical(void)
 {
     const wchar_t *p = g_pill[g_pcur];
     int reads = last_read();
     g_npill = g_pcur + 1;
     if (!wcscmp(p, L"TOC")) {
-        pill_add(L"Lettura 1");
-        if (cur_cd()) pill_add(L"Controllo C2");
+        pill_add(L"Read 1");
+        if (cur_cd()) pill_add(L"C2 check");
         pill_add(L"Redump");
-    } else if (!wcsncmp(p, L"Lettura ", 8)) {
-        if (cur_cd()) pill_add(L"Controllo C2");
-        pill_add(_wtoi(p + 8) == 1 ? L"Redump" : L"Confronto");
-    } else if (!wcscmp(p, L"Controllo C2")) {
-        pill_add(reads <= 1 ? L"Redump" : L"Confronto");
+    } else if (!wcsncmp(p, L"Read ", 5)) {
+        if (cur_cd()) pill_add(L"C2 check");
+        pill_add(_wtoi(p + 5) == 1 ? L"Redump" : L"Compare");
+    } else if (!wcscmp(p, L"C2 check")) {
+        pill_add(reads <= 1 ? L"Redump" : L"Compare");
     }
-    pill_add(L"Esito");
+    pill_add(L"Outcome");
 }
 
 static void pills_future(void)
@@ -895,19 +995,19 @@ static void pills_future(void)
     const wchar_t *p = g_pill[g_pcur];
     if (cur_optical()) { pills_future_optical(); return; }
     g_npill = g_pcur + 1;
-    if (!wcscmp(p, L"Scansione")) {
-        pill_add(L"Lettura 1");
-        if (!g_fragile) { pill_add(L"Lettura 2"); pill_add(L"Confronto"); }
-    } else if (!wcsncmp(p, L"Lettura ", 8) && !g_fragile) {
-        if (_wtoi(p + 8) == 1) pill_add(L"Lettura 2");
-        pill_add(L"Confronto");
+    if (!wcscmp(p, L"Scan")) {
+        pill_add(L"Read 1");
+        if (!g_fragile) { pill_add(L"Read 2"); pill_add(L"Compare"); }
+    } else if (!wcsncmp(p, L"Read ", 5) && !g_fragile) {
+        if (_wtoi(p + 5) == 1) pill_add(L"Read 2");
+        pill_add(L"Compare");
     }
-    pill_add(L"Esito");
+    pill_add(L"Outcome");
 }
 
 static void pills_phase(const wchar_t *name)
 {
-    if (!wcscmp(name, L"Scansione") || !wcscmp(name, L"TOC") || g_pcur < 0) g_npill = g_pcur = 0;
+    if (!wcscmp(name, L"Scan") || !wcscmp(name, L"TOC") || g_pcur < 0) g_npill = g_pcur = 0;
     else if (g_pcur < MAXPILL - 1) g_pcur++;
     wcsncpy(g_pill[g_pcur], name, 23); g_pill[g_pcur][23] = 0;
     pills_future();
@@ -920,11 +1020,11 @@ static void pills_reread(void)
     wchar_t w[24];
     if (g_pcur < 0) return;
     g_npill = g_pcur + 1;
-    _snwprintf(w, 24, L"Lettura %d", last_read() + 1); w[23] = 0;
+    _snwprintf(w, 24, L"Read %d", last_read() + 1); w[23] = 0;
     pill_add(w);
-    if (cur_cd()) pill_add(L"Controllo C2");
-    pill_add(L"Confronto");
-    pill_add(L"Esito");
+    if (cur_cd()) pill_add(L"C2 check");
+    pill_add(L"Compare");
+    pill_add(L"Outcome");
     repaint(g_pills);
 }
 
@@ -932,7 +1032,7 @@ static void pills_done(void)
 {
     if (g_pcur < 0) return;
     if (g_pcur < MAXPILL - 1) g_pcur++;
-    wcscpy(g_pill[g_pcur], L"Esito");
+    wcscpy(g_pill[g_pcur], L"Outcome");
     g_npill = g_pcur + 1;
     repaint(g_pills);
 }
@@ -945,9 +1045,10 @@ static void pills_clear(void)
 
 static int pill_width(HDC dc, int i)
 {
-    SIZE sz;
+    SIZE sz; wchar_t t[40];
+    phase_text(g_pill[i], t, 40);
     SelectObject(dc, i == g_pcur ? g_bold : g_font);
-    GetTextExtentPoint32W(dc, g_pill[i], (int)wcslen(g_pill[i]), &sz);
+    GetTextExtentPoint32W(dc, t, (int)wcslen(t), &sz);
     return sz.cx + 22;
 }
 
@@ -956,6 +1057,7 @@ static void paint_pill(HDC dc, int i, int x, int w, int h)
     COLORREF bg, edge, fg;
     HBRUSH br; HPEN pen; HGDIOBJ op, ob;
     RECT r = { x, 0, x + w, h };
+    wchar_t t[40];
     if (i < g_pcur)       { bg = RGB(0xdf, 0xf0, 0xdd); edge = RGB(0x8f, 0xc4, 0x8a); fg = RGB(0x1e, 0x5e, 0x26); }
     else if (i == g_pcur) { bg = edge = RGB(0x31, 0x6a, 0xc5); fg = RGB(255, 255, 255); }
     else                  { bg = RGB(0xf0, 0xf0, 0xf0); edge = RGB(0xc8, 0xc8, 0xc8); fg = RGB(0x80, 0x80, 0x80); }
@@ -966,7 +1068,8 @@ static void paint_pill(HDC dc, int i, int x, int w, int h)
     DeleteObject(pen); DeleteObject(br);
     SelectObject(dc, i == g_pcur ? g_bold : g_font);
     SetTextColor(dc, fg);
-    DrawTextW(dc, g_pill[i], -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    phase_text(g_pill[i], t, 40);
+    DrawTextW(dc, t, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 }
 
 static void paint_pills(HDC dc, int w, int h)
@@ -1017,9 +1120,7 @@ static void draw_item(const DRAWITEMSTRUCT *di)
 
 enum { G_BOX, G_ARCH, G_BAG, G_SEL, G_COUNT };
 
-static const wchar_t *group_title[G_COUNT] = {
-    L"Cofanetto", L"Archiviazione", L"Pacchetto BagIt", L"Il cofanetto scelto"
-};
+static const int group_title[G_COUNT] = { T_GROUP_BOX, T_GROUP_ARCHIVING, T_GROUP_BAG, T_GROUP_SELECTED };
 static RECT g_group[G_COUNT];
 
 /* uxtheme is loaded by hand: with the classic theme, or if it is missing,
@@ -1069,7 +1170,7 @@ static void set_group(int i, int x, int y, int w, int h)
 /* the frame starts at half the title's height, and the title breaks it */
 static void paint_group(HDC dc, HANDLE theme, int i)
 {
-    const wchar_t *t = group_title[i];
+    const wchar_t *t = tr(group_title[i]);
     RECT fr = g_group[i], tr;
     SIZE sz;
     COLORREF fg = GetSysColor(COLOR_WINDOWTEXT);
@@ -1103,18 +1204,9 @@ static void empty_text(wchar_t *out, int n)
 {
     wchar_t dir[512];
     to_w(g_arc_root, dir, 512);
-    if (g_arc_missing)
-        _snwprintf(out, n, L"La cartella %ls non esiste ancora: la creo con il primo cofanetto. "
-                           L"Compili titolo, piattaforma e supporti, poi inserisci i dischetti "
-                           L"uno alla volta.", dir);
-    else
-        _snwprintf(out, n, L"In %ls non c'è ancora nessun cofanetto. Comincia dal primo: compili titolo, "
-                           L"piattaforma e supporti, poi inserisci i dischetti uno alla volta.", dir);
+    _snwprintf(out, n, tr(g_arc_missing ? T_EMPTY_MISSING : T_EMPTY_NONE), dir);
     out[n - 1] = 0;
 }
-
-static const wchar_t EMPTY_TITLE[] = L"L'archivio è ancora vuoto";
-static const wchar_t EMPTY_HINT[] = L"Hai già un archivio altrove? Scegli la sua cartella con il pulsante «...» qui sopra.";
 
 /* the positions inside g_empty, vertically centred: used by layout and painting */
 static void empty_metrics(void)
@@ -1191,7 +1283,7 @@ static void paint_empty(HDC dc)
     SetTextColor(dc, RGB(0, 0, 0));
     SelectObject(dc, g_big);
     SetRect(&r, g_empty.left + 8, g_emp.title_y, g_empty.right - 8, g_emp.title_y + 22);
-    DrawTextW(dc, EMPTY_TITLE, -1, &r, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    DrawTextW(dc, tr(T_EMPTY_TITLE), -1, &r, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
     SelectObject(dc, g_font);
     SetTextColor(dc, RGB(0x33, 0x33, 0x33));
     empty_text(t, 900);
@@ -1199,7 +1291,7 @@ static void paint_empty(HDC dc)
     DrawTextW(dc, t, -1, &r, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
     SetTextColor(dc, RGB(0x44, 0x44, 0x44));
     SetRect(&r, g_empty.left + 8, g_emp.hint_y, g_empty.right - 8, g_emp.hint_y + 16);
-    DrawTextW(dc, EMPTY_HINT, -1, &r, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    DrawTextW(dc, tr(T_EMPTY_HINT), -1, &r, DT_CENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 }
 
 static void paint_groups(void)
@@ -1238,6 +1330,8 @@ static void layout_setup(int W, int H)
     set_group(G_ARCH, 6, 234, W - 12, 163);
     put(ID_DIR, 125, 254, R - 125 - 36, 21);
     put(ID_BROWSE, R - 30, 254, 30, 21);
+    put(ID_UILANG + LBL, R - 150 - 8 - 160, 285, 160, 18);
+    put(ID_UILANG, R - 150, 282, 150, 200);
     /* SAMdisk and DIC: the path widens, "Leggi da" stays on the right */
     put(ID_SAMDISK, 125, 310, R - 125 - 120 - 73, 21);
     put(ID_SOURCE + LBL, R - 120 - 65, 313, 60, 18);
@@ -1264,6 +1358,19 @@ static int pick_open(void)
     return g_pick >= 0 && g_pick < g_arc.n && g_arc.box[g_pick].state == ARC_OPEN;
 }
 
+/* the width of a label's text, plus a little margin */
+static int text_width(int id)
+{
+    wchar_t t[128]; SIZE sz; HDC dc; HGDIOBJ o;
+    GetDlgItemTextW(g_wnd, id, t, 128);
+    dc = GetDC(g_wnd);
+    o = SelectObject(dc, g_font);
+    if (!GetTextExtentPoint32W(dc, t, (int)wcslen(t), &sz)) sz.cx = 34;
+    SelectObject(dc, o);
+    ReleaseDC(g_wnd, dc);
+    return sz.cx + 4;
+}
+
 static void set_empty_rect(int x, int y, int w, int h)
 {
     RECT r;
@@ -1288,11 +1395,13 @@ static void layout_archive(int W, int H)
         return;
     }
     set_empty_rect(0, 0, 0, 0);
-    /* folder | ... | Cerca | platform: only the folder widens */
+    /* folder | ... | Cerca | platform: only the folder widens; the label
+     * is as wide as its text, which changes with the language */
     put(ID_APLAT, right - 150, y, 150, 240);
     put(ID_ASEARCH, right - 306, y, 150, 21);
-    x = right - 306 - 4 - 34;
-    put(ID_ASEARCH + LBL, x, y + 3, 34, 18);
+    k = text_width(ID_ASEARCH + LBL);
+    x = right - 306 - 4 - k;
+    put(ID_ASEARCH + LBL, x, y + 3, k, 18);
     put(ID_ABROWSE, x - 12 - 30, y, 30, 21);
     put(ID_ADIR + LBL, 8, y + 3, 52, 18);
     put(ID_ADIR, 62, y, x - 12 - 30 - 6 - 62, 21);
@@ -1415,16 +1524,18 @@ static void layout(void)
 
 static settings g_set;
 
-static const struct { const wchar_t *key; int id; } ini_keys[] = {
-    { L"Cartella", ID_DIR }, { L"LettureMax", ID_MAXREAD },
-    { L"SAMdisk", ID_SAMDISK }, { L"LeggiDa", ID_SOURCE }, { L"Piattaforma", ID_PLATFORM },
-    { L"DiscImageCreator", ID_DIC }, { L"LettoreCD", ID_DRIVE },
-    { L"Lingua", ID_LANGUAGE },
-    { NULL, 0 }
+static const struct { const wchar_t *sec, *key; int id; } ini_keys[] = {
+    { SEC_GENERAL, KEY_FOLDER, ID_DIR }, { SEC_GENERAL, KEY_MAXREADS, ID_MAXREAD },
+    { SEC_FLOPPY, KEY_SAMDISK, ID_SAMDISK }, { SEC_FLOPPY, KEY_READFROM, ID_SOURCE },
+    { SEC_BOX, KEY_PLATFORM, ID_PLATFORM },
+    { SEC_OPTICAL, KEY_DIC, ID_DIC }, { SEC_OPTICAL, KEY_DRIVE, ID_DRIVE },
+    { SEC_BOX, KEY_LANGUAGE, ID_LANGUAGE },
+    { NULL, NULL, 0 }
 };
 
 /* the file naming patterns, per kind: FLOPPY01.dsk, CD01\, DVD01\ */
-static const wchar_t *const name_keys[MEDIA_KINDS] = { L"NomeFloppy", L"NomeCD", L"NomeDVD" };
+static const wchar_t *const name_secs[MEDIA_KINDS] = { SEC_FLOPPY, SEC_OPTICAL, SEC_OPTICAL };
+static const wchar_t *const name_keys[MEDIA_KINDS] = { KEY_FLOPPYNAME, KEY_CDNAME, KEY_DVDNAME };
 static const wchar_t *const name_defaults[MEDIA_KINDS] = { L"FLOPPY{nn}", L"CD{nn}", L"DVD{nn}" };
 
 /* the hard-coded values (the fields' initial texts): the user gets them
@@ -1451,19 +1562,19 @@ static void ini_load(void)
     for (i = 0; ini_keys[i].key; i++) {
         GetDlgItemTextW(g_wnd, ini_keys[i].id, cur, 512);   /* the default stays the current one */
         wcscpy(g_builtin[i], cur);
-        set_get(&g_set, L"Archiviazione", ini_keys[i].key, cur, v, 512);
+        set_get(&g_set, ini_keys[i].sec, ini_keys[i].key, cur, v, 512);
         SetDlgItemTextW(g_wnd, ini_keys[i].id, v);
     }
     tool_fallback(ID_SAMDISK, SET_TOOL_SAMDISK);
     tool_fallback(ID_DIC, SET_TOOL_DIC);
     /* the checkbox is not a text: Suoni=1 or 0 */
     CheckDlgButton(g_wnd, ID_SOUNDS,
-                   set_int(&g_set, L"Archiviazione", L"Suoni", 0) ? BST_CHECKED : BST_UNCHECKED);
+                   set_int(&g_set, SEC_GENERAL, KEY_SOUNDS, 0) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(g_wnd, ID_AUTO,
-                   set_int(&g_set, L"Archiviazione", L"AutoMode", 0) ? BST_CHECKED : BST_UNCHECKED);
+                   set_int(&g_set, SEC_AUTO, KEY_ENABLED, 0) ? BST_CHECKED : BST_UNCHECKED);
     /* the file names are not in the window: they change only here */
     for (i = 0; i < MEDIA_KINDS; i++) {
-        set_get(&g_set, L"Archiviazione", name_keys[i], name_defaults[i], v, 512);
+        set_get(&g_set, name_secs[i], name_keys[i], name_defaults[i], v, 512);
         to_u8(v[0] ? v : name_defaults[i], g_ini_names[i], sizeof(g_ini_names[i]));
     }
 }
@@ -1473,7 +1584,7 @@ static void ini_store(int i)
 {
     wchar_t v[512];
     GetDlgItemTextW(g_wnd, ini_keys[i].id, v, 512);
-    set_save(&g_set, L"Archiviazione", ini_keys[i].key, g_builtin[i], v);
+    set_save(&g_set, ini_keys[i].sec, ini_keys[i].key, g_builtin[i], v);
 }
 
 static void ini_save(void)
@@ -1481,17 +1592,15 @@ static void ini_save(void)
     wchar_t v[512];
     int i;
     for (i = 0; ini_keys[i].key; i++) ini_store(i);
-    set_save(&g_set, L"Archiviazione", L"Suoni", L"0",
+    set_save(&g_set, SEC_GENERAL, KEY_SOUNDS, L"0",
              IsDlgButtonChecked(g_wnd, ID_SOUNDS) == BST_CHECKED ? L"1" : L"0");
-    set_save(&g_set, L"Archiviazione", L"AutoMode", L"0",
+    set_save(&g_set, SEC_AUTO, KEY_ENABLED, L"0",
              IsDlgButtonChecked(g_wnd, ID_AUTO) == BST_CHECKED ? L"1" : L"0");
     /* the names change only by hand in the ini: one that differs from the default stays */
     for (i = 0; i < MEDIA_KINDS; i++) {
         to_w(g_ini_names[i], v, 512);
-        set_save(&g_set, L"Archiviazione", name_keys[i], name_defaults[i], v);
+        set_save(&g_set, name_secs[i], name_keys[i], name_defaults[i], v);
     }
-    /* the old key: names are now per kind */
-    set_put(&g_set, L"Archiviazione", L"NomeFile", NULL);
 }
 
 /* window position and size, in work-area coordinates as
@@ -1502,11 +1611,11 @@ static void place_save(void)
     RECT *r = &wp.rcNormalPosition;
     wp.length = sizeof(wp);
     if (!g_set.user[0] || !GetWindowPlacement(g_wnd, &wp)) return;
-    set_put_int(&g_set, L"Finestra", L"X", r->left);
-    set_put_int(&g_set, L"Finestra", L"Y", r->top);
-    set_put_int(&g_set, L"Finestra", L"Larghezza", r->right - r->left);
-    set_put_int(&g_set, L"Finestra", L"Altezza", r->bottom - r->top);
-    set_put_int(&g_set, L"Finestra", L"Massimizzata", wp.showCmd == SW_SHOWMAXIMIZED ||
+    set_put_int(&g_set, SEC_WINDOW, L"X", r->left);
+    set_put_int(&g_set, SEC_WINDOW, L"Y", r->top);
+    set_put_int(&g_set, SEC_WINDOW, L"Width", r->right - r->left);
+    set_put_int(&g_set, SEC_WINDOW, L"Height", r->bottom - r->top);
+    set_put_int(&g_set, SEC_WINDOW, L"Maximized", wp.showCmd == SW_SHOWMAXIMIZED ||
                 (wp.showCmd == SW_SHOWMINIMIZED && (wp.flags & WPF_RESTORETOMAXIMIZED)));
 }
 
@@ -1515,10 +1624,10 @@ static void place_save(void)
 static int place_load(int show_cmd)
 {
     WINDOWPLACEMENT wp; MONITORINFO mi; HMONITOR mon; RECT r, wa;
-    int x = set_int(&g_set, L"Finestra", L"X", -32000);
-    int y = set_int(&g_set, L"Finestra", L"Y", -32000);
-    int w = set_int(&g_set, L"Finestra", L"Larghezza", 0);
-    int h = set_int(&g_set, L"Finestra", L"Altezza", 0);
+    int x = set_int(&g_set, SEC_WINDOW, L"X", -32000);
+    int y = set_int(&g_set, SEC_WINDOW, L"Y", -32000);
+    int w = set_int(&g_set, SEC_WINDOW, L"Width", 0);
+    int h = set_int(&g_set, SEC_WINDOW, L"Height", 0);
     RECT minr = { 0, 0, MIN_CW, MIN_CH };
     if (x == -32000 || y == -32000 || w <= 0 || h <= 0) return 0;
     AdjustWindowRectEx(&minr, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_CONTROLPARENT);
@@ -1532,7 +1641,7 @@ static int place_load(int show_cmd)
         r.right > mi.rcWork.right || r.bottom > mi.rcWork.bottom) return 0;
     memset(&wp, 0, sizeof(wp));
     wp.length = sizeof(wp);
-    wp.showCmd = set_int(&g_set, L"Finestra", L"Massimizzata", 0) ? SW_SHOWMAXIMIZED : show_cmd;
+    wp.showCmd = set_int(&g_set, SEC_WINDOW, L"Maximized", 0) ? SW_SHOWMAXIMIZED : show_cmd;
     SetRect(&wp.rcNormalPosition, x, y, x + w, y + h);
     return SetWindowPlacement(g_wnd, &wp) != 0;
 }
@@ -1640,11 +1749,11 @@ static void on_samdisk(WPARAM gen, sd_result *r)
 static void samdisk_text(wchar_t *out, int n)
 {
     switch (g_sd_state) {
-    case SD_CHECKING: _snwprintf(out, n, L"Controllo SAMdisk..."); break;
-    case SD_OK:       _snwprintf(out, n, L"SAMdisk %ls", g_sd_ver); break;
-    case SD_NOTFOUND: _snwprintf(out, n, L"SAMdisk non trovato: controlla il campo SAMdisk"); break;
-    case SD_V4:       _snwprintf(out, n, L"SAMdisk 4.x: serve la serie 3.x (la 4.0 non legge i floppy veri)"); break;
-    default:          _snwprintf(out, n, L"Il programma indicato non sembra SAMdisk"); break;
+    case SD_CHECKING: wcsncpy(out, tr(T_SD_CHECKING), n); break;
+    case SD_OK:       _snwprintf(out, n, tr(T_SD_OK), g_sd_ver); break;
+    case SD_NOTFOUND: wcsncpy(out, tr(T_SD_NOTFOUND), n); break;
+    case SD_V4:       wcsncpy(out, tr(T_SD_V4), n); break;
+    default:          wcsncpy(out, tr(T_SD_NOTSAM), n); break;
     }
     out[n - 1] = 0;
 }
@@ -1747,9 +1856,9 @@ static void floppy_text(wchar_t *out, int n)
 {
     out[0] = 0;
     switch (g_fd_state) {
-    case FD_CHECKING: _snwprintf(out, n, L"Controllo il lettore %ls...", g_fd_drive); break;
-    case FD_OK:       _snwprintf(out, n, L"Lettore %ls %d rpm", g_fd_drive, g_fd_rpm); break;
-    case FD_DEAD:     _snwprintf(out, n, L"Lettore %ls non risponde (dischetto inserito?)", g_fd_drive); break;
+    case FD_CHECKING: _snwprintf(out, n, tr(T_FD_CHECKING), g_fd_drive); break;
+    case FD_OK:       _snwprintf(out, n, tr(T_FD_OK), g_fd_drive, g_fd_rpm); break;
+    case FD_DEAD:     _snwprintf(out, n, tr(T_FD_DEAD), g_fd_drive); break;
     }
     out[n - 1] = 0;
 }
@@ -1842,7 +1951,7 @@ static void label_read(void)
         _snwprintf(job->root, 8, L"%c:\\", d[0]);
     }
     job->root[7] = 0;
-    wcscpy(g_lb_msg, L"Leggo l'etichetta del disco...");
+    wcsncpy(g_lb_msg, tr(T_LB_READING), 199); g_lb_msg[199] = 0;
     sbar_text(0, g_lb_msg);
     th = CreateThread(NULL, 0, label_worker, job, 0, NULL);
     if (th) CloseHandle(th); else free(job);
@@ -2101,7 +2210,7 @@ static void auto_begin(void)
     auto_drive(d);
     if (g_turn.kind == MEDIA_FLOPPY) watch_start(0);
     else if (!g_opt_used) { auto_found(); return; }    /* the first disc may already be in */
-    _snwprintf(w, 200, L"Lettura automatica: aspetto il disco nel lettore %ls", d); w[199] = 0;
+    _snwprintf(w, 200, tr(T_AUTO_WAITING), d); w[199] = 0;
     auto_status(w);
 }
 
@@ -2121,13 +2230,14 @@ static void count_banner(void)
 {
     wchar_t t[160], s[500], who[32], lab[128];
     slot_name(g_cur, 0, who, 32);
-    if (g_auto_left == 1) _snwprintf(t, 160, L"Leggo il %ls fra un secondo", who);
-    else _snwprintf(t, 160, L"Leggo il %ls fra %d secondi", who, g_auto_left);
+    if (g_auto_left == 1) _snwprintf(t, 160, tr(T_AUTO_COUNT_ONE), who);
+    else _snwprintf(t, 160, tr(T_AUTO_COUNT_MANY), who, g_auto_left);
     t[159] = 0;
     GetWindowTextW(g_label, lab, 128);
-    _snwprintf(s, 500, L"%ls%ls%lsEsc ferma il conto alla rovescia e aspetta che premi Leggi (F5); Invio legge "
-                       L"subito, Alt+S salta il disco.", lab[0] ? L"Etichetta: " : L"", lab, lab[0] ? L". " : L"");
+    s[0] = 0;
+    if (lab[0]) _snwprintf(s, 500, tr(T_AUTO_COUNT_LABEL), lab);
     s[499] = 0;
+    wcsncat(s, tr(T_AUTO_COUNT_TEXT), 499 - wcslen(s));
     if (g_turn.kind == MEDIA_FLOPPY) banner_num(B_YELLOW, g_turn.num, t, s);
     else banner(B_YELLOW, NULL, ICON_DISC, t, s);
 }
@@ -2135,14 +2245,13 @@ static void count_banner(void)
 static void ask_banner(int twin)
 {
     wchar_t t[160], s[600], who[32], other[32];
-    const wchar_t *what = g_turn.kind == MEDIA_FLOPPY ? L"dischetto" : L"disco";
+    const wchar_t *what = tr(g_turn.kind == MEDIA_FLOPPY ? T_NOUN_DISKETTE : T_NOUN_DISC);
     slot_name(g_cur, 0, who, 32);
     slot_name(twin, 0, other, 32);
-    _snwprintf(t, 160, L"Sembra lo stesso %ls del %ls: lo rileggo?", what, other); t[159] = 0;
-    _snwprintf(s, 600, L"Ha lo stesso numero di serie (%04lX-%04lX)%ls del %ls già letto. Se è davvero il %ls "
-                       L"premi Leggi (F5); altrimenti metti il %ls giusto e riparto da solo, oppure Salta (Alt+S).",
+    _snwprintf(t, 160, tr(T_AUTO_ASK_TITLE), what, other); t[159] = 0;
+    _snwprintf(s, 600, tr(T_AUTO_ASK_TEXT),
                (unsigned long)(g_vol_turn.serial >> 16), (unsigned long)(g_vol_turn.serial & 0xffff),
-               g_vol_turn.label[0] ? L" e la stessa etichetta" : L"", other, who, what);
+               g_vol_turn.label[0] ? tr(T_AUTO_ASK_LABEL) : L"", other, who, what);
     s[599] = 0;
     if (g_turn.kind == MEDIA_FLOPPY) banner(B_ORANGE, L"!", 0, t, s);
     else banner(B_ORANGE, NULL, ICON_DISC, t, s);
@@ -2155,7 +2264,7 @@ static void auto_labelled(int state)
     if (g_turn.kind != MEDIA_FLOPPY && state == LB_NODISK) {
         wchar_t w[120], d[3];
         auto_drive(d);
-        _snwprintf(w, 120, L"Lettura automatica: aspetto il disco nel lettore %ls", d); w[119] = 0;
+        _snwprintf(w, 120, tr(T_AUTO_WAITING), d); w[119] = 0;
         auto_rewatch(w);            /* no disc yet: Windows will say when it arrives */
         return;
     }
@@ -2190,15 +2299,14 @@ static void on_diskin(WPARAM gen, LPARAM what)
         auto_found();
         break;
     case FP_GONE:
-        _snwprintf(w, 200, L"Dischetto tolto dal lettore %ls: inserisci il successivo", d); w[199] = 0;
+        _snwprintf(w, 200, tr(T_AUTO_GONE), d); w[199] = 0;
         auto_rewatch(w);
         break;
     case FP_SLOWDRIVE:
-        auto_status(L"Il lettore risponde lento: noto il cambio solo se togli il dischetto e poi lo inserisci");
+        auto_status(tr(T_AUTO_SLOW));
         break;
     default:
-        _snwprintf(w, 200, L"Lettura automatica non disponibile: fdrawcmd.sys non risponde sul lettore %ls. "
-                           L"Premi Leggi (F5) quando il dischetto è inserito.", d); w[199] = 0;
+        _snwprintf(w, 200, tr(T_AUTO_NODRIVER), d); w[199] = 0;
         auto_manual(w);
         break;
     }
@@ -2218,19 +2326,18 @@ static void on_label(WPARAM gen, lb_result *r)
             /* the automatic mode does not overwrite what the user typed */
             GetWindowTextW(g_label, cur, 64);
             if (mine && cur[0] && wcscmp(cur, g_auto_label)) {
-                _snwprintf(w, 200, L"Etichetta del disco: %ls (resta quella che hai scritto)", r->label);
+                _snwprintf(w, 200, tr(T_LB_KEPT), r->label);
                 break;
             }
             if (mine) wcscpy(g_auto_label, r->label);
             SetWindowTextW(g_label, r->label);
             focus_to(g_label);
             SendMessageW(g_label, EM_SETSEL, 0, -1);
-            _snwprintf(w, 200, L"Etichetta letta dal disco: %ls", r->label);
+            _snwprintf(w, 200, tr(T_LB_READ), r->label);
             break;
-        case LB_NONE:    _snwprintf(w, 200, L"Il disco non ha un'etichetta di volume"); break;
-        case LB_NODISK:  _snwprintf(w, 200, L"Nessun disco nel lettore %ls", u); break;
-        default:         _snwprintf(w, 200, L"Windows non riconosce il disco: l'etichetta si prende "
-                                            L"dall'immagine dopo la lettura"); break;
+        case LB_NONE:    wcsncpy(w, tr(T_LB_NONE), 200); break;
+        case LB_NODISK:  _snwprintf(w, 200, tr(T_LB_NODISK), u); break;
+        default:         wcsncpy(w, tr(T_LB_UNKNOWN), 200); break;
         }
         w[199] = 0;
         sbar_text(0, w);
@@ -2267,7 +2374,7 @@ static void on_media_removal(const DEV_BROADCAST_HDR *h)
     wchar_t w[120], d[3];
     if (g_auto_state == AUTO_OFF || !awaited_media(h, 0)) return;
     auto_drive(d);
-    _snwprintf(w, 120, L"Disco tolto dal lettore %ls: inserisci il successivo", d); w[119] = 0;
+    _snwprintf(w, 120, tr(T_AUTO_DISC_GONE), d); w[119] = 0;
     auto_rewatch(w);
 }
 
@@ -2371,28 +2478,19 @@ static int dat_old(void)
 static void dic_text(wchar_t *out, int n, int brief)
 {
     wchar_t dat[120];
+    const wchar_t *t = NULL;
     switch (g_dic_state) {
-    case DIC_CHECKING: _snwprintf(out, n, L"Controllo DiscImageCreator..."); out[n - 1] = 0; return;
-    case DIC_NOTFOUND:
-        _snwprintf(out, n, brief ? L"DiscImageCreator non trovato" : L"DiscImageCreator non trovato: controlla il campo");
-        out[n - 1] = 0;
-        return;
-    case DIC_NODLL:
-        _snwprintf(out, n, brief ? L"DiscImageCreator: mancano i runtime Visual C++"
-                                 : L"DiscImageCreator non parte: mancano i runtime di Visual C++ 2015-2019 x86");
-        out[n - 1] = 0;
-        return;
-    case DIC_NOTDIC:
-        _snwprintf(out, n, brief ? L"non è DiscImageCreator" : L"Il programma indicato non sembra DiscImageCreator");
-        out[n - 1] = 0;
-        return;
+    case DIC_CHECKING: t = tr(T_DIC_CHECKING); break;
+    case DIC_NOTFOUND: t = tr(brief ? T_DIC_NOTFOUND_B : T_DIC_NOTFOUND); break;
+    case DIC_NODLL:    t = tr(brief ? T_DIC_NODLL_B : T_DIC_NODLL); break;
+    case DIC_NOTDIC:   t = tr(brief ? T_DIC_NOTDIC_B : T_DIC_NOTDIC); break;
     }
-    if (!g_has_dat) _snwprintf(dat, 120, brief ? L"senza DAT redump" : L"nessun DAT di redump: due letture per disco");
-    else if (dat_old()) _snwprintf(dat, 120, brief ? L"DAT redump %.10ls, vecchio"
-                                                   : L"DAT di redump del %.10ls, vecchio: scaricane uno nuovo", g_dat_date);
-    else _snwprintf(dat, 120, brief ? L"DAT redump %.10ls" : L"DAT di redump del %.10ls", g_dat_date[0] ? g_dat_date : L"?");
+    if (t) { wcsncpy(out, t, n); out[n - 1] = 0; return; }
+    if (!g_has_dat) wcsncpy(dat, tr(brief ? T_DAT_NONE_B : T_DAT_NONE), 120);
+    else if (dat_old()) _snwprintf(dat, 120, tr(brief ? T_DAT_OLD_B : T_DAT_OLD), g_dat_date);
+    else _snwprintf(dat, 120, tr(brief ? T_DAT_OK_B : T_DAT_OK), g_dat_date[0] ? g_dat_date : L"?");
     dat[119] = 0;
-    _snwprintf(out, n, L"DiscImageCreator %ls, %ls", g_dic_ver, dat);
+    _snwprintf(out, n, tr(T_DIC_OK), g_dic_ver, dat);
     out[n - 1] = 0;
 }
 
@@ -2408,17 +2506,12 @@ static void tools_text(wchar_t *out, int n)
     out[n - 1] = 0;
 }
 
-/* the first thing missing before starting, or "Pronto" */
-static const wchar_t *READY_TEXTS[] = {
-    L"Manca il titolo", L"Manca la piattaforma", L"Supporti: da 1 a 64", L"Manca la cartella",
-    L"Controllo SAMdisk...", L"SAMdisk da sistemare", L"Pronto",
-    L"Leggo l'archivio...", L"Ricontrollo le impronte...",      /* archive view only */
-    L"Controllo DiscImageCreator...", L"DiscImageCreator da sistemare", NULL
+/* the first thing missing before starting, or "Pronto"; the two archive
+ * texts only in the archive view */
+static const int READY_TEXTS[] = {
+    T_READY_NOTITLE, T_READY_NOPLATFORM, T_READY_MEDIA, T_READY_NOFOLDER, T_SD_CHECKING, T_READY_SD_BAD,
+    T_READY_OK, T_READY_ARC_LOADING, T_READY_VERIFYING, T_DIC_CHECKING, T_READY_DIC_BAD, -1
 };
-#define READY_ARC_LOADING 7
-#define READY_ARC_VERIFY  8
-#define READY_DIC_CHECK   9
-#define READY_DIC_BAD     10
 
 /* the make-up written in the three fields; an empty field counts as 0.
  * -1 if invalid: no media, or more than META_MAXDISK */
@@ -2434,18 +2527,18 @@ static const wchar_t *ready_text(void)
 {
     char s[256]; int c[MEDIA_KINDS];
     get_u8_trim(ID_TITLE, s, sizeof(s));
-    if (!s[0]) return READY_TEXTS[0];
+    if (!s[0]) return tr(T_READY_NOTITLE);
     get_u8_trim(ID_PLATFORM, s, sizeof(s));
-    if (!s[0]) return READY_TEXTS[1];
-    if (setup_counts(c)) return READY_TEXTS[2];
+    if (!s[0]) return tr(T_READY_NOPLATFORM);
+    if (setup_counts(c)) return tr(T_READY_MEDIA);
     get_u8_trim(ID_DIR, s, sizeof(s));
-    if (!s[0]) return READY_TEXTS[3];
+    if (!s[0]) return tr(T_READY_NOFOLDER);
     /* SAMdisk is needed only with floppies, DiscImageCreator with CDs or DVDs */
-    if (c[MEDIA_FLOPPY] && g_sd_state == SD_CHECKING) return READY_TEXTS[4];
-    if (c[MEDIA_FLOPPY] && g_sd_state != SD_OK) return READY_TEXTS[5];
-    if ((c[MEDIA_CD] || c[MEDIA_DVD]) && g_dic_state == DIC_CHECKING) return READY_TEXTS[READY_DIC_CHECK];
-    if ((c[MEDIA_CD] || c[MEDIA_DVD]) && g_dic_state != DIC_OK) return READY_TEXTS[READY_DIC_BAD];
-    return READY_TEXTS[6];
+    if (c[MEDIA_FLOPPY] && g_sd_state == SD_CHECKING) return tr(T_SD_CHECKING);
+    if (c[MEDIA_FLOPPY] && g_sd_state != SD_OK) return tr(T_READY_SD_BAD);
+    if ((c[MEDIA_CD] || c[MEDIA_DVD]) && g_dic_state == DIC_CHECKING) return tr(T_DIC_CHECKING);
+    if ((c[MEDIA_CD] || c[MEDIA_DVD]) && g_dic_state != DIC_OK) return tr(T_READY_DIC_BAD);
+    return tr(T_READY_OK);
 }
 
 /* the right part is as wide as the longest text it can hold */
@@ -2454,8 +2547,9 @@ static int ready_width(void)
     HDC dc = GetDC(g_sbar);
     HGDIOBJ o = SelectObject(dc, (HFONT)SendMessageW(g_sbar, WM_GETFONT, 0, 0));
     SIZE sz; int i, w = 0;
-    for (i = 0; READY_TEXTS[i]; i++) {
-        GetTextExtentPoint32W(dc, READY_TEXTS[i], (int)wcslen(READY_TEXTS[i]), &sz);
+    for (i = 0; READY_TEXTS[i] >= 0; i++) {
+        const wchar_t *t = tr(READY_TEXTS[i]);
+        GetTextExtentPoint32W(dc, t, (int)wcslen(t), &sz);
         if (sz.cx > w) w = sz.cx;
     }
     SelectObject(dc, o);
@@ -2538,20 +2632,20 @@ static void sbar_setup(void)
 static void sbar_archive(void)
 {
     wchar_t w[700], dir[512], n[64];
-    const wchar_t *ready = READY_TEXTS[6];
+    const wchar_t *ready = tr(T_READY_OK);
     tools_text(w, 420);
     sbar_text(0, w);
     to_w(g_arc_root, dir, 512);
-    if (!g_arc_loaded) { _snwprintf(w, 700, L"Leggo %ls", dir); ready = READY_TEXTS[READY_ARC_LOADING]; }
-    else if (g_arc_missing) _snwprintf(w, 700, L"La cartella %ls non esiste ancora", dir);
-    else if (!g_arc.n) _snwprintf(w, 700, L"Nessun cofanetto in %ls", dir);
+    if (!g_arc_loaded) { _snwprintf(w, 700, tr(T_SBAR_READING), dir); ready = tr(T_READY_ARC_LOADING); }
+    else if (g_arc_missing) _snwprintf(w, 700, tr(T_SBAR_NOFOLDER), dir);
+    else if (!g_arc.n) _snwprintf(w, 700, tr(T_SBAR_NOBOXES), dir);
     else {
-        plural(n, 64, g_arc.n, L"cofanetto letto", L"cofanetti letti");
-        _snwprintf(w, 700, L"%ls da %ls", n, dir);
+        plural(n, 64, g_arc.n, T_SBAR_BOX_ONE, T_SBAR_BOX_MANY);
+        _snwprintf(w, 700, tr(T_SBAR_BOXES_FROM), n, dir);
     }
     w[699] = 0;
     sbar_text(1, w);
-    if (g_verifying) ready = READY_TEXTS[READY_ARC_VERIFY];
+    if (g_verifying) ready = tr(T_READY_VERIFYING);
     _snwprintf(w, 200, L"\t\t%ls", ready); w[199] = 0;
     sbar_text(2, w);
     SendMessageW(g_sbar, SB_SETTEXTW, 3 | SBT_NOBORDERS, (LPARAM)L"");
@@ -2568,16 +2662,16 @@ static void sbar_update(void)
     else if (g_view == V_END || g_cur < 1) comp_text(g_count, w, 200);
     else {
         slot(g_cur, &kind, &num);
-        _snwprintf(w, 200, L"%ls %d di %d", kind_cap[kind], num, g_count[kind]); w[199] = 0;
+        _snwprintf(w, 200, tr(T_SBAR_SLOT), kind_name(kind, KN_CAP), num, g_count[kind]); w[199] = 0;
     }
     sbar_text(0, w);
-    plural(w, 200, pul + mar + err, L"archiviato", L"archiviati");
-    if (mar) { plural(a, 64, mar, L"marginale", L"marginali"); wcscat(w, L", "); wcscat(w, a); }
-    if (err) { _snwprintf(b, 64, L", %d con errori", err); b[63] = 0; wcscat(w, b); }
+    plural(w, 200, pul + mar + err, T_SBAR_ARCHIVED_ONE, T_SBAR_ARCHIVED_MANY);
+    if (mar) { plural(a, 64, mar, T_SUM_MARGINAL_ONE, T_SUM_MARGINAL_MANY); wcscat(w, L", "); wcscat(w, a); }
+    if (err) { _snwprintf(b, 64, tr(T_SBAR_ERRORS), err); b[63] = 0; wcsncat(w, b, 199 - wcslen(w)); }
     sbar_text(1, w);
-    sbar_text(2, g_bag_closed ? L"Bag: chiuso" : L"Bag: aperto");
+    sbar_text(2, tr(g_bag_closed ? T_SBAR_BAG_CLOSED : T_SBAR_BAG_OPEN));
     fmt_time(GetTickCount() - g_t_sess, a, 64);
-    _snwprintf(w, 200, L"Sessione %ls", a); w[199] = 0;
+    _snwprintf(w, 200, tr(T_SBAR_SESSION), a); w[199] = 0;
     sbar_text(3, w);
 }
 
@@ -2660,9 +2754,10 @@ static void focus_to(HWND c)
 
 static void view(int v)
 {
-    HWND c, f;
+    HWND c, f; wchar_t t[120];
     g_view = v;
-    SetWindowTextW(g_wnd, v == V_ARCHIVE ? L"RetroArchiver " RA_VERSION L" - archivio" : L"RetroArchiver " RA_VERSION L" - archiviazione");
+    _snwprintf(t, 120, tr(v == V_ARCHIVE ? T_TITLE_ARCHIVE : T_TITLE_SESSION), L"" RA_VERSION); t[119] = 0;
+    SetWindowTextW(g_wnd, t);
     layout();                   /* move first, then show */
     for (c = GetWindow(g_wnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
         ShowWindow(c, visible_in(v, GetDlgCtrlID(c)) ? SW_SHOW : SW_HIDE);
@@ -2694,25 +2789,27 @@ static int outcome(const disk_info *d, wchar_t *out, int len)
 {
     const char *s = d->status;
     int dot = DOT_GREY;
-    if (!s[0]) wcsncpy(out, L"da leggere", len);
-    else if (!strcmp(s, "pulito")) { wcsncpy(out, L"pulito", len); dot = DOT_GREEN; }
-    else if (!strcmp(s, "marginale")) {
-        if (d->agree >= 2) _snwprintf(out, len, L"marginale (%d concordano)", d->agree);
-        else wcsncpy(out, L"marginale", len);
+    if (!s[0]) wcsncpy(out, tr(T_OUT_TOREAD), len);
+    else if (!strcmp(s, ST_CLEAN)) { wcsncpy(out, tr(T_OUT_CLEAN), len); dot = DOT_GREEN; }
+    else if (!strcmp(s, ST_MARGINAL)) {
+        if (d->agree >= 2) _snwprintf(out, len, tr(T_OUT_MARGINAL_AGREE), d->agree);
+        else wcsncpy(out, tr(T_OUT_MARGINAL), len);
         dot = DOT_OCHRE;
     }
-    else if (!strcmp(s, "fragile")) { wcsncpy(out, L"fragile: una sola lettura", len); dot = DOT_OCHRE; }
-    else if (!strcmp(s, "errore")) { wcsncpy(out, L"errore", len); dot = DOT_RED; }
-    else if (!strcmp(s, "verificato redump")) { wcsncpy(out, L"verificato con redump", len); dot = DOT_GREEN; }
-    else if (!strcmp(s, "letto una volta")) { wcsncpy(out, L"letto una volta: non verificato", len); dot = DOT_OCHRE; }
-    else if (!strcmp(s, "instabile")) {
-        if (d->agree >= 2) _snwprintf(out, len, L"instabile (%d letture uguali)", d->agree);
-        else wcsncpy(out, L"instabile", len);
+    else if (!strcmp(s, "fragile")) { wcsncpy(out, tr(T_OUT_FRAGILE), len); dot = DOT_OCHRE; }
+    else if (!strcmp(s, ST_ERROR)) { wcsncpy(out, tr(T_OUT_ERROR), len); dot = DOT_RED; }
+    else if (!strcmp(s, ST_REDUMP)) { wcsncpy(out, tr(T_OUT_REDUMP), len); dot = DOT_GREEN; }
+    else if (!strcmp(s, ST_READ_ONCE)) { wcsncpy(out, tr(T_OUT_ONCE), len); dot = DOT_OCHRE; }
+    else if (!strcmp(s, ST_UNSTABLE)) {
+        if (d->agree >= 2) _snwprintf(out, len, tr(T_OUT_UNSTABLE_AGREE), d->agree);
+        else wcsncpy(out, tr(T_OUT_UNSTABLE), len);
         dot = DOT_OCHRE;
     }
-    else if (!strcmp(s, "errori")) { wcsncpy(out, L"errori non risolti", len); dot = DOT_RED; }
-    else if (!strcmp(s, "lettura fallita")) { wcsncpy(out, L"lettura fallita", len); dot = DOT_RED; }
-    else if (!strcmp(s, "mancante")) wcsncpy(out, L"saltato", len);
+    else if (!strcmp(s, ST_ERRORS)) { wcsncpy(out, tr(T_OUT_ERRORS), len); dot = DOT_RED; }
+    else if (!strcmp(s, ST_FAILED)) { wcsncpy(out, tr(T_OUT_FAILED), len); dot = DOT_RED; }
+    else if (!strcmp(s, ST_INTERRUPTED)) wcsncpy(out, tr(T_OUT_INTERRUPTED), len);
+    else if (!strcmp(s, ST_DUPLICATE)) wcsncpy(out, tr(T_OUT_DUPLICATE), len);
+    else if (!strcmp(s, ST_MISSING)) wcsncpy(out, tr(T_OUT_SKIPPED), len);
     else to_w(s, out, len);
     out[len - 1] = 0;
     return dot;
@@ -2739,11 +2836,11 @@ static void list_row(int n)
     it.iImage = outcome(&g_disk[n], w + 100, 100);
     /* the same image as another disk: its reads are set aside, to read again
      * (or skipped, closed without it: the reason stays visible) */
-    if (g_disk[n].twin && (!strcmp(g_disk[n].status, "duplicato") || !strcmp(g_disk[n].status, "mancante"))) {
+    if (g_disk[n].twin && (!strcmp(g_disk[n].status, ST_DUPLICATE) || !strcmp(g_disk[n].status, ST_MISSING))) {
         wchar_t who[32];
         slot_name(g_disk[n].twin, 0, who, 32);
-        if (!strcmp(g_disk[n].status, "duplicato")) _snwprintf(w + 100, 100, L"duplicato del %ls", who);
-        else _snwprintf(w + 100, 100, L"saltato: era un duplicato del %ls", who);
+        if (!strcmp(g_disk[n].status, ST_DUPLICATE)) _snwprintf(w + 100, 100, tr(T_OUT_DUPLICATE_OF), who);
+        else _snwprintf(w + 100, 100, tr(T_OUT_SKIPPED_DUP), who);
         w[199] = 0;
         it.iImage = DOT_OCHRE;
     }
@@ -2801,38 +2898,39 @@ static void box_progress(void)
     for (n = 1; n <= g_total && n <= META_MAXDISK; n++) done += is_done(g_disk[n].status);
     SendMessageW(g_boxbar, PBM_SETRANGE32, 0, g_total > 0 ? g_total : 1);
     SendMessageW(g_boxbar, PBM_SETPOS, done, 0);
-    _snwprintf(w, 64, L"%d di %d %ls", done, g_total, noun(g_count, g_total != 1)); w[63] = 0;
+    _snwprintf(w, 64, tr(T_BAR_PROGRESS), done, g_total, noun(g_count, g_total != 1)); w[63] = 0;
     SetWindowTextW(g_boxtxt, w);
 }
 
-/* "2 puliti, 1 marginale, 1 saltato o da rifare" */
+/* one more part of the summary: after a comma, or glued to the previous one */
+static void sum_add(wchar_t *out, int len, const wchar_t *part, int glued)
+{
+    if (out[0] && !glued) wcsncat(out, L", ", len - wcslen(out) - 1);
+    wcsncat(out, part, len - wcslen(out) - 1);
+}
+
+/* "2 clean, 1 marginal, 1 skipped or to redo" */
 static void summary(wchar_t *out, int len)
 {
     wchar_t part[64];
     int pul, mar, err, alt, opt[MEDIA_KINDS], k, red = 0, n;
     counts(&pul, &mar, &err, &alt, opt);
-    for (n = 1; n <= g_total && n <= META_MAXDISK; n++) red += !strcmp(g_disk[n].status, "verificato redump");
+    for (n = 1; n <= g_total && n <= META_MAXDISK; n++) red += !strcmp(g_disk[n].status, ST_REDUMP);
     out[0] = 0;
-    if (pul) { plural(part, 64, pul, L"pulito", L"puliti"); wcscat(out, part); }
-    if (red) {              /* "2 puliti (1 verificato con redump)" */
-        _snwprintf(part, 64, L" (%d verificat%ls con redump)", red, red == 1 ? L"o" : L"i"); part[63] = 0;
-        wcscat(out, part);
+    if (pul) { plural(part, 64, pul, T_SUM_CLEAN_ONE, T_SUM_CLEAN_MANY); sum_add(out, len, part, 0); }
+    if (red) {              /* "2 clean (1 verified with redump)" */
+        _snwprintf(part, 64, tr(red == 1 ? T_SUM_REDUMP_ONE : T_SUM_REDUMP_MANY), red); part[63] = 0;
+        sum_add(out, len, part, 1);
     }
-    if (mar) { plural(part, 64, mar, L"marginale", L"marginali"); if (out[0]) wcscat(out, L", "); wcscat(out, part); }
-    if (err) { _snwprintf(part, 64, L"%d con errori", err); part[63] = 0; if (out[0]) wcscat(out, L", "); wcscat(out, part); }
-    if (alt) {
-        plural(part, 64, alt, L"saltato o da rifare", L"saltati o da rifare");
-        if (out[0]) wcscat(out, L", ");
-        wcscat(out, part);
-    }
-    for (k = 0; k < MEDIA_KINDS; k++) {     /* "1 CD da leggere" */
+    if (mar) { plural(part, 64, mar, T_SUM_MARGINAL_ONE, T_SUM_MARGINAL_MANY); sum_add(out, len, part, 0); }
+    if (err) { _snwprintf(part, 64, tr(T_SUM_ERRORS), err); part[63] = 0; sum_add(out, len, part, 0); }
+    if (alt) { plural(part, 64, alt, T_SUM_OTHER_ONE, T_SUM_OTHER_MANY); sum_add(out, len, part, 0); }
+    for (k = 0; k < MEDIA_KINDS; k++) {     /* "1 CD to read" */
         if (!opt[k]) continue;
-        _snwprintf(part, 64, L"%d %ls da leggere", opt[k], kind_w[k]); part[63] = 0;
-        if (out[0]) wcscat(out, L", ");
-        wcscat(out, part);
+        _snwprintf(part, 64, tr(T_SUM_TOREAD), opt[k], kind_name(k, opt[k] == 1 ? KN_ONE : KN_MANY)); part[63] = 0;
+        sum_add(out, len, part, 0);
     }
-    if (!out[0]) wcsncpy(out, L"nessun supporto", len);
-    (void)len;
+    if (!out[0]) { wcsncpy(out, tr(T_SUM_NOTHING), len); out[len - 1] = 0; }
 }
 
 /* an open box resumed with the same title: the core does not ask again
@@ -2855,7 +2953,7 @@ static void seed_previous(void)
             const meta_disk *d = &b->disk[i];
             if (d->n < 1 || d->n > META_MAXDISK) continue;
             copy_disk(&g_disk[d->n], d);
-            /* the disks to redo are asked for again: for now they are "da leggere" */
+            /* the disks to redo are asked for again: for now they are ST_TO_READ */
             if (!meta_disk_done(d)) g_disk[d->n].status[0] = 0;
         }
     }
@@ -2890,7 +2988,7 @@ static void count_file(void *ctx, const char *name, int isdir)
 }
 
 /* the reads set aside on closing: outside data/, not in the manifest.
- * "messi-da-parte\FLOPPY01.dsk.danneggiato, ...", relative to the Cartella;
+ * "set-aside\FLOPPY01.dsk.damaged, ...", relative to the Folder;
  * the log has them with the full path */
 static void aside_fill(void)
 {
@@ -2900,7 +2998,7 @@ static void aside_fill(void)
     for (p = s.s; g_aside_n && *p; p = nl + 1) {
         nl = strchr(p, '\n');
         *nl = 0;
-        sb_printf(&t, "%s%s\\%s", p == s.s ? "" : ", ", SESSION_ASIDE_DIR, p);
+        sb_printf(&t, "%s%s\\%s", p == s.s ? "" : ", ", session_aside_dir(g_bagdir), p);
     }
     to_w(t.len ? t.s : "", w, 1100);
     SetDlgItemTextW(g_wnd, ID_BAGASIDE, w);
@@ -2909,21 +3007,20 @@ static void aside_fill(void)
 
 static void bag_fill(void)
 {
-    char data[640]; bag_count c; wchar_t w[700], a[64], b[64], mb[32], *p;
+    char data[640]; bag_count c; wchar_t w[700], a[64], b[64], mb[32];
     to_w(g_bagdir, w, 700);
     SetDlgItemTextW(g_wnd, ID_BAGDIR, w);
     memset(&c, 0, sizeof(c));
     u8_join(data, sizeof(data), g_bagdir, "data");
     c.dir = data;
     u8_listdir(data, count_file, &c);
-    plural(a, 64, c.img, L"immagine", L"immagini");
-    plural(b, 64, c.scan, L"scansione", L"scansioni");
-    _snwprintf(mb, 32, L"%.1f", (double)c.bytes / (1024.0 * 1024.0)); mb[31] = 0;
-    if ((p = wcschr(mb, L'.')) != NULL) *p = L',';          /* Italian decimal comma */
+    plural(a, 64, c.img, T_BAG_IMAGE_ONE, T_BAG_IMAGE_MANY);
+    plural(b, 64, c.scan, T_BAG_SCAN_ONE, T_BAG_SCAN_MANY);
+    lang_number((double)c.bytes / (1024.0 * 1024.0), 1, mb, 32);
     _snwprintf(w, 700, L"%ls, %ls%ls - %ls MB", a, b, c.meta ? L", metadata.json" : L"", mb); w[699] = 0;
     SetDlgItemTextW(g_wnd, ID_BAGCONT, w);
     /* EV_BOX_DONE arrives only after bag_close has recomputed and compared the hashes */
-    SetDlgItemTextW(g_wnd, ID_BAGHASH, L"SHA-256 calcolate e ricontrollate: tutte coincidono");
+    SetDlgItemTextW(g_wnd, ID_BAGHASH, tr(T_BAG_HASHES_OK));
     aside_fill();
 }
 
@@ -2950,8 +3047,8 @@ static void menu_text(const meta_box *b, wchar_t *out, int len)
     esc[k] = 0;
     for (i = 0; i < b->ndisk; i++) done += meta_disk_done(&b->disk[i]);
     for (k = 0; k < MEDIA_KINDS; k++) c[k] = meta_count(b, k);
-    _snwprintf(out, len, L"%ls  (%d di %d %ls %ls)", esc, done, b->media_expected,
-               noun(c, b->media_expected != 1), b->media_expected == 1 ? L"fatto" : L"fatti");
+    _snwprintf(out, len, tr(b->media_expected == 1 ? T_RESUME_ITEM_ONE : T_RESUME_ITEM_MANY), esc, done,
+               b->media_expected, noun(c, b->media_expected != 1));
     out[len - 1] = 0;
 }
 
@@ -2986,7 +3083,7 @@ static void fill_from(const meta_box *b)
     set_u8(ID_EDITION, b->edition);
     set_u8(ID_NOTES, b->notes);
     to_w(b->title, t, 300);
-    _snwprintf(w, 400, L"Riprendo «%ls»: premi Inizia.", t); w[399] = 0;
+    _snwprintf(w, 400, tr(T_RESUME_HINT), t); w[399] = 0;
     SetDlgItemTextW(g_wnd, ID_HINT, w);
 }
 
@@ -3003,8 +3100,7 @@ static void resume(void)
     if (!(l.tmp = meta_new())) return;
     to_w(root, wr, 512);
     if (u8_listdir(root, add_open, &l) || !l.n) {
-        _snwprintf(w, 700, L"Nella cartella %ls non c'è nessun cofanetto aperto da riprendere.\n\n"
-                            L"Se è in un'altra cartella, scegli quella in Cartella e premi di nuovo Riprendi.", wr);
+        _snwprintf(w, 700, tr(T_RESUME_NONE), wr);
         w[699] = 0;
         MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONINFORMATION);
         meta_delete(l.tmp);
@@ -3055,7 +3151,7 @@ static void files_text(const char *title, wchar_t *out, int len)
     if (setup_counts(c) || !(b = (meta_box *)calloc(1, sizeof(meta_box)))) return;
     str_copy(b->title, sizeof(b->title), title);
     for (k = 0; k < MEDIA_KINDS; k++) { names[k] = g_ini_names[k]; parts += c[k] > 0; }
-    wcsncat(out, L" · file ", len - wcslen(out) - 1);
+    wcsncat(out, tr(T_FILES_PREFIX), len - wcslen(out) - 1);
     for (k = 0; k < MEDIA_KINDS; k++) {
         if (!c[k]) continue;
         session_disk_base(b, names, k, 1, first, sizeof(first));
@@ -3067,7 +3163,7 @@ static void files_text(const char *title, wchar_t *out, int len)
         else str_copy(part, sizeof(part), first);
         to_w(part, w, 200);
         done++;
-        if (done > 1) wcsncat(out, done == parts ? L" e " : L", ", len - wcslen(out) - 1);
+        if (done > 1) wcsncat(out, done == parts ? tr(T_FILES_AND) : L", ", len - wcslen(out) - 1);
         wcsncat(out, w, len - wcslen(out) - 1);
     }
     free(b);
@@ -3083,10 +3179,10 @@ static void bagpath_update(void)
     if (title[0]) {
         session_bagdir(bag, sizeof(bag), dir, title);
         to_w(bag, wb, 800);
-        _snwprintf(w, 900, L"Il pacchetto sarà creato in %ls%ls", wb, f);
+        _snwprintf(w, 900, tr(T_BAGPATH), wb, f);
     } else {
         to_w(dir, wb, 800);
-        _snwprintf(w, 900, L"Il pacchetto sarà creato in %ls%ls<titolo>%ls", wb,
+        _snwprintf(w, 900, tr(T_BAGPATH_NOTITLE), wb,
                    wb[0] && wb[wcslen(wb) - 1] != L'\\' ? L"\\" : L"", f);
     }
     w[899] = 0;
@@ -3097,18 +3193,12 @@ static void bagpath_update(void)
 static const wchar_t *missing(int bad_counts)
 {
     int id = 0; const wchar_t *msg = NULL;
-    if (!g_box->title[0])         { id = ID_TITLE; msg = L"Manca il titolo del cofanetto."; }
-    else if (!g_box->platform[0]) { id = ID_PLATFORM; msg = L"Manca la piattaforma: scegline una dall'elenco o scrivila."; }
-    else if (bad_counts) {
-        id = ID_COUNT; msg = L"Mancano i supporti del cofanetto: quanti floppy, CD e DVD (da 1 a 64 in tutto).";
-    }
-    else if (!GetWindowTextLengthW(GetDlgItem(g_wnd, ID_DIR))) {
-        id = ID_DIR; msg = L"Manca la cartella dove salvare i cofanetti.";
-    }
+    if (!g_box->title[0])         { id = ID_TITLE; msg = tr(T_MISS_TITLE); }
+    else if (!g_box->platform[0]) { id = ID_PLATFORM; msg = tr(T_MISS_PLATFORM); }
+    else if (bad_counts)          { id = ID_COUNT; msg = tr(T_MISS_MEDIA); }
+    else if (!GetWindowTextLengthW(GetDlgItem(g_wnd, ID_DIR))) { id = ID_DIR; msg = tr(T_MISS_FOLDER); }
     /* a path chosen with "..." or read from the ini bypasses the typing limit */
-    else if (u8_len(ID_DIR) >= (int)sizeof(g_outdir)) {
-        id = ID_DIR; msg = L"Il percorso della cartella è troppo lungo: scegline uno più corto.";
-    }
+    else if (u8_len(ID_DIR) >= (int)sizeof(g_outdir)) { id = ID_DIR; msg = tr(T_MISS_TOOLONG); }
     if (id) SetFocus(GetDlgItem(g_wnd, id));
     return msg;
 }
@@ -3144,14 +3234,11 @@ static int dic_ready(void)
     wchar_t w[700], t[200];
     if (g_dic_state == DIC_OK) return 1;
     if (g_dic_state == DIC_CHECKING) {
-        MessageBoxW(g_wnd, L"Sto ancora controllando DiscImageCreator: riprova fra un attimo.",
-                    L"RetroArchiver", MB_ICONINFORMATION);
+        MessageBoxW(g_wnd, tr(T_DIC_WAIT), L"RetroArchiver", MB_ICONINFORMATION);
         return 0;
     }
     dic_text(t, 200, 0);
-    _snwprintf(w, 700, L"%ls.\n\nNel campo DiscImageCreator scrivi il percorso completo di DiscImageCreator.exe "
-                       L"(per esempio C:\\DIC\\DiscImageCreator.exe), oppure copialo accanto a RetroArchiver.exe "
-                       L"con le sue DLL. Su Windows XP servono i runtime di Visual C++ 2015-2019 x86, versione 14.27.", t);
+    _snwprintf(w, 700, tr(T_DIC_FIX), t);
     w[699] = 0;
     MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
     SetFocus(GetDlgItem(g_wnd, ID_DIC));
@@ -3164,14 +3251,11 @@ static int samdisk_ready(void)
     wchar_t w[600], t[200];
     if (g_sd_state == SD_OK) return 1;
     if (g_sd_state == SD_CHECKING) {
-        MessageBoxW(g_wnd, L"Sto ancora controllando SAMdisk: riprova fra un attimo.",
-                    L"RetroArchiver", MB_ICONINFORMATION);
+        MessageBoxW(g_wnd, tr(T_SD_WAIT), L"RetroArchiver", MB_ICONINFORMATION);
         return 0;
     }
     samdisk_text(t, 200);
-    _snwprintf(w, 600, L"%ls.\n\nNel campo SAMdisk scrivi il percorso completo di samdisk.exe della serie 3.x "
-                       L"(per esempio C:\\SAMdisk\\samdisk.exe), oppure copia samdisk.exe accanto a "
-                       L"RetroArchiver.exe e lascia scritto solo samdisk.", t);
+    _snwprintf(w, 600, tr(T_SD_FIX), t);
     w[599] = 0;
     MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
     SetFocus(GetDlgItem(g_wnd, ID_SAMDISK));
@@ -3188,7 +3272,7 @@ static void start(void)
     HANDLE th;
 
     if (!g_box) g_box = meta_new();
-    if (!g_box) { MessageBoxW(g_wnd, L"Memoria insufficiente.", L"RetroArchiver", MB_ICONERROR); return; }
+    if (!g_box) { MessageBoxW(g_wnd, tr(T_ERR_MEMORY), L"RetroArchiver", MB_ICONERROR); return; }
     memset(g_box, 0, sizeof(*g_box));
     get_u8_trim(ID_TITLE, g_box->title, sizeof(g_box->title));
     get_u8_trim(ID_PLATFORM, g_box->platform, sizeof(g_box->platform));
@@ -3245,7 +3329,7 @@ static void start(void)
     g_t_sess = GetTickCount();
     SetTimer(g_wnd, TIMER_ID, 1000, NULL);
     SetTimer(g_wnd, TIMER_LINES, LINES_MS, NULL);
-    banner(B_BLUE, L"...", 0, L"Preparo il cofanetto...", L"Creo il pacchetto o riprendo quello aperto.");
+    banner(B_BLUE, L"...", 0, tr(T_START_TITLE), tr(T_START_TEXT));
     view(V_WORK);
     focus_to(g_log);
     g_running = 1;
@@ -3265,7 +3349,7 @@ static void start(void)
         KillTimer(g_wnd, TIMER_ID);
         KillTimer(g_wnd, TIMER_LINES);
         view(V_SETUP);
-        MessageBoxW(g_wnd, L"Non riesco ad avviare la sessione.", L"RetroArchiver", MB_ICONERROR);
+        MessageBoxW(g_wnd, tr(T_ERR_NOSTART), L"RetroArchiver", MB_ICONERROR);
     }
 }
 
@@ -3309,25 +3393,20 @@ static void archive_scan(void)
 /* the archive folder is the same as the setup one: it is remembered */
 static void save_dir(void)
 {
-    ini_store(0);                       /* Cartella */
+    ini_store(0);                       /* ArchiveFolder */
 }
 
 /* ---- archive: texts ---- */
 
 static void fmt_mb(long long bytes, wchar_t *out, int n)
 {
-    wchar_t *p;
-    _snwprintf(out, n, L"%.1f", (double)bytes / (1024.0 * 1024.0)); out[n - 1] = 0;
-    if ((p = wcschr(out, L'.')) != NULL) *p = L',';          /* Italian decimal comma */
+    lang_number((double)bytes / (1024.0 * 1024.0), 1, out, n);
 }
 
-/* "2026-10-14T21:20:11" -> "14/10/2026" */
+/* "2026-10-14T21:20:11" -> "14/10/2026", as the language writes dates */
 static void fmt_date(const char *d, wchar_t *out, int n)
 {
-    out[0] = 0;
-    if (strlen(d) < 10) return;
-    _snwprintf(out, n, L"%c%c/%c%c/%c%c%c%c", d[8], d[9], d[5], d[6], d[0], d[1], d[2], d[3]);
-    out[n - 1] = 0;
+    lang_date(d, out, n);
 }
 
 static int tone_ban(int tone)
@@ -3377,7 +3456,7 @@ static void platforms_fill(void)
             SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)w);
     }
     /* the list is sorted: "Tutte" is put on top by hand */
-    SendMessageW(cb, CB_INSERTSTRING, 0, (LPARAM)L"Tutte le piattaforme");
+    SendMessageW(cb, CB_INSERTSTRING, 0, (LPARAM)tr(T_ARC_ALLPLAT));
     k = cur[0] ? (int)SendMessageW(cb, CB_FINDSTRINGEXACT, (WPARAM)-1, (LPARAM)cur) : 0;
     SendMessageW(cb, CB_SETCURSEL, k == CB_ERR ? 0 : k, 0);
 }
@@ -3536,7 +3615,7 @@ static void paint_summary(HDC dc, int w, int h)
     long long bytes = 0;
     if (!g_arc_loaded) {
         SetTextColor(dc, RGB(0x44, 0x44, 0x44));
-        DrawTextW(dc, L"Leggo l'archivio...", -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(dc, tr(T_READY_ARC_LOADING), -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         return;
     }
     for (i = 0; i < g_nrows; i++) {
@@ -3548,9 +3627,9 @@ static void paint_summary(HDC dc, int w, int h)
         else if (bx->state == ARC_OPEN) open++;
         else broken++;
     }
-    plural(a, 64, g_nrows, L"cofanetto", L"cofanetti");
+    plural(a, 64, g_nrows, T_ARC_BOX_ONE, T_ARC_BOX_MANY);
     comp_text(disks, b, 64);                /* the archived media, per kind */
-    if (!b[0]) wcscpy(b, L"nessun supporto");
+    if (!b[0]) { wcsncpy(b, tr(T_ARC_NOMEDIA), 64); b[63] = 0; }
     fmt_mb(bytes, mb, 32);
     _snwprintf(t, 200, L"%ls, %ls, %ls MB", a, b, mb); t[199] = 0;
     SelectObject(dc, g_mid);
@@ -3559,13 +3638,13 @@ static void paint_summary(HDC dc, int w, int h)
     GetTextExtentPoint32W(dc, t, (int)wcslen(t), &sz);
     x = sz.cx + 10;
     SelectObject(dc, g_font);
-    if (comp) { plural(t, 200, comp, L"completo", L"completi"); x = pill(dc, x, h, t, B_GREEN); }
-    if (inc)  { plural(t, 200, inc, L"incompleto", L"incompleti"); x = pill(dc, x, h, t, B_ORANGE); }
-    if (open) { plural(t, 200, open, L"aperto, da riprendere", L"aperti, da riprendere"); x = pill(dc, x, h, t, B_BLUE); }
+    if (comp) { plural(t, 200, comp, T_ARC_COMPLETE_ONE, T_ARC_COMPLETE_MANY); x = pill(dc, x, h, t, B_GREEN); }
+    if (inc)  { plural(t, 200, inc, T_ARC_INCOMPLETE_ONE, T_ARC_INCOMPLETE_MANY); x = pill(dc, x, h, t, B_ORANGE); }
+    if (open) { plural(t, 200, open, T_ARC_OPEN_ONE, T_ARC_OPEN_MANY); x = pill(dc, x, h, t, B_BLUE); }
     /* disks with errors are always reported, even when there are none */
-    if (err) { plural(t, 200, err, L"disco con errori", L"dischi con errori"); x = pill(dc, x, h, t, B_RED); }
-    else x = pill(dc, x, h, L"nessun disco con errori", PILL_GREY);
-    if (broken) { plural(t, 200, broken, L"illeggibile", L"illeggibili"); pill(dc, x, h, t, B_RED); }
+    if (err) { plural(t, 200, err, T_ARC_ERRDISK_ONE, T_ARC_ERRDISK_MANY); x = pill(dc, x, h, t, B_RED); }
+    else x = pill(dc, x, h, tr(T_ARC_NOERRORS), PILL_GREY);
+    if (broken) { plural(t, 200, broken, T_ARC_BROKEN_ONE, T_ARC_BROKEN_MANY); pill(dc, x, h, t, B_RED); }
 }
 
 static void dot(HDC dc, int x, int y, int d, COLORREF c)
@@ -3595,7 +3674,7 @@ static void detail_meta(const arc_box *b, wchar_t *out, int n)
     if (b->edition[0]) {
         to_w(b->edition, w, 200);
         if (out[0]) wcsncat(out, L" · ", n - wcslen(out) - 1);
-        wcsncat(out, L"versione ", n - wcslen(out) - 1);
+        wcsncat(out, tr(T_DETAIL_VERSION), n - wcslen(out) - 1);
         wcsncat(out, w, n - wcslen(out) - 1);
     }
     fmt_mb(b->bytes, mb, 32);
@@ -3607,12 +3686,13 @@ static void detail_meta(const arc_box *b, wchar_t *out, int n)
  * marginal or fragile, red error, grey still to do */
 static int paint_chips(HDC dc, const arc_box *b, int y, int w)
 {
-    SIZE sz, ts; RECT r; wchar_t num[12];
+    SIZE sz, ts; RECT r; wchar_t num[24];
+    const wchar_t *label = tr(T_DETAIL_MEDIA);
     int i, x, cw, kind, n;
     SetTextColor(dc, RGB(0x44, 0x44, 0x44));
-    GetTextExtentPoint32W(dc, L"Supporti", 8, &sz);
+    GetTextExtentPoint32W(dc, label, (int)wcslen(label), &sz);
     SetRect(&r, 0, y, sz.cx, y + 18);
-    DrawTextW(dc, L"Supporti", -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(dc, label, -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     x = sz.cx + 8;
     SelectObject(dc, g_bold);
     for (i = 0; b->disks[i]; i++) {
@@ -3624,10 +3704,10 @@ static int paint_chips(HDC dc, const arc_box *b, int y, int w)
         HGDIOBJ op, ob;
         /* floppies with their number; a single CD is called "CD", several CDs "CD1", "CD2" */
         arc_slot(b, i + 1, &kind, &n);
-        if (kind == MEDIA_FLOPPY) _snwprintf(num, 12, L"%d", n);
-        else if (b->count[kind] > 1) _snwprintf(num, 12, L"%ls%d", kind_w[kind], n);
-        else _snwprintf(num, 12, L"%ls", kind_w[kind]);
-        num[11] = 0;
+        if (kind == MEDIA_FLOPPY) _snwprintf(num, 24, L"%d", n);
+        else if (b->count[kind] > 1) _snwprintf(num, 24, L"%ls%d", kind_name(kind, KN_CAP), n);
+        else _snwprintf(num, 24, L"%ls", kind_name(kind, KN_CAP));
+        num[23] = 0;
         GetTextExtentPoint32W(dc, num, (int)wcslen(num), &ts);
         cw = 4 + 10 + 3 + ts.cx + 5;
         if (cw < 30) cw = 30;
@@ -3655,8 +3735,7 @@ static void paint_detail(HDC dc, int w, int h)
     int y = 0, k, th;
     if (g_pick < 0 || g_pick >= g_arc.n) {
         SetTextColor(dc, RGB(0x60, 0x60, 0x60));
-        DrawTextW(dc, !g_arc_loaded ? L"Leggo l'archivio..."
-                      : L"Nessun cofanetto corrisponde alla ricerca: cambia le parole cercate o la piattaforma.",
+        DrawTextW(dc, tr(!g_arc_loaded ? T_READY_ARC_LOADING : T_ARC_NOMATCH),
                   -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
         return;
     }
@@ -3697,8 +3776,9 @@ static void paint_detail(HDC dc, int w, int h)
 
     if (b->disks[0]) y = paint_chips(dc, b, y, w) + 6;
     SetTextColor(dc, RGB(0x44, 0x44, 0x44));
-    if (b->notes[0]) { to_w(b->notes, n, 600); _snwprintf(t, 1200, L"Note: %ls", n); t[1199] = 0; }
-    else wcscpy(t, L"Nessuna nota.");
+    if (b->notes[0]) { to_w(b->notes, n, 600); _snwprintf(t, 1200, tr(T_DETAIL_NOTES), n); }
+    else wcsncpy(t, tr(T_DETAIL_NONOTES), 1200);
+    t[1199] = 0;
     SetRect(&r, 0, y, w, y + 16);
     if (y + 12 < h) DrawTextW(dc, t, -1, &r, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 }
@@ -3741,7 +3821,7 @@ static void go_setup(int from_archive)
         GetDlgItemTextW(g_wnd, ID_ADIR, w, 512);
         SetDlgItemTextW(g_wnd, ID_DIR, w);
     }
-    SetDlgItemTextW(g_wnd, ID_HINT, HINT);
+    SetDlgItemTextW(g_wnd, ID_HINT, tr(T_SETUP_HINT));
     view(V_SETUP);
     bagpath_update();
     /* coming from the archive SAMdisk is already checked: checking again
@@ -3817,7 +3897,7 @@ static void verify_pick(void)
     sbar_update();
 }
 
-static void add_count(wchar_t *out, int n, int k, const wchar_t *one, const wchar_t *many)
+static void add_count(wchar_t *out, int n, int k, int one, int many)
 {
     wchar_t p[100];
     if (!k) return;
@@ -3836,26 +3916,20 @@ static void on_verify(vf_result *r)
     if (!title[0]) to_w(r->dir, title, 300);
     to_w(r->c.first, first, 200);
     what[0] = 0;
-    add_count(what, 300, r->c.changed, L"file cambiato", L"file cambiati");
-    add_count(what, 300, r->c.lost, L"file mancante", L"file mancanti");
-    add_count(what, 300, r->c.extra, L"file in più che il manifest non elenca", L"file in più che il manifest non elenca");
+    add_count(what, 300, r->c.changed, T_VF_CHANGED_ONE, T_VF_CHANGED_MANY);
+    add_count(what, 300, r->c.lost, T_VF_LOST_ONE, T_VF_LOST_MANY);
+    add_count(what, 300, r->c.extra, T_VF_EXTRA_ONE, T_VF_EXTRA_MANY);
     if (r->rc) {
         to_w(r->err, what, 300);
-        _snwprintf(w, 1200, L"Non riesco a ricontrollare le impronte di «%ls»: %ls.", title, what);
+        _snwprintf(w, 1200, tr(T_VF_CANNOT), title, what);
         icon = MB_ICONEXCLAMATION;
     } else if (r->open && !r->c.files) {
-        _snwprintf(w, 1200, L"«%ls» non ha ancora dischi letti: non c'è niente da ricontrollare.", title);
+        _snwprintf(w, 1200, tr(T_VF_EMPTY), title);
     } else if (!bad && !r->c.extra) {
-        _snwprintf(w, 1200, r->open ? L"«%ls»: %d file ricontrollati, tutti identici a subito dopo la lettura."
-                                    : L"«%ls»: %d file ricontrollati, tutti identici a quando il pacchetto è stato chiuso.",
-                   title, r->c.files);
+        _snwprintf(w, 1200, tr(r->open ? T_VF_OK_OPEN : T_VF_OK_CLOSED), title, r->c.files);
     } else {
-        _snwprintf(w, 1200, L"In «%ls» ci sono %ls (il primo: %ls).\n\n%ls", title, what, first,
-                   r->open ? L"Riprendi il cofanetto: alla chiusura il disco con l'impronta diversa viene messo "
-                             L"da parte e richiesto di nuovo."
-                   : bad ? L"Il pacchetto non è più integro: rimetti quei file da una copia dell'archivio, "
-                           L"oppure rileggi i dischi con un nuovo cofanetto."
-                         : L"Togli da data i file in più: il resto del pacchetto è integro.");
+        _snwprintf(w, 1200, tr(T_VF_BAD), title, what, first,
+                   tr(r->open ? T_VF_BAD_OPEN : bad ? T_VF_BAD_CLOSED : T_VF_EXTRA_ONLY));
         icon = MB_ICONEXCLAMATION;
     }
     w[1199] = 0;
@@ -3871,33 +3945,28 @@ static void on_verify(vf_result *r)
  * fragile */
 static void work_banner(void)
 {
-    wchar_t sub[300], title[120];
+    wchar_t sub[400], title[160], phase[64], tail[80];
     int kind, num;
     slot(g_cur, &kind, &num);
+    phase_text(g_phase_name, phase, 64);
     if (kind == MEDIA_FLOPPY) {
-        _snwprintf(sub, 300, L"%ls %d di %d%ls%ls. Non togliere il dischetto finché la lettura non è finita.",
-                   kind_cap[kind], num, g_count[kind], g_phase_name[0] ? L": " : L"", g_phase_name);
-        sub[299] = 0;
-        if (g_reread) banner_num(B_ORANGE, g_cur, L"Le letture non coincidono: faccio un'altra lettura", sub);
-        else if (g_fragile) banner_num(B_ORANGE, g_cur, L"Disco fragile: una sola lettura prudente", sub);
-        else banner_num(B_BLUE, g_cur, L"Lettura in corso: non togliere il dischetto", sub);
+        /* "Floppy 2 of 3: Read 1." */
+        _snwprintf(tail, 80, L"%ls%ls", phase[0] ? L": " : L"", phase); tail[79] = 0;
+        _snwprintf(sub, 400, tr(T_WORK_FLOPPY_SUB), kind_name(kind, KN_CAP), num, g_count[kind], tail);
+        sub[399] = 0;
+        if (g_reread) banner_num(B_ORANGE, g_cur, tr(T_WORK_REREAD), sub);
+        else if (g_fragile) banner_num(B_ORANGE, g_cur, tr(T_WORK_FRAGILE), sub);
+        else banner_num(B_BLUE, g_cur, tr(T_WORK_READING), sub);
         return;
     }
-    /* CDs and DVDs: DiscImageCreator, 10 to 30 minutes per read */
-    _snwprintf(sub, 300, L"%ls %d di %d nel lettore %ls%ls%ls%ls. Non aprire il lettore finché la lettura non è "
-                         L"finita: un CD intero richiede da 10 a 30 minuti.",
-               kind_cap[kind], num, g_count[kind], g_drive_w, g_phase_name[0] ? L" (" : L"", g_phase_name,
-               g_phase_name[0] ? L")" : L"");
-    sub[299] = 0;
-    if (g_reread) {
-        _snwprintf(title, 120, L"Una lettura non basta: rileggo il %ls per il confronto", kind_w[kind]);
-        title[119] = 0;
-        banner(B_ORANGE, NULL, ICON_DISC, title, sub);
-    } else {
-        _snwprintf(title, 120, L"Lettura in corso: non togliere il %ls", kind_w[kind]);
-        title[119] = 0;
-        banner(B_BLUE, NULL, ICON_DISC, title, sub);
-    }
+    /* CDs and DVDs: DiscImageCreator, 10 to 30 minutes per read; "CD 1 of 1 in drive D: (TOC)." */
+    if (phase[0]) _snwprintf(tail, 80, L" (%ls)", phase); else tail[0] = 0;
+    tail[79] = 0;
+    _snwprintf(sub, 400, tr(T_WORK_OPT_SUB), kind_name(kind, KN_CAP), num, g_count[kind], g_drive_w, tail);
+    sub[399] = 0;
+    _snwprintf(title, 160, tr(g_reread ? T_WORK_OPT_REREAD : T_WORK_OPT_READING), kind_name(kind, KN_ONE));
+    title[159] = 0;
+    banner(g_reread ? B_ORANGE : B_BLUE, NULL, ICON_DISC, title, sub);
 }
 
 /* the disk being read is a CD or a DVD */
@@ -3943,11 +4012,11 @@ static void answer(int cmd)
     SetWindowTextW(g_cyltxt, L"");
     SetWindowTextW(g_elapsed, L"");
     if (cmd == CMD_SKIP || (cmd == CMD_READ && !g_turn.readable)) {
-        _snwprintf(w, 300, g_turn.readable ? L"Salto il %ls." : L"Il %ls resta da leggere.", who); w[299] = 0;
+        _snwprintf(w, 300, tr(g_turn.readable ? T_ANSWER_SKIP : T_ANSWER_LATER), who); w[299] = 0;
         banner(B_BLUE, L"...", 0, w, NULL);
     }
     else if (cmd == CMD_FINISH)
-        banner(B_BLUE, L"...", 0, L"Chiudo il cofanetto...", L"Calcolo e ricontrollo le impronte SHA-256 dei file.");
+        banner(B_BLUE, L"...", 0, tr(T_ANSWER_CLOSING), tr(T_ANSWER_CLOSING_TEXT));
     else work_banner();
     view(V_WORK);
     SetFocus(g_log);            /* not on Interrompi: one Enter too many would stop the read */
@@ -4013,8 +4082,8 @@ static void show_opt(long done, long total)
     SendMessageW(g_diskbar, PBM_SETPOS, pm, 0);
     if (pm >= 10 && pm < OPT_MAX && el > 15000) {
         DWORD left = (DWORD)((double)el * (OPT_MAX - pm) / pm / 1000.0);
-        if (left >= 60) _snwprintf(w, 64, L"%d%%, ancora %lu min", pm / 10, (unsigned long)((left + 30) / 60));
-        else _snwprintf(w, 64, L"%d%%, ancora %lu s", pm / 10, (unsigned long)left);
+        if (left >= 60) _snwprintf(w, 64, tr(T_BAR_OPT_MIN), pm / 10, (unsigned long)((left + 30) / 60));
+        else _snwprintf(w, 64, tr(T_BAR_OPT_SEC), pm / 10, (unsigned long)left);
     } else {
         _snwprintf(w, 64, L"%d%%", pm / 10);
     }
@@ -4026,60 +4095,44 @@ static void show_cyl(int cyl)
 {
     wchar_t w[64];
     SendMessageW(g_diskbar, PBM_SETPOS, cyl > CYL_MAX ? CYL_MAX : cyl, 0);
-    _snwprintf(w, 64, L"Cilindro %d di %d", cyl, CYL_MAX); w[63] = 0;
+    _snwprintf(w, 64, tr(T_BAR_CYL), cyl, CYL_MAX); w[63] = 0;
     SetWindowTextW(g_cyltxt, w);
 }
 
-/* the core's texts are meant for the XP console: "c'e'", "unita'". In the
- * window, vowels with an apostrophe at the end of a word get their accent
- * back (the closed e of "perche'" becomes an open one: better than the
- * apostrophe) */
-static void accents(wchar_t *s)
+static int starts(const char *s, const char *head)
 {
-    static const wchar_t plain[] = L"aeiouAEIOU", acc[] = L"àèìòùÀÈÌÒÙ";
-    wchar_t *p, *q;
-    for (p = s, q = s; *p; p++) {
-        const wchar_t *v = wcschr(plain, *p);
-        if (v && *v && p[1] == L'\'' && (!p[2] || wcschr(L" .,:;)!?\n", p[2]))) {
-            *q++ = acc[v - plain];
-            p++;                        /* the apostrophe is no longer needed */
-            continue;
-        }
-        *q++ = *p;
-    }
-    *q = 0;
+    return !strncmp(s, head, strlen(head));
 }
 
 /* two core notices change the banner and the expected phases; the text is
- * session.c's, and if it changes only the colour is lost */
+ * session.c's and optical.c's, in English: if it changes only the colour is lost */
 static void notice(const char *s)
 {
     /* a CD not found in redump: second read and comparison */
-    if (strstr(s, "non e' verificato da redump")) {
+    if (strstr(s, "is not verified by redump")) {
         g_reread = 1;
         pills_reread();
         work_banner();
-    } else if (!strncmp(s, "Le letture non coincidono", 25)) {
+    } else if (starts(s, "The reads do not match: making another read")) {
         g_reread = 1;
         pills_reread();
         work_banner();
-    } else if (!strncmp(s, "La ricognizione ha trovato settori difettosi", 44)) {
+    } else if (starts(s, "The survey found bad sectors")) {
         g_fragile = 1;
         if (g_pcur >= 0) { pills_future(); repaint(g_pills); }
         work_banner();
-    } else if (!strncmp(s, "Nel lettore non c'e' un ", 24) || !strncmp(s, "DiscImageCreator si e' fermato", 30) ||
-               !strncmp(s, "DiscImageCreator non apre", 25) || !strncmp(s, "DiscImageCreator ha finito", 26)) {
+    } else if (starts(s, "The drive does not hold a ") || starts(s, "DiscImageCreator stopped") ||
+               starts(s, "DiscImageCreator cannot open") || starts(s, "DiscImageCreator finished")) {
         /* why a CD read failed (optical.c): it goes into the Riprova banner */
         to_w(s, g_why, 600);
-        accents(g_why);
     }
 }
 
 static void on_phase(int disk, const wchar_t *t)
 {
-    wchar_t w[1100], who[32];
+    wchar_t w[1100], who[32], phase[64];
     wcsncpy(g_phase_name, t, 127); g_phase_name[127] = 0;
-    if (!wcscmp(t, L"Scansione") || !wcscmp(t, L"TOC")) g_reread = g_fragile = 0;
+    if (!wcscmp(t, L"Scan") || !wcscmp(t, L"TOC")) g_reread = g_fragile = 0;
     g_cur = disk;
     g_t_phase = GetTickCount();
     /* floppy: cylinders; CD and DVD: thousandths of the read */
@@ -4091,7 +4144,8 @@ static void on_phase(int disk, const wchar_t *t)
     work_banner();
     sbar_update();
     slot_name(disk, 0, who, 32);
-    _snwprintf(w, 1100, L"--- %ls: %ls ---", who, t); w[1099] = 0;
+    phase_text(t, phase, 64);
+    _snwprintf(w, 1100, L"--- %ls: %ls ---", who, phase); w[1099] = 0;
     log_append(w);
 }
 
@@ -4104,7 +4158,7 @@ static void on_disk_done(const gui_event *e, const wchar_t *t)
     if (n >= 1 && n <= META_MAXDISK) {
         g_disk[n] = e->info;
         /* the serial number read before was the wrong disk's */
-        if (!strcmp(g_disk[n].status, "duplicato")) memset(&g_vol[n], 0, sizeof(g_vol[n]));
+        if (!strcmp(g_disk[n].status, ST_DUPLICATE)) memset(&g_vol[n], 0, sizeof(g_vol[n]));
         list_row(n);
     }
     pills_done();
@@ -4170,16 +4224,17 @@ static void on_event(gui_event *e)
         break;
     case EV_BOX_DONE:
         g_bag_closed = 1;
-        g_bag_complete = !strcmp(s, "completo");
-        _snwprintf(w, 1100, L"Cofanetto %ls: pacchetto chiuso e verificato.", t); w[1099] = 0;
+        g_bag_complete = bag_status_complete(s);
+        _snwprintf(w, 1100, tr(T_LOG_BOX_DONE), tr(g_bag_complete ? T_LOG_BOX_COMPLETE : T_LOG_BOX_INCOMPLETE));
+        w[1099] = 0;
         log_append(w);
         sbar_update();
         break;
     case EV_ERROR:
         wcsncpy(g_last_err, t, 599); g_last_err[599] = 0;
-        _snwprintf(w, 1100, L"ERRORE: %ls", t); w[1099] = 0;
+        _snwprintf(w, 1100, tr(T_LOG_ERROR), t); w[1099] = 0;
         log_append(w);
-        if (g_view == V_WORK) banner(B_RED, L"!", 0, L"Errore", t);
+        if (g_view == V_WORK) banner(B_RED, L"!", 0, tr(T_BANNER_ERROR), t);
         sound(SND_ERROR);
         g_errbeep = 1;
         break;
@@ -4207,11 +4262,10 @@ static void queue_drain(int show)
 static void wait_unreadable(const disk_turn *t)
 {
     wchar_t w[160], text[400];
-    const wchar_t *k = kind_w[t->kind];
-    _snwprintf(w, 160, L"%ls %d di %d: la lettura dei %ls non c'è ancora", kind_cap[t->kind], t->num, t->count, k);
+    _snwprintf(w, 160, tr(T_UNREAD_TITLE), kind_name(t->kind, KN_CAP), t->num, t->count,
+               kind_name(t->kind, KN_MANY));
     w[159] = 0;
-    _snwprintf(text, 400, L"Il %ls resta da leggere e il cofanetto aperto: lo riprenderai con Riprendi quando "
-                          L"RetroArchiver saprà leggere i %ls. Premi Salta per continuare.", k, k);
+    _snwprintf(text, 400, tr(T_UNREAD_TEXT), kind_name(t->kind, KN_ONE), kind_name(t->kind, KN_MANY));
     text[399] = 0;
     banner(B_BLUE, NULL, ICON_DISC, w, text);
 }
@@ -4225,84 +4279,53 @@ static void wait_banner(void)
 {
     wchar_t w[160];
     int retry = g_retry != 0;
-    const char *last = g_retry == 2 ? "interrotto" : "lettura fallita";
+    const char *last = g_retry == 2 ? ST_INTERRUPTED : ST_FAILED;
     int autom = g_auto_state != AUTO_OFF, again = g_turn.kind == MEDIA_FLOPPY ? g_fd_used : g_opt_used;
     if (!g_turn.readable) {
         wait_unreadable(&g_turn);
     } else if (g_retry == 3) {
-        wchar_t who[32], other[32], text[400];
-        const wchar_t *what = g_turn.kind == MEDIA_FLOPPY ? L"dischetto" : L"disco";
+        wchar_t who[32], other[64], text[500];
+        const wchar_t *what = tr(g_turn.kind == MEDIA_FLOPPY ? T_NOUN_DISKETTE : T_NOUN_DISC);
         int t = g_cur >= 1 && g_cur <= META_MAXDISK ? g_disk[g_cur].twin : 0;
         slot_name(g_cur, 0, who, 32);
-        if (t) slot_name(t, 0, other, 32); else wcscpy(other, L"un altro disco");
-        _snwprintf(w, 160, L"Il %ls è identico al %ls", who, other); w[159] = 0;
-        _snwprintf(text, 400, autom
-                   ? L"Togli il %ls e inserisci il %ls giusto: riparto da solo. Oppure Rileggi (F5) o Salta "
-                     L"(Alt+S). Le letture sbagliate sono in messi-da-parte, non cancellate; se i due dischi sono "
-                     L"davvero uguali, rileggilo: alla seconda volta lo tengo."
-                   : L"Togli il %ls, inserisci il %ls giusto e premi Rileggi (F5), oppure Salta (Alt+S). Le letture "
-                     L"sbagliate sono in messi-da-parte, non cancellate; se i due dischi sono davvero uguali, "
-                     L"rileggilo: alla seconda volta lo tengo.", what, who);
-        text[399] = 0;
+        if (t) slot_name(t, 0, other, 64); else { wcsncpy(other, tr(T_DUP_OTHER), 64); other[63] = 0; }
+        _snwprintf(w, 160, tr(T_DUP_TITLE), who, other); w[159] = 0;
+        _snwprintf(text, 500, tr(autom ? T_DUP_TEXT_AUTO : T_DUP_TEXT), what, who);
+        text[499] = 0;
         if (g_turn.kind == MEDIA_FLOPPY) banner(B_ORANGE, L"!", 0, w, text);
         else banner(B_ORANGE, NULL, ICON_DISC, w, text);
     } else if (retry) {
-        _snwprintf(w, 160, L"%ls %d: lettura %ls", kind_cap[g_turn.kind], g_turn.num,
-                   !strcmp(last, "interrotto") ? L"interrotta" : L"non riuscita");
+        _snwprintf(w, 160, tr(!strcmp(last, ST_INTERRUPTED) ? T_RETRY_STOPPED : T_RETRY_FAILED),
+                   kind_name(g_turn.kind, KN_CAP), g_turn.num);
         w[159] = 0;
         /* after Interrompi the user often wants to stop: say how; a CD says
          * why DiscImageCreator did not read it (not visible in the log) */
-        if (!strcmp(last, "interrotto"))
-            banner(B_ORANGE, L"!", 0, w, L"Premi Riprova per rileggerlo, Salta per passare al successivo, oppure "
-                                         L"chiudi la finestra: il cofanetto resta aperto e lo riprendi dall'archivio");
-        else if (g_turn.kind == MEDIA_FLOPPY && autom)
-            banner(B_ORANGE, L"!", 0, w, L"Controlla il dischetto e rimettilo nel lettore: riparto da solo. "
-                                         L"Oppure premi Riprova (F5) o Salta (Alt+S).");
+        if (!strcmp(last, ST_INTERRUPTED))
+            banner(B_ORANGE, L"!", 0, w, tr(T_RETRY_TEXT_STOPPED));
         else if (g_turn.kind == MEDIA_FLOPPY)
-            banner(B_ORANGE, L"!", 0, w, L"Controlla il dischetto, rimettilo nel lettore e premi Riprova (F5), "
-                                         L"oppure Salta (Alt+S).");
+            banner(B_ORANGE, L"!", 0, w, tr(autom ? T_RETRY_TEXT_AUTO : T_RETRY_TEXT_FLOPPY));
         else {
             wchar_t why[700];
-            if (g_why[0]) _snwprintf(why, 700, L"%ls\nPoi premi Riprova (F5), oppure Salta (Alt+S).", g_why);
-            else _snwprintf(why, 700, L"Controlla il disco (il tipo giusto, pulito), rimettilo nel lettore e "
-                                      L"premi Riprova (F5), oppure Salta (Alt+S).");
+            if (g_why[0]) _snwprintf(why, 700, tr(T_RETRY_TEXT_WHY), g_why);
+            else wcsncpy(why, tr(T_RETRY_TEXT_DISC), 700);
             why[699] = 0;
             banner(B_ORANGE, L"!", 0, w, why);
         }
     } else if (g_turn.kind != MEDIA_FLOPPY) {
-        wchar_t sub[400];
-        if (g_turn.count > 1)
-            _snwprintf(w, 160, L"Inserisci il %ls %d di %d nel lettore %ls", kind_w[g_turn.kind], g_turn.num,
-                       g_turn.count, g_drive_w);
-        else
-            _snwprintf(w, 160, L"Inserisci il %ls nel lettore %ls", kind_w[g_turn.kind], g_drive_w);
+        wchar_t sub[500];
+        const wchar_t *k = kind_name(g_turn.kind, KN_ONE);
+        if (g_turn.count > 1) _snwprintf(w, 160, tr(T_INS_OPT_N), k, g_turn.num, g_turn.count, g_drive_w);
+        else _snwprintf(w, 160, tr(T_INS_OPT_ONE), k, g_drive_w);
         w[159] = 0;
-        if (autom)
-            _snwprintf(sub, 400, L"Lettura automatica: %ls, quando Windows lo vede parto da solo (da 10 a 30 "
-                                 L"minuti). Invio o F5 legge subito, Alt+S salta, Esc torna alla lettura a mano. "
-                                 L"Etichetta del %ls (facoltativa):",
-                       again ? L"togli il disco appena letto e inserisci questo" : L"inserisci il disco",
-                       kind_w[g_turn.kind]);
-        else
-            _snwprintf(sub, 400, L"Chiudi il lettore, aspetta che la spia smetta di lampeggiare, poi premi Invio o "
-                                 L"Leggi (F5); F2 rilegge l'etichetta, Alt+S salta. La lettura con "
-                                 L"DiscImageCreator dura da 10 a 30 minuti. Etichetta del %ls "
-                                 L"(facoltativa):", kind_w[g_turn.kind]);
-        sub[399] = 0;
+        if (autom) _snwprintf(sub, 500, tr(T_INS_OPT_AUTO), tr(again ? T_INS_OPT_AGAIN : T_INS_OPT_FIRST), k);
+        else _snwprintf(sub, 500, tr(T_INS_OPT_MANUAL), k);
+        sub[499] = 0;
         banner(B_YELLOW, NULL, ICON_DISC, w, sub);
     } else {
-        _snwprintf(w, 160, L"Inserisci il %ls %d di %d", kind_w[g_turn.kind], g_turn.num, g_turn.count);
+        _snwprintf(w, 160, tr(T_INS_FLOPPY), kind_name(g_turn.kind, KN_ONE), g_turn.num, g_turn.count);
         w[159] = 0;
-        if (autom)
-            banner_num(B_YELLOW, g_turn.num, w, again
-                       ? L"Lettura automatica: togli il dischetto appena letto e inserisci questo, parto da solo. "
-                         L"Invio o F5 legge subito, Alt+S salta, Esc torna alla lettura a mano. Etichetta del disco "
-                         L"(facoltativa):"
-                       : L"Lettura automatica: appena il dischetto è nel lettore parto da solo. Invio o F5 legge "
-                         L"subito, Alt+S salta, Esc torna alla lettura a mano. Etichetta del disco (facoltativa):");
-        else
-            banner_num(B_YELLOW, g_turn.num, w, L"Poi premi Invio o Leggi (F5); F2 rilegge l'etichetta, Alt+S salta "
-                                                L"il disco. Etichetta del disco (facoltativa):");
+        banner_num(B_YELLOW, g_turn.num, w,
+                   tr(!autom ? T_INS_FLOPPY_MANUAL : again ? T_INS_FLOPPY_AGAIN : T_INS_FLOPPY_AUTO));
     }
 }
 
@@ -4313,7 +4336,7 @@ static void on_wait(void)
     int n = g_turn_in.n, total = g_turn_in.total;
     const char *last = (n >= 1 && n <= META_MAXDISK) ? g_disk[n].status : "";
     int retry = (n == g_last_done) &&
-                (!strcmp(last, "lettura fallita") || !strcmp(last, "interrotto") || !strcmp(last, "duplicato"));
+                (!strcmp(last, ST_FAILED) || !strcmp(last, ST_INTERRUPTED) || !strcmp(last, ST_DUPLICATE));
 
     /* close confirmed between the check in host_wait and the PostMessage:
      * answer at once, the core's label and note stay */
@@ -4321,11 +4344,11 @@ static void on_wait(void)
     g_turn = g_turn_in;
     if (total > 0 && total != g_total) { g_total = total; list_rebuild(); box_progress(); }
     g_cur = n;
-    g_retry = !retry ? 0 : !strcmp(last, "interrotto") ? 2 : !strcmp(last, "duplicato") ? 3 : 1;
+    g_retry = !retry ? 0 : !strcmp(last, ST_INTERRUPTED) ? 2 : !strcmp(last, ST_DUPLICATE) ? 3 : 1;
     /* Salta is the Enter button when Leggi is absent */
     SendDlgItemMessageW(g_wnd, ID_READ, BM_SETSTYLE, g_turn.readable ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON, TRUE);
     SendDlgItemMessageW(g_wnd, ID_SKIP, BM_SETSTYLE, g_turn.readable ? BS_PUSHBUTTON : BS_DEFPUSHBUTTON, TRUE);
-    SetDlgItemTextW(g_wnd, ID_READ, g_retry == 3 ? L"Rileggi" : retry ? L"Riprova" : L"Leggi");
+    SetDlgItemTextW(g_wnd, ID_READ, tr(g_retry == 3 ? T_BTN_REREAD : retry ? T_BTN_RETRY : T_BTN_READ));
     /* what the core already has; on retry, what was typed stays */
     to_w(g_label_u8, lab, 128);
     if (lab[0] || !retry) SetWindowTextW(g_label, lab);
@@ -4350,35 +4373,32 @@ static void on_wait(void)
 static void end_banner(int rc)
 {
     wchar_t title[200], text[700], sum[200], nd[64], later[200];
-    int pul, mar, err, alt, opt[MEDIA_KINDS];
+    int pul, mar, err, alt, opt[MEDIA_KINDS], k;
     counts(&pul, &mar, &err, &alt, opt);
     summary(sum, 200);
-    plural(nd, 64, pul + mar + err, noun(g_count, 0), noun(g_count, 1));
+    k = pul + mar + err;
+    _snwprintf(nd, 64, L"%d %ls", k, noun(g_count, k != 1)); nd[63] = 0;
     /* only CDs or DVDs are left: resume once their reading is available */
     later[0] = 0;
     if (!alt && (opt[MEDIA_CD] || opt[MEDIA_DVD]))
-        _snwprintf(later, 200, L"\nRiprendilo dall'archivio quando RetroArchiver saprà leggere %ls.",
-                   opt[MEDIA_CD] && opt[MEDIA_DVD] ? L"i CD e i DVD" : opt[MEDIA_CD] ? L"i CD" : L"i DVD");
+        _snwprintf(later, 200, tr(T_END_LATER), tr(opt[MEDIA_CD] && opt[MEDIA_DVD] ? T_END_LATER_BOTH
+                                                   : opt[MEDIA_CD] ? T_END_LATER_CD : T_END_LATER_DVD));
     later[199] = 0;
     if (rc == SESSION_CLOSED) {
-        _snwprintf(title, 200, g_bag_complete ? L"Cofanetto completo: %ls su %d"
-                                              : L"Cofanetto chiuso incompleto: %ls su %d", nd, g_total);
-        _snwprintf(text, 700, L"%ls.\nIl pacchetto è chiuso e verificato.%ls", sum,
-                   g_aside_n ? L" Fuori dai dati restano le letture messe da parte: guardale e, se non "
-                               L"servono, cancellale." : L"");
+        _snwprintf(title, 200, tr(g_bag_complete ? T_END_COMPLETE : T_END_INCOMPLETE), nd, g_total);
+        _snwprintf(text, 700, tr(T_END_CLOSED_TEXT), sum, g_aside_n ? tr(T_END_ASIDE) : L"");
         title[199] = 0; text[699] = 0;
         if (g_bag_complete) banner(B_GREEN, NULL, 1, title, text);
         else banner(B_ORANGE, L"!", 0, title, text);
     } else if (rc == SESSION_OPEN) {
         _snwprintf(text, 700, L"%ls%ls%ls.%ls", g_last_err, g_last_err[0] ? L"\n" : L"", sum,
-                   later[0] ? later : L"\nPer riprenderlo: Archivio, poi doppio clic sul cofanetto.");
+                   later[0] ? later : tr(T_END_OPEN_HOW));
         text[699] = 0;
-        banner(B_ORANGE, L"!", 0, L"Cofanetto lasciato aperto", text);
+        banner(B_ORANGE, L"!", 0, tr(T_END_OPEN), text);
     } else {
-        _snwprintf(text, 700, L"%ls%lsLeggi il registro qui sotto, correggi e riprova con Nuovo cofanetto.",
-                   g_last_err, g_last_err[0] ? L"\n" : L"");
+        _snwprintf(text, 700, tr(T_END_FAILED_TEXT), g_last_err, g_last_err[0] ? L"\n" : L"");
         text[699] = 0;
-        banner(B_RED, L"!", 0, L"Archiviazione non riuscita", text);
+        banner(B_RED, L"!", 0, tr(T_END_FAILED), text);
     }
 }
 
@@ -4391,7 +4411,7 @@ static void on_end(int rc)
     /* closed with Fine cofanetto: the disks never asked for count as missing */
     if (rc == SESSION_CLOSED)
         for (n = 1; n <= g_total && n <= META_MAXDISK; n++)
-            if (!g_disk[n].status[0]) { str_copy(g_disk[n].status, sizeof(g_disk[n].status), "mancante"); list_row(n); }
+            if (!g_disk[n].status[0]) { str_copy(g_disk[n].status, sizeof(g_disk[n].status), ST_MISSING); list_row(n); }
     if (rc == SESSION_CLOSED) sound(SND_DONE);
     else if (rc != SESSION_OPEN && !g_errbeep) sound(SND_ERROR);
     if (g_bag_closed) bag_fill();
@@ -4404,27 +4424,22 @@ static void on_end(int rc)
     focus_to(GetDlgItem(g_wnd, ID_NEW));
 }
 
-/* only Scansione and Lettura run inside SAMdisk and can be stopped; the
+/* only Scan and Read run inside SAMdisk and can be stopped; the
  * comparison and closing the bag finish by themselves in a few seconds */
 static void stop(void)
 {
     if (g_view != V_WORK) return;      /* Interrompi exists only during the read */
-    if (!wcsncmp(g_phase_name, L"Scansione", 9) || !wcsncmp(g_phase_name, L"Lettura", 7) ||
-        !wcscmp(g_phase_name, L"TOC") || !wcscmp(g_phase_name, L"Controllo C2")) {
-        banner_num(B_ORANGE, g_cur, L"Interrompo la lettura...", cur_optical()
-                   ? L"DiscImageCreator si ferma fra poco. La lettura a metà non resta nel pacchetto."
-                   : L"SAMdisk si ferma fra poco.");
+    if (!wcsncmp(g_phase_name, L"Scan", 4) || !wcsncmp(g_phase_name, L"Read", 4) ||
+        !wcscmp(g_phase_name, L"TOC") || !wcscmp(g_phase_name, L"C2 check")) {
+        banner_num(B_ORANGE, g_cur, tr(T_STOP_TITLE), tr(cur_optical() ? T_STOP_DIC : T_STOP_SAMDISK));
         runner_cancel();
-    } else if (!wcsncmp(g_phase_name, L"Confronto", 9) || !wcscmp(g_phase_name, L"Redump")) {
+    } else if (!wcsncmp(g_phase_name, L"Compare", 7) || !wcscmp(g_phase_name, L"Redump")) {
         /* on the last disk there is no next one: once the comparison ends
          * the bag closes, or it re-reads (seen on the VM with a slowed-down
          * comparison) */
-        banner_num(B_BLUE, g_cur, L"Il confronto finisce da solo fra poco", g_cur >= g_total
-                   ? L"È l'ultimo disco del cofanetto: aspetta qui l'esito, non c'è un disco successivo da chiedere"
-                   : L"Quando ti chiede il disco successivo puoi chiudere la finestra: "
-                     L"il cofanetto resta aperto e lo riprendi dall'archivio");
+        banner_num(B_BLUE, g_cur, tr(T_STOP_COMPARE), tr(g_cur >= g_total ? T_STOP_COMPARE_LAST : T_STOP_COMPARE_NEXT));
     } else {
-        banner(B_BLUE, L"...", 0, L"Qui non c'è una lettura da fermare", L"Aspetta qualche secondo.");
+        banner(B_BLUE, L"...", 0, tr(T_STOP_NONE), tr(T_STOP_NONE_TEXT));
     }
 }
 
@@ -4444,10 +4459,7 @@ static int finish_ok(void)
         wcsncat(list, who, 399 - wcslen(list));
     }
     if (!miss) return 1;
-    _snwprintf(w, 900, L"%ls ancora: %ls.\n\n"
-                       L"Se chiudo il cofanetto adesso risulterà incompleto, con %ls, e non si potrà "
-                       L"più riprendere dall'archivio.\n\nChiudo il cofanetto?",
-               miss == 1 ? L"Manca" : L"Mancano", list, miss == 1 ? L"quel supporto mancante" : L"quei supporti mancanti");
+    _snwprintf(w, 900, tr(miss == 1 ? T_FINISH_ASK_ONE : T_FINISH_ASK_MANY), list);
     w[899] = 0;
     return MessageBoxW(g_wnd, w, L"RetroArchiver", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES;
 }
@@ -4467,6 +4479,149 @@ static void tick(void)
         SetWindowTextW(g_elapsed, w);
     }
     if (g_running) sbar_update();
+}
+
+/* ---- the program's language ----
+ * UILanguage in [General]: a code (it, en...), the name of a file in
+ * lang\ next to the exe, or empty to follow Windows' interface language.
+ * The installer writes the language chosen during setup in the defaults;
+ * the menu in setup writes the user's choice. A language without its file
+ * is the English compiled in. */
+
+#define UILANG_SEC SEC_GENERAL
+#define UILANG_KEY KEY_UILANG
+#define MAX_LANGS  16
+#define CODE_LEN   16
+
+static wchar_t g_uilang[CODE_LEN];              /* the choice; "" follows Windows */
+static wchar_t g_langs[MAX_LANGS][CODE_LEN];    /* the menu's languages, after "Same as Windows" */
+static int     g_nlangs;
+
+/* letters, digits, - and _: a file name in lang\, never a path */
+static int code_ok(const wchar_t *c)
+{
+    int i;
+    for (i = 0; c[i]; i++)
+        if (i >= CODE_LEN - 1 || !(iswalnum(c[i]) || c[i] == L'-' || c[i] == L'_')) return 0;
+    return i > 0;
+}
+
+/* <exe folder>\lang\<name>, in UTF-8 for lang.c */
+static void lang_dir_path(const wchar_t *name, wchar_t *out)
+{
+    wchar_t *p;
+    out[0] = 0;
+    if (!GetModuleFileNameW(NULL, out, MAX_PATH) || !(p = wcsrchr(out, L'\\'))) { out[0] = 0; return; }
+    _snwprintf(p + 1, MAX_PATH - (p + 1 - out), L"%ls\\%ls", LANG_DIR_W, name);
+    out[MAX_PATH - 1] = 0;
+}
+
+static void lang_file(const wchar_t *code, char *out, int n)
+{
+    wchar_t name[CODE_LEN + 8], w[MAX_PATH];
+    _snwprintf(name, CODE_LEN + 8, L"%ls%ls", code, LANG_EXT_W); name[CODE_LEN + 7] = 0;
+    lang_dir_path(name, w);
+    to_u8(w, out, n);
+}
+
+/* Windows' interface language as an ISO 639 code: "it", "en"... */
+static void system_lang(wchar_t *out, int n)
+{
+    LCID id = MAKELCID(GetUserDefaultUILanguage(), SORT_DEFAULT);
+    if (!GetLocaleInfoW(id, LOCALE_SISO639LANGNAME, out, n) || !code_ok(out))
+        _snwprintf(out, n, L"%ls", LANG_BUILTIN_W);
+    out[n - 1] = 0;
+}
+
+/* the chosen language, or Windows' one; English if its file is missing */
+static void lang_choose(void)
+{
+    wchar_t code[CODE_LEN]; char path[MAX_PATH * 3];
+    if (code_ok(g_uilang)) wcscpy(code, g_uilang);
+    else system_lang(code, CODE_LEN);
+    lang_file(code, path, sizeof(path));
+    if (!path[0] || lang_load_file(path, NULL)) lang_reset();
+}
+
+static int code_cmp(const void *a, const void *b)
+{
+    return wcscmp((const wchar_t *)a, (const wchar_t *)b);
+}
+
+/* the languages in lang\, and English, which is always there */
+static void lang_list(void)
+{
+    WIN32_FIND_DATAW fd; HANDLE h; wchar_t pat[MAX_PATH], *dot;
+    int i, en = 0;
+    g_nlangs = 0;
+    lang_dir_path(L"*" LANG_EXT_W, pat);
+    if (pat[0] && (h = FindFirstFileW(pat, &fd)) != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(dot = wcsrchr(fd.cFileName, L'.')) || _wcsicmp(dot, LANG_EXT_W)) continue;
+            *dot = 0;
+            if (!code_ok(fd.cFileName) || g_nlangs >= MAX_LANGS) continue;
+            CharLowerBuffW(fd.cFileName, (DWORD)wcslen(fd.cFileName));
+            wcscpy(g_langs[g_nlangs++], fd.cFileName);
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    for (i = 0; i < g_nlangs; i++) en |= !wcscmp(g_langs[i], LANG_BUILTIN_W);
+    if (!en && g_nlangs < MAX_LANGS) wcscpy(g_langs[g_nlangs++], LANG_BUILTIN_W);
+    qsort(g_langs, (size_t)g_nlangs, sizeof(g_langs[0]), code_cmp);
+}
+
+/* the menu: "Same as Windows", then each language with its own name */
+static void uilang_fill(void)
+{
+    HWND cb = GetDlgItem(g_wnd, ID_UILANG);
+    wchar_t name[64]; char path[MAX_PATH * 3];
+    int i, sel = 0;
+    lang_list();
+    SendMessageW(cb, CB_RESETCONTENT, 0, 0);
+    SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)tr(T_SETUP_UILANG_SYS));
+    for (i = 0; i < g_nlangs; i++) {
+        lang_file(g_langs[i], path, sizeof(path));
+        if (!lang_peek_file(path, "language.name", name, 64) || !name[0]) {
+            if (!wcscmp(g_langs[i], LANG_BUILTIN_W)) wcsncpy(name, lang_builtin(T_LANG_NAME), 64);
+            else wcsncpy(name, g_langs[i], 64);
+            name[63] = 0;
+        }
+        SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)name);
+        if (!_wcsicmp(g_langs[i], g_uilang)) sel = i + 1;
+    }
+    SendMessageW(cb, CB_SETCURSEL, sel, 0);
+}
+
+static void search_cue(void)
+{
+    /* with the comctl32 6 manifest the grey placeholder text works on XP too */
+    SendDlgItemMessageW(g_wnd, ID_ASEARCH, EM_SETCUEBANNER, 0, (LPARAM)tr(T_ARC_SEARCH_CUE));
+}
+
+/* every text on screen again, in the new language: no restart needed.
+ * Only from setup, with no session running */
+static void lang_refresh(void)
+{
+    fixed_texts();
+    column_titles(g_list, list_cols);
+    column_titles(g_alist, arc_cols);
+    label_tip();
+    search_cue();
+    uilang_fill();
+    platforms_fill();
+    archive_fill(pick_dir());           /* the dates and the platform filter */
+    bagpath_update();
+    view(g_view);                       /* title, layout, status bar */
+}
+
+static void uilang_changed(void)
+{
+    int k = (int)SendDlgItemMessageW(g_wnd, ID_UILANG, CB_GETCURSEL, 0, 0);
+    if (k <= 0 || k > g_nlangs) g_uilang[0] = 0;
+    else wcscpy(g_uilang, g_langs[k - 1]);
+    set_save(&g_set, UILANG_SEC, UILANG_KEY, L"", g_uilang);
+    lang_choose();
+    lang_refresh();
 }
 
 static int on_command(HWND h, WPARAM wp)
@@ -4507,6 +4662,10 @@ static int on_command(HWND h, WPARAM wp)
         if (HIWORD(wp) == CBN_SELCHANGE) archive_fill(pick_dir());
         return 1;
     }
+    if (id == ID_UILANG) {
+        if (HIWORD(wp) == CBN_SELCHANGE && !g_running) uilang_changed();
+        return 1;
+    }
     switch (id) {
     case IDOK:
         if (g_waiting) answer(g_turn.readable ? CMD_READ : CMD_SKIP);
@@ -4527,7 +4686,7 @@ static int on_command(HWND h, WPARAM wp)
     case ID_BACK:    archive_show(NULL); return 1;
     case ID_TOARCH:  archive_show(g_bagdir); return 1;
     case ID_ABROWSE:
-        browse(ID_ADIR, L"Cartella dell'archivio dei cofanetti");
+        browse(ID_ADIR, tr(T_ARC_BROWSE));
         archive_dir_changed();
         return 1;
     case ID_ARESUME: resume_pick(); return 1;
@@ -4536,7 +4695,7 @@ static int on_command(HWND h, WPARAM wp)
     case ID_ANEW:    go_setup(1); return 1;
     case ID_START:  start(); return 1;
     case ID_RESUME: resume(); return 1;
-    case ID_BROWSE: browse(ID_DIR, L"Cartella dove salvare i cofanetti"); return 1;
+    case ID_BROWSE: browse(ID_DIR, tr(T_BROWSE_DIR)); return 1;
     case ID_READ:   answer(CMD_READ); return 1;
     case ID_SKIP:   answer(CMD_SKIP); return 1;
     case ID_LABELREAD: label_read(); return 1;
@@ -4646,7 +4805,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         break;
     case WM_CLOSE:
         if (g_running) {
-            if (MessageBoxW(h, L"C'è un cofanetto in corso. Lo lascio aperto (si riprende dall'archivio) e chiudo?",
+            if (MessageBoxW(h, tr(T_CLOSE_ASK),
                             L"RetroArchiver", MB_YESNO | MB_ICONQUESTION) != IDYES) return 0;
             /* while the question was open the session may have ended */
             if (!g_running) { DestroyWindow(h); return 0; }
@@ -4789,19 +4948,35 @@ static int wait_key(const MSG *m)
     if (alt && m->wParam == 'S') { answer(CMD_SKIP); return 1; }
     /* automatic mode: Esc goes back to Leggi by hand for this disk */
     if (m->wParam == VK_ESCAPE && g_auto_state != AUTO_OFF) {
-        auto_manual(L"Lettura automatica fermata per questo disco: premi Leggi (F5) quando sei pronto.");
+        auto_manual(tr(T_AUTO_ESC));
         return 1;
     }
     /* typing the label during the countdown: the read waits for Enter */
     if (g_auto_state == AUTO_COUNT && !alt && m->wParam != VK_RETURN && m->wParam != VK_TAB &&
         m->wParam != VK_SHIFT && m->wParam != VK_CONTROL && m->wParam != VK_MENU)
-        auto_manual(L"Stai scrivendo: leggo quando premi Invio o Leggi (F5).");
+        auto_manual(tr(T_AUTO_TYPING));
     return 0;
 }
 
 /* "RetroArchiver.exe --tty PROGRAM ARG...": the program launched by itself
  * as runner_run_tty's intermediary, with no window. -1 if the command line
  * is not that, otherwise the program's exit code */
+static int tty_mode(void);
+
+/* "RetroArchiver.exe --convert-ini FILE": the setup turns an ini of 261017
+ * into the English keys with the same code as the window, with no window.
+ * -1 if the command line is not that, otherwise the keys converted (255
+ * if the file cannot be written) */
+static int convert_mode(void)
+{
+    int argc, rc; wchar_t **wv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!wv) return -1;
+    if (argc != 3 || wcscmp(wv[1], L"--convert-ini")) { LocalFree(wv); return -1; }
+    rc = set_convert(wv[2]);
+    LocalFree(wv);
+    return rc < 0 ? 255 : rc;
+}
+
 static int tty_mode(void)
 {
     int argc, i, rc; wchar_t **wv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -4834,6 +5009,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show_cmd)
     (void)prev; (void)cmd;
 
     if ((rc = tty_mode()) >= 0) return rc;
+    if ((rc = convert_mode()) >= 0) return rc;
     set_tty_helper();
 
     icc.dwSize = sizeof(icc);
@@ -4846,14 +5022,25 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show_cmd)
     load_uxtheme();
     register_class(inst);
 
+    /* the language first: the controls are created with its texts */
+    set_init(&g_set);
+    /* the user's ini of 261017, with Italian keys, becomes English once: the
+     * defaults next to the exe are converted by the setup (a normal user
+     * cannot write in Program Files), until then they are read as they are */
+    set_convert(g_set.user);
+    set_get(&g_set, UILANG_SEC, UILANG_KEY, L"", g_uilang, CODE_LEN);
+    lang_choose();
+
     default_rect(&r);
-    g_wnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"RetroArchiver", L"RetroArchiver - archiviazione",
+    g_wnd = CreateWindowExW(WS_EX_CONTROLPARENT, L"RetroArchiver", L"RetroArchiver",
                             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                             r.left, r.top, r.right - r.left, r.bottom - r.top,
                             NULL, NULL, inst, NULL);
     build_setup();
     build_work();
     build_archive();
+    search_cue();
+    uilang_fill();
     apply_limits();
     ini_load();
     samdisk_check();

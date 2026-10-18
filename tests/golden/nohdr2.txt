@@ -1,26 +1,26 @@
 
-dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+dskdiff 1.2 - compares several reads of the same floppy
 
-  ATTENZIONE: fixtures/_nohdr.dsk non ha un'intestazione DSK riconoscibile.
-              Confronto solo byte per byte, senza mappa delle tracce.
+  WARNING: fixtures/_nohdr.dsk has no recognizable DSK header.
+           Comparing byte by byte only, without a track map.
 
-  A: fixtures/_nohdr.dsk                 300 byte
-  B: fixtures/ident_a.dsk          1.515.776 byte   80 cilindri, 2 facce
+  A: fixtures/_nohdr.dsk                 300 bytes
+  B: fixtures/ident_a.dsk          1,515,776 bytes   80 cylinders, 2 sides
 
-  ATTENZIONE: i file hanno dimensioni diverse.
-              Confronto limitato alla parte in comune.
+  WARNING: the files have different sizes.
+           Comparing only the part the two files share.
 
-  byte diversi: 300   (il primo a 0x00000000)
+  differing bytes: 300   (the first at 0x00000000)
 
-  intestazione .............. 256
-  cil  0 faccia 0 ........... 44
+  header .................... 256
+  cyl  0 side 0 ............. 44
 
-  ESITO: ci sono differenze nei DATI del disco.
+  RESULT: there are differences in the disk DATA.
 
-  Le due letture dello stesso dischetto non coincidono su cilindri
-  dentro l'area standard: il segnale e' al limite e il controller lo
-  interpreta diversamente a ogni passata.
+  The two reads of the same floppy do not match on cylinders
+  inside the standard area: the signal is marginal and the controller
+  reads it differently on every pass.
 
-  Rileggi con  --retries=30 --rescans=5  e catalogalo come marginale.
+  Reread with  --retries=30 --rescans=5  and catalog it as marginal.
 
 exit=1

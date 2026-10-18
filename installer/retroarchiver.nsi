@@ -22,6 +22,11 @@
 ; placed by the previous setup in C:\samdisk and C:\DIC move to tools\.
 ; The Visual C++ 14.27 runtime for DiscImageCreator is installed only if it is
 ; missing or older: the same x86 package works from XP SP3 to Windows 11.
+;
+; English and Italian: the setup asks at the start (Windows' language is the
+; one proposed), shows its pages in that language and writes it as
+; UILanguage in RetroArchiver.ini, so the program starts in the same one.
+; The texts are in strings.nsh; the window's own texts in lang\*.lng.
 
 Unicode true
 SetCompressor /SOLID lzma
@@ -75,22 +80,32 @@ ShowUninstDetails show
 BrandingText "RetroArchiver ${VERSION}"
 
 VIProductVersion "${VIVERSION}"
+VIAddVersionKey /LANG=1033 "ProductName" "RetroArchiver"
+VIAddVersionKey /LANG=1033 "FileDescription" "RetroArchiver setup"
+VIAddVersionKey /LANG=1033 "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=1033 "ProductVersion" "${VERSION}"
+VIAddVersionKey /LANG=1033 "LegalCopyright" "SAMdisk, fdrawcmd.sys and DiscImageCreator have their own licences: THIRD-PARTY-NOTICES.txt"
 VIAddVersionKey /LANG=1040 "ProductName" "RetroArchiver"
 VIAddVersionKey /LANG=1040 "FileDescription" "Installazione di RetroArchiver"
 VIAddVersionKey /LANG=1040 "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=1040 "ProductVersion" "${VERSION}"
 VIAddVersionKey /LANG=1040 "LegalCopyright" "SAMdisk, fdrawcmd.sys e DiscImageCreator hanno le loro licenze: THIRD-PARTY-NOTICES.txt"
 
+; the language chosen at the start is remembered for the uninstaller and the next update
+!define MUI_LANGDLL_REGISTRY_ROOT HKLM
+!define MUI_LANGDLL_REGISTRY_KEY "${UNINST}"
+!define MUI_LANGDLL_REGISTRY_VALUENAME "InstallerLanguage"
+!define MUI_LANGDLL_ALWAYSSHOW
+!define MUI_LANGDLL_WINDOWTITLE "RetroArchiver"
+!define MUI_LANGDLL_INFO "Choose a language / Scegli la lingua"
+
 Var Summary     ; text of the final page and of install-check.txt
 Var FdResult      ; how the fdrawcmd.sys installation went this time
 Var Runtime     ; "ok", "old" or "missing"
 Var VcResult      ; how the runtime installation went this time
 Var ArchiveDir    ; C:\RetroArchive, on the system drive
-
-Function .onInit
-  StrCpy $ArchiveDir $WINDIR 2
-  StrCpy $ArchiveDir "$ArchiveDir\${ARCHIVE_NAME}"
-FunctionEnd
+Var IniConv       ; keys converted from Italian in the defaults ini
+Var IniConvUser   ; and in the ini of the user who installs
 
 ; ---- pages ----
 
@@ -98,42 +113,57 @@ FunctionEnd
 !define MUI_UNICON "${ROOT}/src/gui/retroarchiver.ico"
 !define MUI_ABORTWARNING
 
-!define MUI_WELCOMEPAGE_TITLE "Installazione di RetroArchiver"
-!define MUI_WELCOMEPAGE_TEXT "Installa RetroArchiver e i programmi che servono per archiviare floppy, CD e DVD:$\r$\n$\r$\n  • SAMdisk ${T_samdisk_VERSION}$\r$\n  • il driver fdrawcmd.sys ${T_fdrawcmd_VERSION}$\r$\n  • DiscImageCreator ${T_dic_VERSION}$\r$\n  • il runtime di Visual C++ ${T_vcredist_VERSION}, solo se manca$\r$\n$\r$\nSe RetroArchiver è già installato lo aggiorna: le impostazioni e l'archivio restano come sono."
+!define MUI_WELCOMEPAGE_TITLE "$(L_WELCOME_TITLE)"
+!define MUI_WELCOMEPAGE_TEXT "$(L_WELCOME_TEXT)"
 !insertmacro MUI_PAGE_WELCOME
 
-; informational only: no "Accetto", just move on
-!define MUI_PAGE_HEADER_TEXT "Programmi di terzi"
-!define MUI_PAGE_HEADER_SUBTEXT "Crediti e licenze dei programmi installati con RetroArchiver."
-!define MUI_LICENSEPAGE_TEXT_TOP "Premi Pagina giù per leggere il resto (il testo è in inglese)."
-!define MUI_LICENSEPAGE_TEXT_BOTTOM "Si installano come li distribuiscono gli autori; le licenze complete vanno nella cartella licenses. Il runtime di Visual C++, se manca, si installa in silenzio: installarlo vuol dire accettare le condizioni di licenza di Microsoft."
+; informational only: no "I accept", just move on. THIRD-PARTY-NOTICES.txt
+; is in English in every language
+!define MUI_PAGE_HEADER_TEXT "$(L_TP_HEADER)"
+!define MUI_PAGE_HEADER_SUBTEXT "$(L_TP_SUBTEXT)"
+!define MUI_LICENSEPAGE_TEXT_TOP "$(L_TP_TOP)"
+!define MUI_LICENSEPAGE_TEXT_BOTTOM "$(L_TP_BOTTOM)"
 !define MUI_LICENSEPAGE_BUTTON "$(^NextBtn)"
 !insertmacro MUI_PAGE_LICENSE "${TEXTS}/THIRD-PARTY-NOTICES.txt"
 
 !define MUI_COMPONENTSPAGE_SMALLDESC
 !insertmacro MUI_PAGE_COMPONENTS
 
-!define MUI_DIRECTORYPAGE_TEXT_TOP "In questa cartella va RetroArchiver, con SAMdisk e DiscImageCreator nella sottocartella tools. Le impostazioni di ogni utente vanno nella sua cartella Dati applicazioni.$\r$\n$\r$\nL'archivio dei cofanetti va in $ArchiveDir; si sposta dalla finestra di RetroArchiver (meglio un disco NTFS capiente)."
+!define MUI_DIRECTORYPAGE_TEXT_TOP "$(L_DIR_TOP)"
 !insertmacro MUI_PAGE_DIRECTORY
 
 !insertmacro MUI_PAGE_INSTFILES
 
-!define MUI_FINISHPAGE_TITLE "RetroArchiver è installato"
+!define MUI_FINISHPAGE_TITLE "$(L_FINISH_TITLE)"
 !define MUI_FINISHPAGE_TEXT "$Summary"
 !define MUI_FINISHPAGE_TEXT_LARGE
-!define MUI_FINISHPAGE_TEXT_REBOOT "$Summary$\r$\n$\r$\nfdrawcmd.sys funziona dopo un riavvio del PC."
-!define MUI_FINISHPAGE_TEXT_REBOOTNOW "Riavvia adesso"
-!define MUI_FINISHPAGE_TEXT_REBOOTLATER "Riavvio più tardi"
+!define MUI_FINISHPAGE_TEXT_REBOOT "$(L_FINISH_REBOOT)"
+!define MUI_FINISHPAGE_TEXT_REBOOTNOW "$(L_REBOOT_NOW)"
+!define MUI_FINISHPAGE_TEXT_REBOOTLATER "$(L_REBOOT_LATER)"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\RetroArchiver.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "Apri RetroArchiver"
+!define MUI_FINISHPAGE_RUN_TEXT "$(L_RUN)"
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishShow
 !insertmacro MUI_PAGE_FINISH
 
-!define MUI_UNCONFIRMPAGE_TEXT_TOP "Tolgo RetroArchiver, con SAMdisk e DiscImageCreator. Restano l'archivio, il driver fdrawcmd.sys (ha la sua voce in Installazione applicazioni) e il runtime di Visual C++."
+!define MUI_UNCONFIRMPAGE_TEXT_TOP "$(L_UNCONFIRM)"
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
+; the first one is the setup's choice when Windows speaks neither
+!insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "Italian"
+!include "strings.nsh"
+
+; after MUI_LANGUAGE: the language dialog lists the languages inserted above
+Function .onInit
+  !insertmacro MUI_LANGDLL_DISPLAY
+  StrCpy $ArchiveDir $WINDIR 2
+  StrCpy $ArchiveDir "$ArchiveDir\${ARCHIVE_NAME}"
+FunctionEnd
+
+Function un.onInit
+  !insertmacro MUI_UNGETLANGUAGE
+FunctionEnd
 
 ; ---- final page: the summary must not end up under the checkbox ----
 ; MUI puts "Apri RetroArchiver" (or the reboot choices) right below a
@@ -230,14 +260,14 @@ Function ${un}CloseRetroArchiver
   ${If} $0 = 0
     Return
   ${EndIf}
-  MessageBox MB_OKCANCEL|MB_ICONINFORMATION "RetroArchiver è aperto: premi OK e lo chiudo.$\r$\n$\r$\nSe sta leggendo un disco ti chiede se lasciare il cofanetto aperto: rispondi Sì, si riprende dopo dall'archivio." /SD IDOK IDOK chiudi
-  Abort "RetroArchiver è ancora aperto: niente è stato cambiato."
+  MessageBox MB_OKCANCEL|MB_ICONINFORMATION "$(L_CLOSE_ASK)" /SD IDOK IDOK chiudi
+  Abort "$(L_CLOSE_ABORT)"
 chiudi:
   StrCpy $1 0
   ${Do}
     FindWindow $0 "RetroArchiver"
     ${If} $0 = 0
-      DetailPrint "RetroArchiver chiuso."
+      DetailPrint "$(L_CLOSED)"
       Return
     ${EndIf}
     ${If} $1 = 0
@@ -259,8 +289,8 @@ chiudi:
       IntOp $1 $1 + 1
     ${EndIf}
     ${If} $1 >= 20
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "RetroArchiver non si è chiuso. Chiudilo tu e premi Riprova." /SD IDCANCEL IDRETRY chiudi
-      Abort "RetroArchiver è ancora aperto: installazione interrotta."
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(L_CLOSE_STUCK)" /SD IDCANCEL IDRETRY chiudi
+      Abort "$(L_CLOSE_STOPPED)"
     ${EndIf}
   ${Loop}
 FunctionEnd
@@ -269,17 +299,51 @@ FunctionEnd
 !insertmacro CLOSE_APP "un."
 
 ; ---- RetroArchiver.ini with the defaults ----
+; Sections and keys in English, as src/gui/settings.h names them. Version
+; 261017 wrote them in Italian ([Archiviazione] Cartella...): the update
+; converts them with RetroArchiver.exe --convert-ini, the same code the
+; window uses, before adding the defaults that are missing.
 
 ; an ini key is written only if it is missing: this way the update does not
 ; change the earlier choices (which today act as defaults)
-!macro INI_IF_MISSING key value
+!macro INI_IF_MISSING sec key value
   ClearErrors
-  ReadINIStr $0 "$INSTDIR\${INI}" "Archiviazione" "${key}"
+  ReadINIStr $0 "$INSTDIR\${INI}" "${sec}" "${key}"
   ${If} ${Errors}
-    WriteINIStr "$INSTDIR\${INI}" "Archiviazione" "${key}" "${value}"
-    DetailPrint "  ${key}=${value}"
+    WriteINIStr "$INSTDIR\${INI}" "${sec}" "${key}" "${value}"
+    DetailPrint "  [${sec}] ${key}=${value}"
   ${EndIf}
 !macroend
+
+; an ini of 261017 in $R0 converted to the English keys: $R1 = keys converted
+Function ConvertIni
+  StrCpy $R1 0
+  ${IfNot} ${FileExists} "$R0"
+    Return
+  ${EndIf}
+  ClearErrors
+  ExecWait '"$INSTDIR\RetroArchiver.exe" --convert-ini "$R0"' $R1
+  ${If} ${Errors}
+  ${OrIf} $R1 = 255
+    StrCpy $R1 0
+    DetailPrint "$(L_INI_CONV_FAIL)"
+  ${ElseIf} $R1 > 0
+    DetailPrint "$(L_INI_CONVERTED)"
+  ${EndIf}
+FunctionEnd
+
+; the defaults next to the exe and the ini of the user who installs: the other
+; users' ini are converted by the window at its first start
+Function ConvertInis
+  StrCpy $R0 "$INSTDIR\${INI}"
+  Call ConvertIni
+  StrCpy $IniConv $R1
+  SetShellVarContext current
+  StrCpy $R0 "$APPDATA\${USER_DIR}\${INI}"
+  SetShellVarContext all
+  Call ConvertIni
+  StrCpy $IniConvUser $R1
+FunctionEnd
 
 ; the first CD drive in $R8 ("E:"), otherwise D:
 Function FirstCD
@@ -303,39 +367,44 @@ Function WriteIni
     FileWriteByte $0 255
     FileWriteByte $0 254
     FileClose $0
-    DetailPrint "Creo ${INI} con i default:"
+    DetailPrint "$(L_INI_NEW)"
   ${Else}
-    DetailPrint "${INI} c'è già: aggiungo solo i default che mancano."
+    DetailPrint "$(L_INI_EXISTS)"
   ${EndIf}
   Call FirstCD
-  !insertmacro INI_IF_MISSING "Cartella" "$ArchiveDir"
-  !insertmacro INI_IF_MISSING "LettureMax" "3"
-  !insertmacro INI_IF_MISSING "SAMdisk" "${SAMDISK_DIR}\samdisk.exe"
-  !insertmacro INI_IF_MISSING "LeggiDa" "a:"
-  !insertmacro INI_IF_MISSING "DiscImageCreator" "${DIC_DIR}\DiscImageCreator.exe"
-  !insertmacro INI_IF_MISSING "LettoreCD" "$R8"
-  !insertmacro INI_IF_MISSING "NomeFloppy" "FLOPPY{nn}"
-  !insertmacro INI_IF_MISSING "NomeCD" "CD{nn}"
-  !insertmacro INI_IF_MISSING "NomeDVD" "DVD{nn}"
+  Call ConvertInis
+  !insertmacro INI_IF_MISSING "General" "ArchiveFolder" "$ArchiveDir"
+  !insertmacro INI_IF_MISSING "General" "MaxReads" "3"
+  !insertmacro INI_IF_MISSING "Floppy" "SAMdisk" "${SAMDISK_DIR}\samdisk.exe"
+  !insertmacro INI_IF_MISSING "Floppy" "ReadFrom" "a:"
+  !insertmacro INI_IF_MISSING "Optical" "DiscImageCreator" "${DIC_DIR}\DiscImageCreator.exe"
+  !insertmacro INI_IF_MISSING "Optical" "Drive" "$R8"
+  !insertmacro INI_IF_MISSING "Floppy" "FileName" "FLOPPY{nn}"
+  !insertmacro INI_IF_MISSING "Optical" "CDFileName" "CD{nn}"
+  !insertmacro INI_IF_MISSING "Optical" "DVDFileName" "DVD{nn}"
+  ; the program's language: the one chosen at the start of this setup, also
+  ; in an update (a user's own choice in the window still wins)
+  WriteINIStr "$INSTDIR\${INI}" "General" "UILanguage" "$(L_UILANG)"
+  DetailPrint "  [General] UILanguage=$(L_UILANG)"
 FunctionEnd
 
 ; the defaults' archive folder (in an update it may be the earlier one):
 ; created if missing. The uninstaller does not touch it.
 Function CreateArchive
-  ReadINIStr $0 "$INSTDIR\${INI}" "Archiviazione" "Cartella"
+  ReadINIStr $0 "$INSTDIR\${INI}" "General" "ArchiveFolder"
   ${If} $0 == ""
     Return
   ${EndIf}
   ${If} ${FileExists} "$0\*.*"
-    DetailPrint "Archivio: $0"
+    DetailPrint "$(L_ARCHIVE_IS)"
     Return
   ${EndIf}
   ClearErrors
   CreateDirectory "$0"
   ${If} ${Errors}
-    DetailPrint "Non riesco a creare la cartella dell'archivio $0: si sceglie dalla finestra di RetroArchiver."
+    DetailPrint "$(L_ARCHIVE_FAIL)"
   ${Else}
-    DetailPrint "Creo la cartella dell'archivio: $0"
+    DetailPrint "$(L_ARCHIVE_NEW)"
   ${EndIf}
 FunctionEnd
 
@@ -443,14 +512,14 @@ FunctionEnd
 Function WarnRuntime
   ${If} $VcResult != ""
   ${AndIf} $VcResult != "ok"
-    StrCpy $0 "Non sono riuscito a installare il runtime di Visual C++ 2015-2019 x86 versione 14.27 ($VcResult)"
+    StrCpy $0 "$(L_VC_FAILED)"
   ${ElseIf} $Runtime == "old"
-    StrCpy $0 "Il runtime di Visual C++ 2015-2019 x86 installato è più vecchio della versione 14.27"
+    StrCpy $0 "$(L_VC_OLD)"
   ${Else}
-    StrCpy $0 "Manca il runtime di Visual C++ 2015-2019 x86 versione 14.27"
+    StrCpy $0 "$(L_VC_MISSING)"
   ${EndIf}
-  DetailPrint "$0: senza, DiscImageCreator non parte."
-  MessageBox MB_OK|MB_ICONEXCLAMATION "$0, che serve a DiscImageCreator: senza, i CD e i DVD non si leggono (i floppy sì).$\r$\n$\r$\nRiprova lanciando di nuovo questo setup, oppure installalo a mano: VC_redist.x86.exe versione 14.27.29114 dal sito Microsoft:$\r$\n$\r$\n${VCREDIST_URL}$\r$\n$\r$\nIl link è anche in $INSTDIR\${CHECK_FILE}." /SD IDOK
+  DetailPrint "$(L_VC_DETAIL)"
+  MessageBox MB_OK|MB_ICONEXCLAMATION "$(L_VC_BOX)" /SD IDOK
 FunctionEnd
 
 ; ---- components ----
@@ -466,6 +535,9 @@ Section "RetroArchiver" SEC_RA
   File "${ROOT}/dskrun.exe"
   File "${ROOT}/dskdiff.exe"
   File "${TEXTS}/README.txt"
+  ; the window's texts: lang\<code>.lng next to the program
+  SetOutPath "$INSTDIR\lang"
+  File "${TEXTS}/lang/*.lng"
   SetOutPath "$INSTDIR\docs"
   File "${TEXTS}/setup.txt"
   File "${TEXTS}/procedure.txt"
@@ -487,6 +559,8 @@ Section "RetroArchiver" SEC_RA
   WriteRegStr HKLM "${UNINST}" "QuietUninstallString" '"$INSTDIR\Uninstall.exe" /S'
   WriteRegDWORD HKLM "${UNINST}" "NoModify" 1
   WriteRegDWORD HKLM "${UNINST}" "NoRepair" 1
+  ; MUI saves it only after the files page, which a silent setup skips
+  WriteRegStr HKLM "${UNINST}" "${MUI_LANGDLL_REGISTRY_VALUENAME}" $LANGUAGE
 
   ; the shortcut starts from the program folder
   CreateDirectory "$SMPROGRAMS\RetroArchiver"
@@ -497,11 +571,11 @@ Section "RetroArchiver" SEC_RA
   CreateShortcut "$DESKTOP\RetroArchiver.lnk" "$INSTDIR\RetroArchiver.exe"
 SectionEnd
 
-Section "SAMdisk ${T_samdisk_VERSION} (floppy)" SEC_SAMDISK
+Section "$(L_SEC_SAMDISK)" SEC_SAMDISK
   ; the previous setup put it in C:\samdisk: if it was the one that put it there, remove it
   ReadRegDWORD $0 HKLM "${UNINST}" "SAMdisk"
   ${If} $0 = 1
-    DetailPrint "SAMdisk passa da ${OLD_SAMDISK_DIR} a ${SAMDISK_DIR}."
+    DetailPrint "$(L_SAMDISK_MOVES)"
     !insertmacro T_samdisk_REMOVE "${OLD_SAMDISK_DIR}"
     DeleteRegValue HKLM "${UNINST}" "SAMdisk"
   ${EndIf}
@@ -510,19 +584,19 @@ Section "SAMdisk ${T_samdisk_VERSION} (floppy)" SEC_SAMDISK
   SetOutPath "$INSTDIR"
 SectionEnd
 
-Section "fdrawcmd.sys ${T_fdrawcmd_VERSION} (driver per i floppy)" SEC_FDRAWCMD
+Section "$(L_SEC_FDRAWCMD)" SEC_FDRAWCMD
   ; it is an NSIS installer: with /S no questions. On the XP VM it took
   ; from 2 seconds to a minute and a half
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
   File "${THIRD_PARTY}/fdrawcmd/${T_fdrawcmd_FILE}"
-  DetailPrint "Installo fdrawcmd.sys (${T_fdrawcmd_FILE} /S)..."
+  DetailPrint "$(L_FD_INSTALLING)"
   ClearErrors
   ExecWait '"$PLUGINSDIR\${T_fdrawcmd_FILE}" /S' $0
   ${If} ${Errors}
-    StrCpy $FdResult "non parte"
+    StrCpy $FdResult "$(L_NOSTART)"
   ${ElseIf} $0 <> 0
-    StrCpy $FdResult "non riuscita (codice $0)"
+    StrCpy $FdResult "$(L_FD_FAILED)"
   ${Else}
     StrCpy $FdResult "ok"
     ; a freshly installed driver usually starts only after a reboot
@@ -533,7 +607,7 @@ Section "fdrawcmd.sys ${T_fdrawcmd_VERSION} (driver per i floppy)" SEC_FDRAWCMD
   ${EndIf}
   DetailPrint "fdrawcmd.sys: $FdResult"
   ${If} $FdResult != "ok"
-    MessageBox MB_OK|MB_ICONEXCLAMATION "L'installazione di fdrawcmd.sys non è riuscita ($FdResult). Senza, SAMdisk non legge i floppy.$\r$\n$\r$\nRiprova lanciando di nuovo questo setup, oppure installalo a mano da ${T_fdrawcmd_URL}" /SD IDOK
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(L_FD_BOX)" /SD IDOK
   ${EndIf}
   SetOutPath "$INSTDIR"
 SectionEnd
@@ -541,27 +615,27 @@ SectionEnd
 ; before DiscImageCreator, which needs it. Installed only if missing or
 ; older than 14.27: the x86 package works from XP SP3 to Windows 11,
 ; even 64-bit (DiscImageCreator is 32-bit). It does not work on Windows 2000.
-Section "Runtime di Visual C++ ${T_vcredist_VERSION} (per i CD e DVD)" SEC_VCREDIST
+Section "$(L_SEC_VCREDIST)" SEC_VCREDIST
   Call CheckRuntime
   ${If} $Runtime == "ok"
-    DetailPrint "Runtime di Visual C++ 14.27 o più nuovo: c'è già."
+    DetailPrint "$(L_VC_PRESENT)"
     Return
   ${EndIf}
   ${If} ${AtMostWin2000}
-    StrCpy $VcResult "non va su questa versione di Windows"
-    DetailPrint "Runtime di Visual C++: $VcResult."
+    StrCpy $VcResult "$(L_VC_UNSUPPORTED)"
+    DetailPrint "$(L_VC_RESULT)."
     Return
   ${EndIf}
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
   File "${THIRD_PARTY}/vcredist/${T_vcredist_FILE}"
-  DetailPrint "Installo il runtime di Visual C++ ${T_vcredist_VERSION}..."
+  DetailPrint "$(L_VC_INSTALLING)"
   ClearErrors
   ExecWait '"$PLUGINSDIR\${T_vcredist_FILE}" /install /quiet /norestart' $0
   ; 0 installed, 3010 installed with reboot, 1638 a newer version of the same
   ; product is already there
   ${If} ${Errors}
-    StrCpy $VcResult "non parte"
+    StrCpy $VcResult "$(L_NOSTART)"
   ${ElseIf} $0 = 0
   ${OrIf} $0 = 1638
     StrCpy $VcResult "ok"
@@ -569,16 +643,16 @@ Section "Runtime di Visual C++ ${T_vcredist_VERSION} (per i CD e DVD)" SEC_VCRED
     StrCpy $VcResult "ok"
     SetRebootFlag true
   ${Else}
-    StrCpy $VcResult "codice $0"
+    StrCpy $VcResult "$(L_CODE)"
   ${EndIf}
-  DetailPrint "Runtime di Visual C++: $VcResult"
+  DetailPrint "$(L_VC_RESULT)"
   SetOutPath "$INSTDIR"
 SectionEnd
 
-Section "DiscImageCreator ${T_dic_VERSION} (CD e DVD)" SEC_DIC
+Section "$(L_SEC_DIC)" SEC_DIC
   ReadRegDWORD $0 HKLM "${UNINST}" "DiscImageCreator"
   ${If} $0 = 1
-    DetailPrint "DiscImageCreator passa da ${OLD_DIC_DIR} a ${DIC_DIR}."
+    DetailPrint "$(L_DIC_MOVES)"
     !insertmacro T_dic_REMOVE "${OLD_DIC_DIR}"
     DeleteRegValue HKLM "${UNINST}" "DiscImageCreator"
   ${EndIf}
@@ -595,8 +669,8 @@ SectionEnd
 ; in install-check.txt, next to the program: written by the setup, which is
 ; administrator, and valid for the whole installation (not for one user)
 Section "-Check"
-  DetailPrint "Verifica:"
-  StrCpy $Summary "Verifica:"
+  DetailPrint "$(L_CHECK)"
+  StrCpy $Summary "$(L_CHECK)"
 
   ${If} ${FileExists} "${SAMDISK_DIR}\samdisk.exe"
     StrCpy $R0 '"${SAMDISK_DIR}\samdisk.exe"'
@@ -604,10 +678,10 @@ Section "-Check"
     StrCpy $R1 "SAMdisk "
     Call WordAfter
     ${If} $R2 == ""
-      StrCpy $R2 "non risponde"
+      StrCpy $R2 "$(L_NOANSWER)"
     ${EndIf}
   ${Else}
-    StrCpy $R2 "non installato"
+    StrCpy $R2 "$(L_NOTINSTALLED)"
   ${EndIf}
   StrCpy $Summary "$Summary$\r$\n• SAMdisk: $R2"
 
@@ -615,15 +689,15 @@ Section "-Check"
   ${If} $0 = 1
     Call FdrawcmdActive
     ${If} $R6 = 1
-      StrCpy $R2 "installato e attivo"
+      StrCpy $R2 "$(L_FD_ACTIVE)"
     ${Else}
-      StrCpy $R2 "installato, si attiva dopo il riavvio"
+      StrCpy $R2 "$(L_FD_AFTERBOOT)"
       SetRebootFlag true
     ${EndIf}
   ${ElseIf} $FdResult != ""
-    StrCpy $R2 "non installato ($FdResult)"
+    StrCpy $R2 "$(L_NOTINSTALLED_WHY)"
   ${Else}
-    StrCpy $R2 "non installato"
+    StrCpy $R2 "$(L_NOTINSTALLED)"
   ${EndIf}
   StrCpy $Summary "$Summary$\r$\n• fdrawcmd.sys: $R2"
 
@@ -632,54 +706,58 @@ Section "-Check"
     StrCpy $R0 '"${DIC_DIR}\DiscImageCreator.exe" /v'
     Call Launch
     ${If} $R1 == "${DLL_NOT_FOUND}"
-      StrCpy $R2 "manca il runtime di Visual C++"
+      StrCpy $R2 "$(L_DIC_NORUNTIME)"
     ${Else}
       StrCpy $R1 "Build, "
       Call WordAfter
       StrCpy $R2 $R2 8
       ${If} $R2 == ""
-        StrCpy $R2 "non risponde"
+        StrCpy $R2 "$(L_NOANSWER)"
       ${EndIf}
     ${EndIf}
   ${Else}
-    StrCpy $R2 "non installato"
+    StrCpy $R2 "$(L_NOTINSTALLED)"
   ${EndIf}
   StrCpy $Summary "$Summary$\r$\n• DiscImageCreator: $R2"
 
   ${If} $Runtime == "ok"
-    StrCpy $R2 "presente"
+    StrCpy $R2 "$(L_RT_PRESENT)"
   ${ElseIf} $Runtime == "old"
-    StrCpy $R2 "più vecchio della 14.27"
+    StrCpy $R2 "$(L_RT_OLD)"
   ${Else}
-    StrCpy $R2 "manca"
+    StrCpy $R2 "$(L_RT_MISSING)"
   ${EndIf}
   ${If} $VcResult == "ok"
-    StrCpy $R2 "$R2 (installato ora)"
+    StrCpy $R2 "$(L_RT_NOW)"
   ${EndIf}
-  StrCpy $Summary "$Summary$\r$\n• runtime di Visual C++ 14.27: $R2"
-  ReadINIStr $R2 "$INSTDIR\${INI}" "Archiviazione" "Cartella"
-  StrCpy $Summary "$Summary$\r$\n• archivio: $R2"
+  StrCpy $Summary "$Summary$\r$\n$(L_SUM_RUNTIME)"
+  ReadINIStr $R2 "$INSTDIR\${INI}" "General" "ArchiveFolder"
+  StrCpy $Summary "$Summary$\r$\n$(L_SUM_ARCHIVE)"
+  ${If} $IniConv > 0
+  ${OrIf} $IniConvUser > 0
+    StrCpy $Summary "$Summary$\r$\n$(L_SUM_INICONV)"
+  ${EndIf}
   ${If} $Runtime != "ok"
-    StrCpy $Summary "$Summary$\r$\n$\r$\nSenza il runtime i CD e i DVD non si leggono. Rilancia questo setup, oppure installa a mano VC_redist.x86.exe 14.27.29114: il link è in ${CHECK_FILE}."
+    StrCpy $Summary "$Summary$\r$\n$\r$\n$(L_SUM_NORUNTIME)"
   ${EndIf}
-  StrCpy $Summary "$Summary$\r$\n$\r$\nQuesto riepilogo è anche in $INSTDIR\${CHECK_FILE}."
+  StrCpy $Summary "$Summary$\r$\n$\r$\n$(L_SUM_ALSO)"
 
   DetailPrint "$Summary"
   FileOpen $0 "$INSTDIR\${CHECK_FILE}" w
   FileWriteWord $0 0xFEFF
   FileWriteUTF16LE $0 "RetroArchiver ${VERSION}$\r$\n$\r$\n$Summary$\r$\n"
   ${If} $Runtime != "ok"
-    FileWriteUTF16LE $0 "$\r$\nRuntime di Visual C++ 2015-2019 x86 versione 14.27.29114 (l'ultima che va su XP):$\r$\n${VCREDIST_URL}$\r$\n"
+    FileWriteUTF16LE $0 "$\r$\n$(L_CHECK_VC)$\r$\n${VCREDIST_URL}$\r$\n"
   ${EndIf}
   FileClose $0
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_RA} "La finestra di RetroArchiver, dskrun e dskdiff, il Leggimi, le guide e le licenze dei programmi di terzi. Obbligatorio."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_SAMDISK} "Legge i floppy. Nella cartella di RetroArchiver, in tools\samdisk."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_FDRAWCMD} "Il driver con cui SAMdisk parla con il controller floppy. Dopo l'installazione serve un riavvio."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_VCREDIST} "Serve a DiscImageCreator. Si installa solo se manca o è più vecchio della 14.27; se c'è già non lo tocco."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_DIC} "Legge i CD e i DVD. Nella cartella di RetroArchiver, in tools\DIC. Ha bisogno del runtime di Visual C++ 14.27."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_RA} "$(L_DESC_RA)"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_SAMDISK} "$(L_DESC_SAMDISK)"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_FDRAWCMD} "$(L_DESC_FDRAWCMD)"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_VCREDIST} "$(L_DESC_VCREDIST)"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_DIC} "$(L_DESC_DIC)"
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 ; ---- uninstall ----
@@ -688,10 +766,10 @@ SectionEnd
 Function un.RemoveSettings
   SetShellVarContext current
   ${If} ${FileExists} "$APPDATA\${USER_DIR}\${INI}"
-    MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Tolgo anche le tue impostazioni di RetroArchiver?$\r$\n($APPDATA\${USER_DIR})$\r$\n$\r$\nSe reinstalli RetroArchiver, con le impostazioni ritrovi la cartella dell'archivio e le altre scelte." /SD IDNO IDNO tieni
+    MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "$(L_UN_SETTINGS_ASK)" /SD IDNO IDNO tieni
     Delete "$APPDATA\${USER_DIR}\${INI}"
     RMDir "$APPDATA\${USER_DIR}"
-    DetailPrint "Impostazioni tolte: $APPDATA\${USER_DIR}"
+    DetailPrint "$(L_UN_SETTINGS_GONE)"
   tieni:
   ${EndIf}
   SetShellVarContext all
@@ -709,6 +787,10 @@ Section "Uninstall"
   Delete "$INSTDIR\docs\setup.txt"
   Delete "$INSTDIR\docs\procedure.txt"
   RMDir "$INSTDIR\docs"
+  ; only the languages this setup brings: a translation added by hand stays
+  Delete "$INSTDIR\lang\en.lng"
+  Delete "$INSTDIR\lang\it.lng"
+  RMDir "$INSTDIR\lang"
   Delete "$INSTDIR\licenses\THIRD-PARTY-NOTICES.txt"
   Delete "$INSTDIR\licenses\*-LICENSE.txt"
   RMDir "$INSTDIR\licenses"
@@ -732,8 +814,8 @@ Section "Uninstall"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
   ${If} ${FileExists} "$INSTDIR\*.*"
-    DetailPrint "La cartella $INSTDIR resta: dentro ci sono file non del setup (un DAT di redump, un archivio di prima)."
+    DetailPrint "$(L_UN_DIR_STAYS)"
   ${EndIf}
-  DetailPrint "L'archivio resta dov'è."
-  DetailPrint "fdrawcmd.sys resta installato: si toglie da Installazione applicazioni, voce Fdrawcmd.sys."
+  DetailPrint "$(L_UN_ARCHIVE_STAYS)"
+  DetailPrint "$(L_UN_FD_STAYS)"
 SectionEnd

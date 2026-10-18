@@ -5,7 +5,7 @@
 
 static void oom(void)
 {
-    fputs("memoria esaurita\n", stderr);
+    fputs("out of memory\n", stderr);
     exit(3);
 }
 

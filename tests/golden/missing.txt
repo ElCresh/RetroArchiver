@@ -1,5 +1,5 @@
 
-dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+dskdiff 1.2 - compares several reads of the same floppy
 
-  ERRORE: non riesco ad aprire fixtures/missing.dsk
+  ERROR: cannot open fixtures/missing.dsk
 exit=2

@@ -1,5 +1,6 @@
 #include "unit.h"
 #include "core/session.h"
+#include "core/bagit.h"
 #include "core/fsu8.h"
 #include "core/runner.h"
 
@@ -90,11 +91,11 @@ static void cancel_in_compare(int ask_again, const char *title)
     rc = session_run(&c, &h);
     if (ask_again) {
         CHECK(rc == SESSION_CLOSED && asked == 3);
-        CHECK_STR(box->disk[1].status, "pulito");
-        CHECK_STR(box->disk[2].status, "pulito");
+        CHECK_STR(box->disk[1].status, "clean");
+        CHECK_STR(box->disk[2].status, "clean");
     } else {
         CHECK(rc == SESSION_OPEN && asked == 1);
-        CHECK_STR(box->disk[0].status, "pulito");
+        CHECK_STR(box->disk[0].status, "clean");
     }
     runner_clear();
     meta_delete(box);
@@ -134,13 +135,13 @@ static void mixed_box(void)
     CHECK(turns[0].kind == MEDIA_FLOPPY && turns[0].num == 1 && turns[0].count == 2 && turns[0].readable);
     CHECK(turns[2].kind == MEDIA_CD && turns[2].num == 1 && turns[2].count == 1 && !turns[2].readable);
     CHECK(turns[2].n == 3 && turns[2].total == 3);
-    CHECK_STR(box->disk[0].status, "pulito");
+    CHECK_STR(box->disk[0].status, "clean");
     CHECK_STR(box->disk[0].master, "FLOPPY01.dsk");
     CHECK_STR(box->disk[2].status, "");     /* to be read, not missing */
     CHECK_STR(box->disk[2].label, "NTWKS40_IT");
     CHECK_STR(box->names[MEDIA_CD], "CD{nn}");
     session_bagdir(p, sizeof(p), "tmp_unit/sess", "NT misto");
-    snprintf(q, sizeof(q), "%s" U8_SEP ".in-corso", p);
+    snprintf(q, sizeof(q), "%s" U8_SEP BAG_OPEN_MARK, p);
     CHECK(u8_exists(q));
 
     /* resumed: only the CD is asked for; Salta leaves it still to be read */
@@ -151,7 +152,7 @@ static void mixed_box(void)
     /* End of box: the CD counts as missing and the package closes */
     nturns = 0; cd_cmd = CMD_FINISH;
     CHECK(session_run(&c, &h) == SESSION_CLOSED);
-    CHECK_STR(box->disk[2].status, "mancante");
+    CHECK_STR(box->disk[2].status, "missing");
     CHECK(!u8_exists(q));
     meta_delete(box);
 }
@@ -175,7 +176,7 @@ static int t_read(const char *o, runner_line_fn fn, void *c)
 static void t_event(void *c, event_kind k, int d, const char *t)
 {
     (void)c;
-    if (k == EV_LINE && strstr(t, "identico al floppy 1")) { twin_lines++; twin_line_disk = d; }
+    if (k == EV_LINE && strstr(t, "identical to floppy 1")) { twin_lines++; twin_line_disk = d; }
 }
 static int t_wait(void *c, const disk_turn *t, char *l, size_t ll, char *no, size_t nl)
 {
@@ -206,21 +207,21 @@ static void twin_box(void)
     twin_lines = twin_line_disk = twin_right = 0;
     CHECK(session_run(&c, &h) == SESSION_OPEN);     /* floppy 3 still to be read */
     CHECK(twin_lines == 1 && twin_line_disk == 3);
-    CHECK_STR(box->disk[2].status, "duplicato");
+    CHECK_STR(box->disk[2].status, "duplicate");
     CHECK(box->disk[2].duplicate_of == 1 && box->disk[2].nreads == 0 && !box->disk[2].master[0]);
     CHECK(!meta_disk_done(&box->disk[2]));
     CHECK(session_twin(box, &box->disk[0]) == 0);
     session_bagdir(bag, sizeof(bag), "tmp_unit/sess", "Doppione");
     snprintf(p, sizeof(p), "%s" U8_SEP "data" U8_SEP "FLOPPY03.dsk", bag);
     CHECK(!u8_exists(p));
-    snprintf(p, sizeof(p), "%s" U8_SEP SESSION_ASIDE_DIR U8_SEP "FLOPPY03.dsk.duplicato", bag);
+    snprintf(p, sizeof(p), "%s" U8_SEP SESSION_ASIDE_DIR U8_SEP "FLOPPY03.dsk" SESSION_DUPLICATE, bag);
     CHECK(u8_exists(p));                    /* set aside, not deleted */
 
     /* resumed with the right disk: read from zero, the box closes */
     twin_right = 1;
     meta_set_counts(box, 3, 0, 0);
     CHECK(session_run(&c, &h) == SESSION_CLOSED);
-    CHECK_STR(box->disk[2].status, "pulito");
+    CHECK_STR(box->disk[2].status, "clean");
     CHECK(box->disk[2].duplicate_of == 0 && box->disk[2].nreads == 1);
     CHECK(u8_exists(p));
     meta_delete(box);
@@ -232,7 +233,7 @@ static void twin_box(void)
     twin_lines = twin_right = 0;
     CHECK(session_run(&c, &h) == SESSION_CLOSED);
     CHECK(twin_lines == 2);
-    CHECK_STR(box->disk[2].status, "pulito");
+    CHECK_STR(box->disk[2].status, "clean");
     CHECK(box->disk[2].duplicate_of == 0 && session_twin(box, &box->disk[2]) == 1);
     meta_delete(box);
 }

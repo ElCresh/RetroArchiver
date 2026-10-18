@@ -71,10 +71,10 @@ static void test_meta_mixed(void)
     CHECK(c->disk[1].kind == MEDIA_DVD && c->disk[1].num == 1);
 
     /* a schema it does not know: it comes from a newer version */
-    put_text("tmp_unit/meta_misto/metadata.json", "{\"schema\": \"retroarchiver-3\"}");
+    put_text("tmp_unit/meta_misto/metadata.json", "{\"schema\": \"retroarchiver-4\"}");
     sb_clear(&err);
     CHECK(meta_load(c, "tmp_unit/meta_misto", &err) == -1);
-    CHECK(strstr(err.s, "piu' recente") != NULL);
+    CHECK(strstr(err.s, "newer version") != NULL);
 
     meta_delete(b); meta_delete(c);
     sb_free(&err);
@@ -108,6 +108,9 @@ static void test_meta_old(void)
     CHECK(b->ndisk == 2 && b->disk[0].kind == MEDIA_FLOPPY && b->disk[0].num == 1);
     CHECK(b->disk[1].kind == MEDIA_FLOPPY && b->disk[1].num == 2);
     CHECK_STR(b->disk[0].master, "DISK001.dsk");
+    /* the outcomes of 261017 in Italian are read in English; "da leggere" is "" */
+    CHECK_STR(b->disk[0].status, ST_CLEAN);
+    CHECK_STR(b->disk[1].status, "");
     CHECK_STR(b->names[MEDIA_FLOPPY], "");     /* the session derives it from the files */
     meta_delete(b);
     sb_free(&err);
@@ -125,13 +128,13 @@ void test_meta(void)
     str_copy(b->started, sizeof(b->started), "2026-10-15T21:04:00");
 
     d = meta_disk_get(b, 3);
-    str_copy(d->status, sizeof(d->status), "mancante");
+    str_copy(d->status, sizeof(d->status), "missing");
     d = meta_disk_get(b, 1);
     CHECK(b->ndisk == 2 && b->disk[0].n == 1 && b->disk[1].n == 3);
     CHECK(meta_disk_get(b, 1) == d);
     CHECK(meta_disk_get(b, 0) == NULL);
     str_copy(d->label, sizeof(d->label), "Disk 1");
-    str_copy(d->status, sizeof(d->status), "marginale");
+    str_copy(d->status, sizeof(d->status), "marginal");
     str_copy(d->master, sizeof(d->master), "disco01.dsk");
     d->nreads = 2;
     str_copy(d->reads[0].file, sizeof(d->reads[0].file), "disco01.dsk");
@@ -154,7 +157,7 @@ void test_meta(void)
     text = slurp_test("tmp_unit/meta/metadata.json");
     CHECK(text != NULL);
     if (text) {
-        CHECK(strstr(text, "\"schema\": \"retroarchiver-2\"") != NULL);
+        CHECK(strstr(text, "\"schema\": \"retroarchiver-3\"") != NULL);
         /* media_expected only: all floppies */
         CHECK(strstr(text, "\"type\": \"floppy\",\n        \"count\": 3") != NULL);
         CHECK(strstr(text, "\"format\": \"1.44M\"") != NULL);
@@ -170,17 +173,17 @@ void test_meta(void)
     CHECK(c->disk[0].reads[0].bytes == 1515776);
     CHECK_STR(c->disk[0].verdict, "data_differ");
     CHECK(c->disk[0].unstable_tracks == 2);
-    CHECK_STR(c->disk[1].status, "mancante");
+    CHECK_STR(c->disk[1].status, "missing");
     CHECK_STR(c->closed, "");
 
     /* destination that does not exist: clear error, no crash */
     sb_clear(&err);
     CHECK(meta_save(b, "tmp_unit/non/esiste", NULL, NULL, &err) == -1);
-    CHECK(strstr(err.s, "pieno o protetto") != NULL);
+    CHECK(strstr(err.s, "full or write-protected") != NULL);
     sb_clear(&err);
     CHECK(meta_load(c, "tmp_unit/non/esiste", &err) == -1);
-    CHECK(strstr(err.s, "non trovo") != NULL);
-    CHECK(strstr(err.s, "spostane la cartella") != NULL);
+    CHECK(strstr(err.s, "cannot find") != NULL);
+    CHECK(strstr(err.s, "move its folder away") != NULL);
     /* damaged: the message also says what to do */
     {
         FILE *f = u8_fopen("tmp_unit/meta/metadata.json", "wb");
@@ -188,7 +191,7 @@ void test_meta(void)
     }
     sb_clear(&err);
     CHECK(meta_load(c, "tmp_unit/meta", &err) == -1);
-    CHECK(strstr(err.s, "non e' leggibile") != NULL && strstr(err.s, "spostane la cartella") != NULL);
+    CHECK(strstr(err.s, "cannot be read") != NULL && strstr(err.s, "move its folder away") != NULL);
 
     meta_delete(b); meta_delete(c);
     sb_free(&err);

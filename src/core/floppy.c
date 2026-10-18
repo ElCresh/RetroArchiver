@@ -73,16 +73,16 @@ static int check(strbuf *msg)
     const char *argv[] = { samdisk, "rpm", source, NULL };
     int code = 0, rc = runner_run(argv, NULL, NULL, &code);
     if (rc == RUNNER_NOSTART) {
-        sb_printf(msg, "Non trovo %s: mettilo nella stessa cartella del programma o nel PATH.", samdisk);
+        sb_printf(msg, "Cannot find %s: put it in the program folder or in the PATH.", samdisk);
         return -1;
     }
     if (rc != RUNNER_DONE) {
-        sb_printf(msg, "Controllo del lettore %s annullato: riprova quando vuoi.", source);
+        sb_printf(msg, "Check of drive %s canceled: try again when you like.", source);
         return -1;
     }
     if (code != 0) {
-        sb_printf(msg, "Il lettore %s non risponde (samdisk rpm ha dato errore %d): "
-                       "controlla fdrawcmd.sys e che nel lettore ci sia un dischetto.", source, code);
+        sb_printf(msg, "Drive %s does not respond (samdisk rpm gave error %d): "
+                       "check fdrawcmd.sys and that there is a floppy in the drive.", source, code);
         return -1;
     }
     return 0;
@@ -92,8 +92,8 @@ static int check(strbuf *msg)
 static int no_tool(runner_line_fn on_line, void *ctx)
 {
     char line[640];
-    snprintf(line, sizeof(line), "Non trovo %s: mettilo nella stessa cartella del programma "
-                                 "o nel PATH, oppure indica il percorso completo di samdisk.exe.", samdisk);
+    snprintf(line, sizeof(line), "Cannot find %s: put it in the program folder "
+                                 "or in the PATH, or give the full path of samdisk.exe.", samdisk);
     if (on_line) on_line(ctx, line);
     return MEDIA_NOTOOL;
 }
@@ -167,7 +167,7 @@ static const char *format_name(int nsec, int cyl, int heads, char *buf)
     if (heads == 2 && cyl == 80 && nsec == 36) return "2.88M";
     if (heads == 2 && cyl == 40 && nsec == 9)  return "360K";
     if (heads == 1 && cyl == 40 && nsec == 9)  return "180K";
-    sprintf(buf, "%d cilindri x %d facce x %d settori", cyl, heads, nsec);
+    sprintf(buf, "%d cylinders x %d heads x %d sectors", cyl, heads, nsec);
     return buf;
 }
 
@@ -180,7 +180,7 @@ static void tech(void *ctx, const char *img, json_writer *w)
     if (!edsk_load(img, &d, &msg) || !d.ok) {
         jw_null(w, "geometry");
         jw_null(w, "filesystem");
-        jw_str(w, "filesystem_note", "immagine non leggibile come EDSK");
+        jw_str(w, "filesystem_note", "image not readable as EDSK");
         edsk_free(&d);
         sb_free(&msg);
         return;
@@ -237,5 +237,5 @@ static int volume_label(const char *img, char *out, size_t n)
 
 const media_ops floppy_media = {
     "floppy", ".dsk", check, scan, read_disk, compare_files, tech, problems, careful,
-    "SAMdisk", "Scansione", 0, NULL, volume_label
+    "SAMdisk", "Scan", 0, NULL, volume_label
 };

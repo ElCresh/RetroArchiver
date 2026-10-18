@@ -1,15 +1,15 @@
 
-dskdiff 1.2 - confronto di piu' letture dello stesso floppy
+dskdiff 1.2 - compares several reads of the same floppy
 
-  ATTENZIONE: fixtures/_nohdr.dsk non ha un'intestazione DSK riconoscibile.
-              Confronto solo byte per byte, senza mappa delle tracce.
+  WARNING: fixtures/_nohdr.dsk has no recognizable DSK header.
+           Comparing byte by byte only, without a track map.
 
-  3 letture a confronto
+  3 reads compared
 
-  1) fixtures/_nohdr.dsk                 300 byte
-  2) fixtures/ident_a.dsk          1.515.776 byte
-  3) fixtures/ident_b.dsk          1.515.776 byte
+  1) fixtures/_nohdr.dsk                 300 bytes
+  2) fixtures/ident_a.dsk          1,515,776 bytes
+  3) fixtures/ident_b.dsk          1,515,776 bytes
 
-  ESITO: intestazione non riconosciuta.
+  RESULT: header not recognized.
 
 exit=2

@@ -41,7 +41,7 @@ static void test_iso(void)
     iso_free(&fi);
     /* an audio track has no file system */
     CHECK(iso_read("fixtures/dic/cd_good/DISC (Track 2).bin", 2352, 16, &fi) == 0);
-    CHECK(strstr(fi.note, "nessun file system ISO 9660") != NULL);
+    CHECK(strstr(fi.note, "no ISO 9660 file system") != NULL);
     CHECK(iso_read("fixtures/non-esiste.iso", 2048, 0, &fi) == 0);
     CHECK(iso_read("fixtures/iso/prova.iso", 2048, 0, &fi) == 1 && fi.joliet == 0);
     iso_free(&fi);
@@ -156,12 +156,17 @@ void test_optical(void)
     CHECK_STR(cd_media.ext, "");
     CHECK(cd_media.one_read == 1);
     /* CD outcomes in the archive classes */
-    CHECK(meta_status_class("verificato redump") == 'p');
-    CHECK(meta_status_class("instabile") == 'm');
-    CHECK(meta_status_class("letto una volta") == 'f');
-    CHECK(meta_status_class("errori") == 'e');
-    CHECK(meta_status_class("lettura fallita") == '-');
-    CHECK(meta_status_done("letto una volta") && !meta_status_done("lettura fallita"));
+    CHECK(meta_status_class("redump-verified") == 'p');
+    CHECK(meta_status_class("unstable") == 'm');
+    CHECK(meta_status_class("read-once") == 'f');
+    CHECK(meta_status_class("errors") == 'e');
+    CHECK(meta_status_class("read-failed") == '-');
+    CHECK(meta_status_done("read-once") && !meta_status_done("read-failed"));
+    /* what 261017 wrote, in Italian */
+    CHECK(!strcmp(meta_status_english("verificato redump"), ST_REDUMP));
+    CHECK(!strcmp(meta_status_english("lettura fallita"), ST_FAILED));
+    CHECK(!strcmp(meta_status_english("mancante"), ST_MISSING) && !strcmp(meta_status_english("duplicato"), ST_DUPLICATE));
+    CHECK(!strcmp(meta_status_english("clean"), "clean") && !strcmp(meta_status_english("boh"), "boh"));
     {
         arc_box b; char t[200];
         memset(&b, 0, sizeof(b));
@@ -169,10 +174,10 @@ void test_optical(void)
         strcpy(b.disks, "ppf"); strcpy(b.kinds, "fcc");
         b.expected = 3; b.count[MEDIA_FLOPPY] = 1; b.count[MEDIA_CD] = 2;
         arc_outcome(&b, t, sizeof(t));
-        CHECK_STR(t, "2 puliti (1 verificato con redump), 1 fragile");
+        CHECK_STR(t, "2 clean (1 verified with redump), 1 fragile");
         b.state = ARC_COMPLETE;
         arc_advice(&b, t, sizeof(t));
-        CHECK(strstr(t, "Il CD 2 e' stato letto una volta sola") != NULL);
+        CHECK(strstr(t, "CD 2 was read only once") != NULL);
     }
 
     /* the .cue and .dat names from DIC are ANSI: convert to UTF-8 (here as Latin-1) */
@@ -241,7 +246,7 @@ void test_optical(void)
     CHECK(cd_media.check(&msg) == 0);
     setenv("FAKE_DIC_NODRIVE", "1", 1);
     CHECK(cd_media.check(&msg) == -1);
-    CHECK(strstr(msg.s, "accesso negato") != NULL);
+    CHECK(strstr(msg.s, "access denied") != NULL);
     unsetenv("FAKE_DIC_NODRIVE");
     CHECK(cd_media.scan("tmp_unit/ottici/CD01.scan.txt", keep, NULL) == 0);
     CHECK(u8_filesize("tmp_unit/ottici/CD01.scan.txt") > 0);
@@ -265,19 +270,19 @@ void test_optical(void)
         CHECK(prog == 0 && c2 == 1);
     }
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD01", NULL, NULL, &r) == 1);
-    CHECK_STR(r.outcome, "letto una volta");
+    CHECK_STR(r.outcome, "read-once");
     CHECK_STR(r.verdict_key, "single");
-    CHECK(strstr(r.detail.s, "nessun DAT di redump") != NULL);
+    CHECK(strstr(r.detail.s, "no redump DAT") != NULL);
 
     /* second read identical: clean */
     CHECK(cd_media.read("tmp_unit/ottici/CD01_b", keep, NULL) == 0);
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD01", "tmp_unit/ottici/CD01_b", NULL, &r) == 0);
-    CHECK_STR(r.outcome, "pulito");
+    CHECK_STR(r.outcome, "clean");
     CHECK(r.agree == 2);
     /* third read with a different audio track: unstable */
     CHECK(cd_media.read("tmp_unit/ottici/CD01_c", keep, NULL) == 0);
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD01", "tmp_unit/ottici/CD01_b", "tmp_unit/ottici/CD01_c", &r) == 1);
-    CHECK_STR(r.outcome, "instabile");
+    CHECK_STR(r.outcome, "unstable");
     CHECK(r.agree == 2 && r.unstable_tracks == 1);
 
     /* failed read: no half-done folder */
@@ -286,12 +291,12 @@ void test_optical(void)
     /* a DVD in the drive instead of the CD */
     sb_clear(&said);
     CHECK(cd_media.read("tmp_unit/ottici/CD08", keep, NULL) == -1);
-    CHECK(strstr(said.s, "non c'e' un CD") != NULL);
+    CHECK(strstr(said.s, "does not hold a CD") != NULL);
 
     /* with the redump DAT one read is enough */
     optical_set_datdir("fixtures/redump");
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD01", NULL, NULL, &r) == 0);
-    CHECK_STR(r.outcome, "verificato redump");
+    CHECK_STR(r.outcome, "redump-verified");
     CHECK(strstr(r.detail.s, "Gioco di Prova (Italy)") != NULL);
     s = jread(&w, &cd_media, "tmp_unit/ottici/CD01");
     CHECK(strstr(s, "\"tool\": \"DiscImageCreator 20260101T233129\"") != NULL);
@@ -311,7 +316,7 @@ void test_optical(void)
     CHECK(cd_media.read("tmp_unit/ottici/CD02", keep, NULL) == 0);
     CHECK(cd_media.read("tmp_unit/ottici/CD02_b", keep, NULL) == 0);
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD02", "tmp_unit/ottici/CD02_b", NULL, &r) == 2);
-    CHECK_STR(r.outcome, "errori");
+    CHECK_STR(r.outcome, "errors");
     s = jread(&w, &cd_media, "tmp_unit/ottici/CD02");
     CHECK(strstr(s, "\"protection\": \"SafeDisc\"") != NULL);
     CHECK(strstr(s, "\"c2_errors\": 3") != NULL);
@@ -319,7 +324,7 @@ void test_optical(void)
     /* ...but if redump has the same disc, the errors are the intended ones */
     optical_set_datdir("fixtures/redump");
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD02", NULL, NULL, &r) == 0);
-    CHECK_STR(r.outcome, "verificato redump");
+    CHECK_STR(r.outcome, "redump-verified");
 
     /* DVD: the iso, the file system and redump */
     CHECK(dvd_media.read("tmp_unit/ottici/DVD01", keep, NULL) == 0);
@@ -332,12 +337,12 @@ void test_optical(void)
 
     /* with several reads each is looked up in redump: the right one becomes the master */
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD01_c", "tmp_unit/ottici/CD01", NULL, &r) == 0);
-    CHECK_STR(r.outcome, "verificato redump");
+    CHECK_STR(r.outcome, "redump-verified");
     CHECK(r.master == 2);
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD01_c", "tmp_unit/ottici/CD01_b", NULL, &r) == 0);
     CHECK(r.master == 2);                       /* even if the first one is the wrong one */
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD01_c", "tmp_unit/ottici/CD01_c", NULL, &r) == 0);
-    CHECK_STR(r.outcome, "pulito");             /* two identical reads that redump does not know */
+    CHECK_STR(r.outcome, "clean");             /* two identical reads that redump does not know */
     CHECK(r.master == 0);
 
     /* DIC exits with an error but the read is complete: it is kept, with the error */
@@ -345,17 +350,17 @@ void test_optical(void)
     sb_clear(&said);
     CHECK(cd_media.read("tmp_unit/ottici/CD03", keep, NULL) == 0);
     CHECK(u8_filesize("tmp_unit/ottici/CD03/CD03.cue") > 0);
-    CHECK(strstr(said.s, "la lettura e' completa") != NULL);
+    CHECK(strstr(said.s, "the read is complete") != NULL);
     s = jread(&w, &cd_media, "tmp_unit/ottici/CD03");
     CHECK(strstr(s, "\"dic_exit_code\": 3") != NULL);
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD03", "tmp_unit/ottici/CD01", NULL, &r) == 2);
-    CHECK_STR(r.outcome, "errori");
-    CHECK(strstr(r.detail.s, "uscito con l'errore 3") != NULL);
+    CHECK_STR(r.outcome, "errors");
+    CHECK(strstr(r.detail.s, "exited with error 3") != NULL);
     /* without a .dat there is no read, and the message does not blame only the disc */
     sb_clear(&said);
     CHECK(cd_media.read("tmp_unit/ottici/CD04", keep, NULL) == -1);
     CHECK(!u8_exists("tmp_unit/ottici/CD04"));
-    CHECK(strstr(said.s, "Ultima riga: ") != NULL && strstr(said.s, "MB liberi") != NULL);
+    CHECK(strstr(said.s, "Last line: ") != NULL && strstr(said.s, "MB free") != NULL);
     CHECK(strstr(said.s, "NOT_READY") != NULL);
 
     /* C2 errors corrected on re-reads; drive that does not report C2 */
@@ -366,7 +371,7 @@ void test_optical(void)
     s = jread(&w, &cd_media, "tmp_unit/ottici/CD06");
     CHECK(strstr(s, "\"c2_check\": 0") != NULL);
     CHECK(cmp(&cd_media, "tmp_unit/ottici/CD06", NULL, NULL, &r) == 1);
-    CHECK(strstr(r.detail.s, "controllo C2 non disponibile su questo lettore") != NULL);
+    CHECK(strstr(r.detail.s, "C2 check not available on this drive") != NULL);
 
     /* the redump cache follows the read, not just the folder */
     optical_set_datdir("fixtures/redump");
@@ -381,7 +386,7 @@ void test_optical(void)
     /* space and file system before the read */
     sb_clear(&msg);
     CHECK(optical_room("tmp_unit", 1LL << 60, 0, &msg) == -1);
-    CHECK(strstr(msg.s, "MB liberi") != NULL);
+    CHECK(strstr(msg.s, "MB free") != NULL);
     CHECK(optical_room("tmp_unit", 1024, 0, &msg) == 0);
     sb_clear(&msg);
     CHECK(optical_fs_ok("FAT32", 5000LL * 1048576, &msg) == -1 && strstr(msg.s, "NTFS") != NULL);
@@ -394,10 +399,10 @@ void test_optical(void)
     sb_clear(&said);
     optical_set_dic("dic-che-non-esiste");
     CHECK(cd_media.read("tmp_unit/ottici/CD06", keep, NULL) == MEDIA_NOTOOL);
-    CHECK(strstr(said.s, "Non trovo dic-che-non-esiste") != NULL);
+    CHECK(strstr(said.s, "Cannot find dic-che-non-esiste") != NULL);
     CHECK(cd_media.scan("tmp_unit/ottici/CD06.scan.txt", keep, NULL) == MEDIA_NOTOOL);
     sb_clear(&msg);
-    CHECK(cd_media.check(&msg) == -1 && strstr(msg.s, "Non trovo") != NULL);
+    CHECK(cd_media.check(&msg) == -1 && strstr(msg.s, "Cannot find") != NULL);
 
     unsetenv("FAKE_DIC_SCRIPT");
     unsetenv("FAKE_DIC_DIR");

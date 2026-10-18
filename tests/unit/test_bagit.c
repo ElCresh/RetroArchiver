@@ -29,7 +29,7 @@ void test_bagit(void)
     bag_dirname("\xe3\x83\x86\xe3\x82\xb9\xe3\x83\x88 Disk.", name, 81);   /* Japanese */
     CHECK_STR(name, "___ Disk");
     bag_dirname("  ... ", name, 81);
-    CHECK_STR(name, "senza titolo");
+    CHECK_STR(name, "untitled");
     bag_dirname("Caf\xc3\xa9 \xe2\x82\xac", name, 81);                     /* euro: in cp1252 */
     CHECK_STR(name, "Caf\xc3\xa9 \xe2\x82\xac");
     memset(longt, 'A', 300); longt[300] = 0;
@@ -58,7 +58,7 @@ void test_bagit(void)
     b->media_expected = 2;
     str_copy(b->closed, sizeof(b->closed), "2026-10-15T22:00:00");
     d = meta_disk_get(b, 1);
-    str_copy(d->status, sizeof(d->status), "pulito");
+    str_copy(d->status, sizeof(d->status), "clean");
     str_copy(d->master, sizeof(d->master), "disco01.dsk");
     d->nreads = 1;
     str_copy(d->reads[0].file, sizeof(d->reads[0].file), "disco01.dsk");
@@ -67,10 +67,10 @@ void test_bagit(void)
     CHECK(bag_close("tmp_unit/bag1", b, &err, &bad) == 0);
     CHECK(bad == 0);
     CHECK(!bag_is_open("tmp_unit/bag1"));
-    CHECK(contains("tmp_unit/bag1/bag-info.txt", "Box-Status: incompleto\n"));
+    CHECK(contains("tmp_unit/bag1/bag-info.txt", "Box-Status: incomplete\n"));
     CHECK(contains("tmp_unit/bag1/bag-info.txt", "Missing-Media: floppy 2\n"));
     CHECK(contains("tmp_unit/bag1/bag-info.txt", "Media-Type: 2 floppy\n"));
-    CHECK(contains("tmp_unit/bag1/bag-info.txt", "BagIt-Profile-Identifier: urn:retroarchiver:bagit-profile:2\n"));
+    CHECK(contains("tmp_unit/bag1/bag-info.txt", "BagIt-Profile-Identifier: urn:retroarchiver:bagit-profile:3\n"));
     CHECK(contains("tmp_unit/bag1/bag-info.txt", "Payload-Oxum: 6.2\n"));
     CHECK(contains("tmp_unit/bag1/bag-info.txt", "Bagging-Date: 2026-10-15\n"));
     CHECK(contains("tmp_unit/bag1/manifest-sha256.txt",
@@ -84,14 +84,14 @@ void test_bagit(void)
     put("tmp_unit/bag2/data/disco01.dsk", "abX");
     sb_clear(&err);
     CHECK(bag_close("tmp_unit/bag2", b, &err, &bad) == -1);
-    CHECK(strstr(err.s, "cambiato") != NULL);
+    CHECK(strstr(err.s, "changed") != NULL);
     CHECK(bad == 1);
     CHECK(bag_is_open("tmp_unit/bag2"));
     /* a missing file: there too we know which disk to re-read */
     u8_remove("tmp_unit/bag2/data/disco01.dsk");
     sb_clear(&err);
     CHECK(bag_close("tmp_unit/bag2", b, &err, &bad) == -1);
-    CHECK(strstr(err.s, "manca") != NULL);
+    CHECK(strstr(err.s, "missing") != NULL);
     CHECK(bad == 1);
 
     /* empty payload: the bag does not close, the verifier would call it invalid */
@@ -102,9 +102,20 @@ void test_bagit(void)
         CHECK(bag_create("tmp_unit/bag3", &err) == 0);
         CHECK(bag_close("tmp_unit/bag3", e, &err, &bad) == -1);
         CHECK(bag_is_open("tmp_unit/bag3"));
-        CHECK(strstr(err.s, "piattaforma") != NULL);
+        CHECK(strstr(err.s, "platform") != NULL);
         meta_delete(e);
     }
+
+    /* a bag left open by 261017: the .in-corso marker, Box-Status in Italian */
+    CHECK(bag_create("tmp_unit/bag4", &err) == 0);
+    CHECK(u8_rename_replace("tmp_unit/bag4/" BAG_OPEN_MARK, "tmp_unit/bag4/" BAG_OPEN_MARK_OLD) == 0);
+    CHECK(bag_is_open("tmp_unit/bag4"));
+    put("tmp_unit/bag4/data/disco01.dsk", "abc");
+    sb_clear(&err);
+    CHECK(bag_close("tmp_unit/bag4", b, &err, &bad) == 0);
+    CHECK(!bag_is_open("tmp_unit/bag4") && !u8_exists("tmp_unit/bag4/" BAG_OPEN_MARK_OLD));
+    CHECK(bag_status_complete("completo") && bag_status_complete(BAG_COMPLETE));
+    CHECK(!bag_status_complete("incompleto") && !bag_status_complete(BAG_INCOMPLETE));
 
 #ifndef _WIN32
     /* a file changed after closing: the verifier must reject it */

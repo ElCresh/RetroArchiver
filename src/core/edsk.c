@@ -25,7 +25,7 @@ void fmt_thousands(long v, char *out)
     n = sprintf(tmp, "%ld", v);
     for (i = 0, j = 0; i < n; i++) {
         out[j++] = tmp[i];
-        if ((n - 1 - i) % 3 == 0 && i != n - 1) out[j++] = '.';
+        if ((n - 1 - i) % 3 == 0 && i != n - 1) out[j++] = ',';
     }
     out[j] = 0;
 }
@@ -68,16 +68,16 @@ int edsk_load_as(const char *path, const char *shown, edsk *d, strbuf *msg)
 
     memset(d, 0, sizeof(*d));
     f = u8_fopen(path, "rb");
-    if (!f) { sb_printf(msg, "  ERRORE: non riesco ad aprire %s\n", shown); return 0; }
+    if (!f) { sb_printf(msg, "  ERROR: cannot open %s\n", shown); return 0; }
     fseek(f, 0, SEEK_END); d->len = ftell(f); fseek(f, 0, SEEK_SET);
     if (d->len < 256) {
-        sb_printf(msg, "  ERRORE: %s e' troppo corto\n", shown);
+        sb_printf(msg, "  ERROR: %s is too short\n", shown);
         fclose(f); return 0;
     }
     d->buf = (unsigned char *)malloc(d->len);
-    if (!d->buf) { sb_puts(msg, "  ERRORE: memoria insufficiente\n"); fclose(f); return 0; }
+    if (!d->buf) { sb_puts(msg, "  ERROR: out of memory\n"); fclose(f); return 0; }
     if (fread(d->buf, 1, d->len, f) != (size_t)d->len) {
-        sb_printf(msg, "  ERRORE: lettura incompleta di %s\n", shown);
+        sb_printf(msg, "  ERROR: could not read all of %s\n", shown);
         fclose(f); edsk_free(d); return 0;
     }
     fclose(f);
@@ -114,8 +114,8 @@ int edsk_load_as(const char *path, const char *shown, edsk *d, strbuf *msg)
         }
         d->ok = 1;
     } else {
-        sb_printf(msg, "  ATTENZIONE: %s non ha un'intestazione DSK riconoscibile.\n", shown);
-        sb_puts(msg, "              Confronto solo byte per byte, senza mappa delle tracce.\n\n");
+        sb_printf(msg, "  WARNING: %s has no recognizable DSK header.\n", shown);
+        sb_puts(msg, "           Comparing byte by byte only, without a track map.\n\n");
         d->ok = 0;
     }
     detect(d);
