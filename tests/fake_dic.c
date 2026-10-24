@@ -11,7 +11,8 @@
  *                     (cd_good, cd_noise, cd_c2, dvd_good), or FAIL
  *                     (error), WRONG (disc of the other type),
  *                     FIRMWARE (a known drive without its last firmware),
- *                     C2STOP (C2 errors left after the rereads: no image) or
+ *                     C2STOP (C2 errors left after the rereads: no image),
+ *                     C2SLOW (the same, 20 slow rereads that gain little) or
  *                     SLOW folder (5 seconds first) or EXITn folder
  *                     (complete read but exit code n), RESETSn folder (n
  *                     drive resets first, then the folder or FAIL), LEADIN
@@ -283,6 +284,19 @@ static int dump(int kind, const char *file, int sf)
         printf("Need to reread sector: 182416\nRemains 1254 c2 error. Rereading times:    1/  20\n"
                "Need to reread sector: 181062\nRemains 929 c2 error. Rereading times:   20/  20\n"
                "Done. See _c2Error.txt\n");
+        return 0;
+    }
+    /* the same disc, but the 20 rereads take their time and gain little:
+     * RetroArchiver should stop it after the third */
+    if (!strcmp(what, "C2SLOW")) {
+        int k;
+        for (k = 1; k <= 20; k++) {
+            printf("Need to reread sector: 182416\nRemains %d c2 error. Rereading times: %4d/  20\n",
+                   1254 - 15 * k, k);
+            fflush(stdout);
+            pause_ms(400);
+        }
+        printf("Done. See _c2Error.txt\n");
         return 0;
     }
     if (!strcmp(what, "FIRMWARE")) {

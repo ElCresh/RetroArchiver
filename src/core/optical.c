@@ -320,6 +320,9 @@ typedef struct {
     int denied;         /* "GetLastError: 5" */
     int firmware;       /* "This drive isn't latest firmware" */
     int c2_left;        /* the last "Remains N c2 error" of the rereads */
+    int c2_first;       /* after the first reread */
+    int c2_cut;         /* stopped by RetroArchiver: the rereads could not reach zero */
+    char c2_done[8];    /* rereads made when it was stopped */
     int ask_offset;     /* DIC asked for the drive's read offset */
     int sf;             /* the read looks for copy protections */
     int resets;         /* "UNIT_ATTENTION" (the drive was reset) and "GetLastError: 121" (timeout) */
@@ -338,6 +341,35 @@ static int boring(const char *line)
            !strncmp(p, "32 bit", 6) || !strncmp(p, "64 bit", 6) || optical_progress(p, NULL, NULL);
 }
 
+/* Without zero C2 errors at the end DIC makes no image at all, and on the
+ * scratched Office 2000 CD the 20 rereads took over an hour to go from 1254
+ * to 929. From the third reread on: if, even at twice the pace seen so far,
+ * the rereads left cannot reach zero, the read is stopped there and Retry
+ * goes on at a lower speed */
+#define C2_JUDGE 3
+static void c2_progress(tee *t, const char *times)
+{
+    int k, total, left; long pace;
+    char p[300];
+    if (!times || t->c2_cut) return;
+    times += strlen("Rereading times:");
+    k = atoi(times);
+    total = strchr(times, '/') ? atoi(strchr(times, '/') + 1) : 0;
+    if (k == 1) t->c2_first = t->c2_left;
+    if (k < C2_JUDGE || total <= k || t->c2_left <= 0) return;
+    pace = (long)(t->c2_first - t->c2_left) / (k - 1);
+    left = total - k;
+    if (pace * 2 * left >= t->c2_left) return;
+    t->c2_cut = 1;
+    snprintf(t->c2_done, sizeof(t->c2_done), "%d", k);
+    snprintf(p, sizeof(p), "RetroArchiver: stopping DiscImageCreator at reread %d of %d: %d sectors left, "
+                           "%ld fewer per reread, it cannot reach zero in the %d left.",
+             k, total, t->c2_left, pace, left);
+    if (t->f) fprintf(t->f, "%s\n", p);
+    if (t->fn) t->fn(t->ctx, p);
+    runner_cancel();
+}
+
 static void tee_line(void *c, const char *line)
 {
     tee *t = (tee *)c; const char *r;
@@ -349,7 +381,10 @@ static void tee_line(void *c, const char *line)
     /* seen on the PC with a scratched CD (PLEXTOR PX-760A): "Remains 929 c2
      * error. Rereading times: 20/ 20", "Done. See _c2Error.txt", and DIC
      * ends there: no .img, no .cue, no EDC/ECC check */
-    if ((r = strstr(line, "Remains ")) != NULL && strstr(r, "c2 error")) t->c2_left = atoi(r + 8);
+    if ((r = strstr(line, "Remains ")) != NULL && strstr(r, "c2 error")) {
+        t->c2_left = atoi(r + 8);
+        c2_progress(t, strstr(r, "Rereading times:"));
+    }
     if (strstr(line, ASK_OFFSET)) t->ask_offset = 1;
     /* seen on the PC (ASUS DRW-08D6MT): "This drive can't read the lead-in",
      * then a raw read of LBA -1 refused with ILLEGAL_REQUEST, and DIC stops
@@ -1128,10 +1163,10 @@ static void fail_text(char *p, size_t n, int dvd, int code, const tee *t, const 
         snprintf(p, n, M_OPT_DENIED, drive);
     else if (t->c2_left > 0 && !dvd && slowed_to)
         snprintf(p, n, M_OPT_C2_SLOWER,
-                 t->c2_left, C2_REREAD, cur_speed, slowed_to);
+                 t->c2_left, t->c2_cut ? t->c2_done : C2_REREAD, cur_speed, slowed_to);
     else if (t->c2_left > 0 && !dvd)
         snprintf(p, n, M_OPT_C2_LOWEST,
-                 t->c2_left, C2_REREAD, cur_speed);
+                 t->c2_left, t->c2_cut ? t->c2_done : C2_REREAD, cur_speed);
     else if (t->firmware)
         snprintf(p, n, M_OPT_FIRMWARE, dvd ? "DVD" : "CD");
     else if (code != 0)
@@ -1296,7 +1331,7 @@ static int read_data(const char *out_dir, const char *base, const char *arg, int
         u8_rmtree(out_dir);
         return no_tool(rc == RUNNER_NOSTART ? 0 : code, on_line, ctx);
     }
-    if (rc == RUNNER_CANCELED && t.stopped) { runner_clear(); rc = RUNNER_DONE; if (!code) code = 1; }
+    if (rc == RUNNER_CANCELED && (t.stopped || t.c2_cut)) { runner_clear(); rc = RUNNER_DONE; if (!code) code = 1; }
     if (rc == RUNNER_CANCELED) { if (con) fclose(con); u8_rmtree(out_dir); return 1; }
     snprintf(name, sizeof(name), "%s.bin", base);
     u8_join(bin, sizeof(bin), out_dir, name);
@@ -1392,7 +1427,7 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
         return no_tool(rc == RUNNER_NOSTART ? 0 : code, on_line, ctx);
     }
     /* stopped here, not by the user: a failed read, with DIC's logs */
-    if (rc == RUNNER_CANCELED && t.stopped) { runner_clear(); rc = RUNNER_DONE; if (!code) code = 1; }
+    if (rc == RUNNER_CANCELED && (t.stopped || t.c2_cut)) { runner_clear(); rc = RUNNER_DONE; if (!code) code = 1; }
     if (rc == RUNNER_CANCELED) { if (t.f) fclose(t.f); u8_rmtree(out_dir); return 1; }
     /* the .dat is the last thing DIC writes: if it is there with the .cue
      * (or the .iso) the read is complete, even if DIC exits with an error.

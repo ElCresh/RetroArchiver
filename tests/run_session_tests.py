@@ -908,6 +908,18 @@ ok("C2 errors left: the disc is scratched, Retry goes to 8x and then to 4x, no /
    and dic_log() == ["cd nosf offset none"] * 4 and cd["status"] == "clean", out)
 ok("CD speed: the lowered one in the metadata of both reads of the disc",
    cd["disc"].get("read_speed") == "4x", json.dumps(cd.get("disc", {}).get("read_speed")))
+# rereads that cannot reach zero: stopped at the third, not after the twentieth
+t0 = time.time()
+rc, out = run("CD graffiato tagliato", 0, [], ["", ""], ["-C", "1", "-r"], tpl=None,
+              dic=["C2SLOW", "cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
+took = time.time() - t0
+cd = meta(bag("CD graffiato tagliato"))["media"][0]
+ok("hopeless C2 rereads: stopped at the third, Retry at 8x, clean",
+   rc == 0 and "stopping DiscImageCreator at reread 3 of 20: 1209 sectors left, 15 fewer per reread" in out
+   and "Rereading times:    5/" not in out and "after 3 rereads (C2 errors) at 16x" in out
+   and "Retry reads it again at 8x" in out and cd["status"] == "clean"
+   and cd["disc"].get("read_speed") == "8x" and took < 6, out + "\ntook %.1f s" % took)
+dic_log()
 # already at the lowest speed: nothing lower, the log says to wash it or change drive
 rc, out = run("CD graffiato lento", 0, [], ["", ""], ["-C", "1", "-r", "--cd-speed=4"], tpl=None,
               dic=["C2STOP", "cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
