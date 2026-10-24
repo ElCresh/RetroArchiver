@@ -96,6 +96,43 @@ void jw_null(json_writer *w, const char *key)
     sb_puts(&w->out, "null");
 }
 
+void jw_bool(json_writer *w, const char *key, int v)
+{
+    if (w->skipped > 0) return;
+    member(w, key);
+    sb_puts(&w->out, v ? "true" : "false");
+}
+
+/* whole numbers as integers, the others with all their digits */
+static void put_number(json_writer *w, const char *key, double n)
+{
+    if (w->skipped > 0) return;
+    if (n == (double)(long long)n) { jw_int(w, key, (long long)n); return; }
+    member(w, key);
+    sb_printf(&w->out, "%.17g", n);
+}
+
+void json_write_val(json_writer *w, const char *key, const jval *v)
+{
+    const jval *c;
+    switch (v->t) {
+    case J_NULL: jw_null(w, key); break;
+    case J_BOOL: jw_bool(w, key, v->b); break;
+    case J_NUM:  put_number(w, key, v->n); break;
+    case J_STR:  jw_str(w, key, v->s); break;
+    case J_ARR:
+        jw_begin_arr(w, key);
+        for (c = v->child; c; c = c->next) json_write_val(w, NULL, c);
+        jw_end_arr(w);
+        break;
+    case J_OBJ:
+        jw_begin_obj(w, key);
+        for (c = v->child; c; c = c->next) json_write_val(w, c->key, c);
+        jw_end_obj(w);
+        break;
+    }
+}
+
 /* ---- reading ---- */
 
 typedef struct { const char *p; char *err; size_t errlen; } jp;

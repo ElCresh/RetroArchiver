@@ -39,7 +39,7 @@ dskrun.exe: src/dskrun.c $(CORE) $(CORE_H)
 	$(WINCC) $(WINFLAGS) -o $@ src/dskrun.c $(CORE)
 
 # the window: Windows only
-GUI_C   = src/gui/settings.c src/gui/settings_dlg.c src/gui/about.c src/gui/winutil.c
+GUI_C   = src/gui/settings.c src/gui/settings_dlg.c src/gui/about.c src/gui/winutil.c src/gui/box_edit_dlg.c
 GUI     = $(GUI_C) src/gui/settings.h src/gui/dialogs.h src/gui/winutil.h src/gui/resource.h $(LANG_C) $(LANG_H)
 GUILIBS = -lcomctl32 -lcomdlg32 -lshell32 -lole32 -lgdi32 -luser32 -ladvapi32
 

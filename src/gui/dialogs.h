@@ -30,4 +30,24 @@ typedef struct { wchar_t samdisk[MAX_PATH], dic[MAX_PATH]; } about_tools;
 
 void about_dialog(HWND owner, const about_tools *t);
 
+/* ---- Edit box (box_edit_dlg.c) ---- */
+
+#include "core/meta.h"
+#include "core/session.h"
+
+typedef struct {
+    meta_box *box;                       /* the caller's: the box's data and composition as edited */
+    char reread[META_MAXDISK + 1];       /* by position in the edited composition */
+    char reason[256];
+} box_edit_result;
+
+/* Edits a copy of current (the box in bagdir). IDOK Save, IDC_BE_READ
+ * Save and read (at least one medium ticked), IDCANCEL. platforms: the
+ * list of the setup, NULL-terminated */
+int box_edit_dialog(HWND owner, const char *bagdir, const meta_box *current,
+                    const wchar_t *const *platforms, box_edit_result *out);
+
+/* two reads as good as each other: 1 keep the new one, 0 the old one */
+int choose_dialog(HWND owner, const edit_choice *c);
+
 #endif

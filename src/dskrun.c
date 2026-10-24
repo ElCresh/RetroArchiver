@@ -16,6 +16,8 @@
 #include <string.h>
 #include "core/fsu8.h"
 #include "core/session.h"
+#include "core/boxedit.h"
+#include "core/boxtxn.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -161,7 +163,11 @@ static int wait_disk(void *ctx, const disk_turn *t, char *label, size_t llen, ch
     beep2();
     say("\n");
     say("  ============================================================\n");
-    if (t->readable && t->protection_retry) {
+    if (t->readable && t->edit_worse) {
+        say("    The new read of %s %d was worse than the old one, which is kept.\n", kind, t->num);
+        say("    Clean the disc and press ENTER to read it again,\n");
+        say("    or S to keep the old one   -   Q stop here\n");
+    } else if (t->readable && t->protection_retry) {
         if (t->protection_retry == 1)
             say("    Read %s %d again, looking for copy protections (/sf)\n", kind, t->num);
         else
@@ -192,9 +198,94 @@ static int wait_disk(void *ctx, const disk_turn *t, char *label, size_t llen, ch
     return CMD_READ;
 }
 
+/* --reread: two reads as good as each other but different */
+static int choose(void *ctx, const edit_choice *c)
+{
+    char line[40]; const char *kind = meta_kind_label(c->kind);
+    (void)ctx;
+    beep2();
+    say("\n  %s %d: the new read is as good as the old one (%s), but different.\n", kind, c->num, c->new_status);
+    say("    old: %s, %s, %s, %s\n", c->old_status, c->old_method[0] ? c->old_method : "-",
+        c->old_drive[0] ? c->old_drive : "-", c->old_at);
+    say("    new: %s, %s, %s, %s\n", c->new_status, c->new_method[0] ? c->new_method : "-",
+        c->new_drive[0] ? c->new_drive : "-", c->new_at);
+    for (;;) {
+        say("  N keep the new read   -   O keep the old one\n  > ");
+        fflush(stdout);
+        if (!fgets(line, sizeof(line), stdin)) return 0;    /* no input: nothing changes */
+        if (line[0] == 'n' || line[0] == 'N') return 1;
+        if (line[0] == 'o' || line[0] == 'O') return 0;
+    }
+}
+
+/* "floppy3", "cd1", "dvd2" or "missing" into reread[]; -1 with the reason */
+static int parse_reread(const char *list, const meta_box *b, char reread[META_MAXDISK + 1])
+{
+    char item[32], comp[80]; const char *p = list, *e; int k, num, n, any = 0;
+    for (; *p; p = *e ? e + 1 : e) {
+        e = p + strcspn(p, ",");
+        snprintf(item, sizeof(item), "%.*s", (int)(e - p), p);
+        if (!strcmp(item, "missing")) {
+            for (n = 1; n <= b->media_expected; n++) {
+                const meta_disk *d = NULL; int i;
+                for (i = 0; i < b->ndisk; i++) if (b->disk[i].n == n) d = &b->disk[i];
+                if (!d || !meta_disk_done(d)) { reread[n] = 1; any = 1; }
+            }
+            continue;
+        }
+        for (k = 0; k < MEDIA_KINDS; k++) {
+            size_t l = strlen(meta_kind_key(k));
+            if (!strncmp(item, meta_kind_key(k), l) && item[l] >= '1' && item[l] <= '9') break;
+        }
+        meta_composition(b, comp, sizeof(comp));
+        if (k == MEDIA_KINDS) {
+            say("  ERROR: \"%s\" is not a medium: write floppy3, cd1, dvd2 or missing.\n", item);
+            return -1;
+        }
+        num = atoi(item + strlen(meta_kind_key(k)));
+        if (num > meta_count(b, k)) {
+            say("  ERROR: the box has no %s %d (it has %s): check --reread.\n", meta_kind_label(k), num, comp);
+            return -1;
+        }
+        for (n = num, k = k - 1; k >= 0; k--) n += meta_count(b, k);
+        reread[n] = 1;
+        any = 1;
+    }
+    if (!any) say("  The box has no missing media: nothing to read.\n");
+    return 0;
+}
+
+/* --reread: an edit left halfway is finished or undone first, then the
+ * media to read are found in the box's own composition */
+static int open_reread(session_cfg *cfg, meta_box *box, const char *outdir, const char *list)
+{
+    char bag[1024], data[1040], fin[1040]; strbuf log; meta_box *m = meta_new(); int rc = -1;
+    sb_init(&log);
+    session_bagdir(bag, sizeof(bag), outdir, box->title, box->edition);
+    if (boxtxn_recover(bag, boxedit_tech, NULL, fin, sizeof(fin), &log) > 0) {
+        say("  %s", log.s ? log.s : "");
+        session_bagdir(bag, sizeof(bag), outdir, box->title, box->edition);
+    }
+    u8_join(data, sizeof(data), bag, "data");
+    if (!m || meta_load(m, data, &log)) {
+        say("  ERROR: there is no box \"%s\" in %s: check the title, the edition and -o.\n", box->title, outdir);
+    } else if (parse_reread(list, m, cfg->reread) == 0) {
+        cfg->edit = 1;
+        meta_set_counts(box, meta_count(m, MEDIA_FLOPPY), meta_count(m, MEDIA_CD), meta_count(m, MEDIA_DVD));
+        rc = 0;
+    }
+    meta_delete(m);
+    sb_free(&log);
+    return rc;
+}
+
 static void usage(void)
 {
-    say("  usage: dskrun NUM_FLOPPIES -t TITLE [options]\n\n");
+    say("  usage: dskrun NUM_FLOPPIES -t TITLE [options]\n");
+    say("         dskrun --reread MEDIA -t TITLE [-e EDITION] [options]\n\n");
+    say("    --reread MEDIA  read again media of a closed box: floppy3,cd1,dvd2\n");
+    say("               or missing. Each medium is saved on its own; the better\n");
+    say("               read is kept and the other goes to set-aside/\n");
     say("    NUM_FLOPPIES  how many floppies the box has (even 0 with -C or -D)\n");
     say("    -f N       same as NUM_FLOPPIES: the floppies in the box\n");
     say("    -C N       the CDs in the box          (default 0)\n");
@@ -243,6 +334,7 @@ int main(int argc, char **argv)
     session_cfg cfg; session_host host; meta_box *box;
     char title[256] = "", edition[128] = "", platform[64] = "unspecified", tpl[256] = "FLOPPY{nn}", outdir[512] = ".";
     char samdisk[512] = "", source[512] = "", comp[80], dic[512] = "", drive[16] = "", dats[512] = "";
+    char reread[256] = "";
     int i, rc, tot = 0, ncd = 0, ndvd = 0;
 
     say("\ndskrun 2.2 - batch archiving of floppies, CDs and DVDs\n\n");
@@ -266,6 +358,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-X") && i + 1 < argc) to_utf8(argv[++i], dic, sizeof(dic), ARG_CP);
         else if (!strcmp(argv[i], "-d") && i + 1 < argc) to_utf8(argv[++i], drive, sizeof(drive), ARG_CP);
         else if (!strcmp(argv[i], "-R") && i + 1 < argc) to_utf8(argv[++i], dats, sizeof(dats), ARG_CP);
+        else if (!strcmp(argv[i], "--reread") && i + 1 < argc) to_utf8(argv[++i], reread, sizeof(reread), ARG_CP);
         else if (!strcmp(argv[i], "-k"))                 cfg.keepall = 1;
         else if (!strcmp(argv[i], "-r"))                 host.ask_again = 1;
         else if (!strncmp(argv[i], "--copy-protection=", 18)) {
@@ -278,8 +371,8 @@ int main(int argc, char **argv)
     }
     if (cfg.maxread < 2) cfg.maxread = 2;
     if (cfg.maxread > META_MAXREAD) cfg.maxread = META_MAXREAD;
-    if (tot < 0 || ncd < 0 || ndvd < 0 || tot + ncd + ndvd < 1 ||
-        tot + ncd + ndvd > META_MAXDISK || !title[0]) { usage(); return 2; }
+    if (!title[0] || (!reread[0] && (tot < 0 || ncd < 0 || ndvd < 0 || tot + ncd + ndvd < 1 ||
+                                     tot + ncd + ndvd > META_MAXDISK))) { usage(); return 2; }
 
     box = meta_new();
     if (!box) { say("  ERROR: out of memory\n"); return 2; }
@@ -303,6 +396,8 @@ int main(int argc, char **argv)
     if (drive[0]) optical_set_drive(drive);
     if (dats[0]) optical_set_datdir(dats);
     host.event = on_event; host.wait_disk = wait_disk; host.ctx = NULL;
+    host.choose = choose;
+    if (reread[0] && open_reread(&cfg, box, outdir, reread)) { meta_delete(box); return 2; }
 
     meta_composition(box, comp, sizeof(comp));
     say("  Box: %s\n", title);
@@ -320,7 +415,7 @@ int main(int argc, char **argv)
 
     beep2();
     say("\n  ============================================================\n");
-    say("    %s\n", rc == SESSION_CLOSED ? "Box closed." :
+    say("    %s\n", rc == SESSION_CLOSED ? (cfg.edit ? "Box edited: closed and verified." : "Box closed.") :
                        rc == SESSION_OPEN ? "Box left open: you can resume it." :
                        "Archiving failed: read the error above.");
     say("    %d clean, %d marginal, %d with errors, %d skipped or to redo\n",

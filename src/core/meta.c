@@ -284,6 +284,11 @@ int meta_save(const meta_box *b, const char *datadir, meta_tech_fn tech, void *c
     jw_str(&w, "retroarchiver", RA_VERSION);
     jw_null(&w, "samdisk");
     jw_end_obj(&w);
+    if (b->history[0]) {
+        char perr[160]; jval *h = json_parse(b->history, perr, sizeof(perr));
+        if (h) json_write_val(&w, "history", h);
+        json_free(h);
+    }
     jw_begin_arr(&w, "media");
     for (i = 0; i < b->ndisk; i++) write_disk(&w, &b->disk[i], datadir, tech, ctx);
     jw_end_arr(&w);
@@ -363,6 +368,32 @@ static void load_counts(meta_box *b, const jval *box)
         CP(b->names[k], json_str(names, meta_kind_key(k)));
 }
 
+static void load_history(meta_box *b, const jval *h)
+{
+    json_writer w;
+    if (!h || h->t != J_ARR || !h->child) return;
+    jw_init(&w);
+    json_write_val(&w, NULL, h);
+    if (w.out.s && w.out.len < sizeof(b->history)) CP(b->history, w.out.s);
+    jw_free(&w);
+}
+
+int meta_history_add(meta_box *b, const char *entry)
+{
+    char perr[160]; jval *e = json_parse(entry, perr, sizeof(perr));
+    size_t have = strlen(b->history), add = strlen(entry);
+    char *end;
+    if (!e || e->t != J_OBJ) { json_free(e); return -1; }
+    json_free(e);
+    if (have + add + 8 > sizeof(b->history)) return -1;
+    if (!have) { snprintf(b->history, sizeof(b->history), "[%s]", entry); return 0; }
+    /* "[..., entry]": the array always ends with ']' and maybe a newline */
+    end = strrchr(b->history, ']');
+    if (!end) return -1;
+    snprintf(end, sizeof(b->history) - (size_t)(end - b->history), ",%s]", entry);
+    return 0;
+}
+
 int meta_load(meta_box *b, const char *datadir, strbuf *err)
 {
     char path[1024], perr[160]; char *text; jval *root; const jval *box, *media, *e;
@@ -386,6 +417,8 @@ int meta_load(meta_box *b, const char *datadir, strbuf *err)
         return -1;
     }
     memset(b, 0, sizeof(*b));
+    CP(b->schema, schema);
+    load_history(b, json_get(root, "history"));
     box = json_get(root, "box");
     CP(b->title, json_str(box, "title"));
     CP(b->publisher, json_str(box, "publisher"));

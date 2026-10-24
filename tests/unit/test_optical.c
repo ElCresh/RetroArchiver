@@ -288,6 +288,52 @@ static void test_signatures(void)
     }
 }
 
+/* a fixture copied as a read of the session: the folder CD01 holds CD01.cue... */
+typedef struct { const char *from, *to, *base; } copy_ctx;
+static void copy_one(void *c, const char *name, int isdir)
+{
+    copy_ctx *x = (copy_ctx *)c; char a[600], b[600], buf[4096]; FILE *f, *g; size_t k;
+    if (isdir) return;
+    snprintf(a, sizeof(a), "%s/%s", x->from, name);
+    if (!strncmp(name, "DISC", 4)) snprintf(b, sizeof(b), "%s/%s%s", x->to, x->base, name + 4);
+    else snprintf(b, sizeof(b), "%s/%s", x->to, name);
+    if (!(f = u8_fopen(a, "rb"))) return;
+    if ((g = u8_fopen(b, "wb")) != NULL) {
+        while ((k = fread(buf, 1, sizeof(buf), f)) > 0) fwrite(buf, 1, k, g);
+        fclose(g);
+    }
+    fclose(f);
+}
+
+/* two reads of the same disc with different logs have the same key: only
+ * the tracks count */
+static void identity_ignores_logs(void)
+{
+    media_identity a, b;
+    copy_ctx x = { "fixtures/dic/cd_good", "tmp_unit/ident/CD01", "CD01" };
+    copy_ctx y = { "fixtures/dic/cd_good", "tmp_unit/ident/CD02", "CD02" };
+    copy_ctx z = { "fixtures/dic/cd_noise", "tmp_unit/ident/CD03", "CD03" };
+    FILE *f;
+    u8_mkdirs(x.to); u8_mkdirs(y.to); u8_mkdirs(z.to);
+    u8_listdir(x.from, copy_one, &x);
+    u8_listdir(y.from, copy_one, &y);
+    u8_listdir(z.from, copy_one, &z);
+    f = u8_fopen("tmp_unit/ident/CD02/CD02_drive.txt", "ab");
+    if (f) { fputs("another read, another log\n", f); fclose(f); }
+    CHECK(cd_media.identity != NULL);
+    if (!cd_media.identity) return;
+    CHECK(cd_media.identity(x.to, &a) == 0);
+    CHECK(cd_media.identity(y.to, &b) == 0);
+    CHECK(strlen(a.key) == 64);
+    CHECK_STR(a.key, b.key);
+    CHECK_STR(a.method, "dic-cd");
+    /* as in metadata.json's disc.drive */
+    CHECK_STR(a.drive, "PLEXTOR DVDR   PX-716A 1.11");
+    CHECK(cd_media.identity(z.to, &b) == 0);
+    CHECK(strcmp(a.key, b.key) != 0);
+    CHECK(cd_media.identity("tmp_unit/does-not-exist", &b) == -1);
+}
+
 void test_optical(void)
 {
     compare_result r; strbuf msg; json_writer w; FILE *f; char p[600], date[40];
@@ -298,6 +344,7 @@ void test_optical(void)
     test_tree();
     test_progress();
     test_toc();
+    identity_ignores_logs();
     CHECK_STR(cd_media.name, "cd");
     CHECK_STR(dvd_media.name, "dvd");
     CHECK_STR(cd_media.ext, "");

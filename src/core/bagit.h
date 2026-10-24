@@ -14,6 +14,9 @@
  * bag with that one is open too, and closing removes whichever is there */
 #define BAG_OPEN_MARK     ".in-progress"
 #define BAG_OPEN_MARK_OLD ".in-corso"
+/* the work folder of a closed bag being edited: a tag folder, ignored by
+ * BagIt, so the bag stays valid while the new reads are made */
+#define BAG_EDIT_DIR "editing"
 /* Box-Status in bag-info.txt; 261017 wrote "completo" and "incompleto" */
 #define BAG_COMPLETE   "complete"
 #define BAG_INCOMPLETE "incomplete"
@@ -24,7 +27,20 @@ int  bag_status_complete(const char *status);
 void bag_dirname(const char *title, char *out, size_t n);
 int  bag_create(const char *bagdir, strbuf *err);
 int  bag_is_open(const char *bagdir);
-/* *bad_disk: the disk with a missing or changed file, 0 if the problem is something else */
-int  bag_close(const char *bagdir, const meta_box *box, strbuf *err, int *bad_disk);
+/* digests already known to be right, by path relative to the bag
+ * ("data/CD01/CD01.bin"): a bag reopened to be edited does not hash again
+ * the files it has just verified */
+typedef struct { int n, cap; char **rel; char (*hex)[65]; } bag_digests;
+void bag_digests_add(bag_digests *d, const char *rel, const char *hex);
+int  bag_digests_find(const bag_digests *d, const char *rel);   /* index, -1 if absent */
+void bag_digests_free(bag_digests *d);
+/* the lines of a manifest of the bag ("manifest-sha256.txt"); -1 if missing */
+int  bag_manifest_load(const char *bagdir, const char *name, bag_digests *out);
+
+/* *bad_disk: the disk with a missing or changed file, 0 if the problem is
+ * something else; known (may be NULL): the files of data/ listed there are
+ * not hashed again */
+int  bag_close(const char *bagdir, const meta_box *box, const bag_digests *known,
+               strbuf *err, int *bad_disk);
 
 #endif

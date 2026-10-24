@@ -28,10 +28,13 @@
 #include "core/bagit.h"
 #include "core/fsu8.h"
 #include "core/archive.h"
+#include "core/boxedit.h"
+#include "core/boxtxn.h"
 #include "gui/settings.h"
 #include "gui/lang.h"
 #include "gui/winutil.h"
 #include "gui/dialogs.h"
+#include "gui/resource.h"
 
 #define WM_APP_EVENT (WM_APP + 1)   /* there is an event in g_qhead   */
 #define WM_APP_WAIT  (WM_APP + 2)   /* the requested medium is in g_turn_in */
@@ -48,6 +51,8 @@
 #define WM_APP_LABEL (WM_APP + 11)  /* wParam: generation, lParam: lb_result* */
 #define WM_APP_DISKIN (WM_APP + 12) /* wParam: generation, lParam: FP_... from the floppy watcher */
 #define WM_APP_NOLEADIN (WM_APP + 13) /* lParam: malloc'd model of a drive that cannot read the lead-in */
+#define WM_APP_EDITSAVED (WM_APP + 14) /* lParam: es_result* of the edit's save */
+#define WM_APP_CHOOSE (WM_APP + 15)  /* sent by the worker: lParam edit_choice*, returns 1 keep the new read */
 #define OPT_MAX   1000              /* disk bar for CDs and DVDs: thousandths */
 
 #define TIMER_ID  1
@@ -76,9 +81,9 @@ enum {
     ID_SBAR, ID_TOARCH, ID_LABELREAD,
     /* archive: from ID_ADIR to ID_ANEW */
     ID_ADIR = 300, ID_ABROWSE, ID_ASEARCH, ID_APLAT, ID_ASUM, ID_ALIST, ID_ADETAIL,
-    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AHINT, ID_ANEW,
+    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_AHINT, ID_ANEW,
     /* the menu bar */
-    IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT
+    IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT
 };
 
 /* what the window knows about a disk: copied by the worker thread, which
@@ -135,6 +140,9 @@ static char     g_drive_model[160], g_noleadin[2048];
 static wchar_t  g_why[600];             /* why DiscImageCreator did not read the disc */
 static DWORD    g_t_sess, g_t_phase;
 static settings g_set;                  /* the two RetroArchiver.ini */
+/* the session in hand edits a closed box: which media it reads again, and why */
+static struct { int on; char reread[META_MAXDISK + 1]; char reason[256]; } g_edit;
+static volatile LONG g_edit_worse;      /* new reads worse than the old ones, in this edit */
 static prefs    g_prefs;                /* what the Settings window edits, as loaded from them */
 
 /* setup, waiting for the disk, reading, end; and the archive, where it starts */
@@ -373,6 +381,8 @@ static void host_event(void *ctx, event_kind k, int disk, const char *text)
     gui_event *e;
     size_t n = strlen(text) + 1;
     (void)ctx;
+    /* edit: the core says when a new read was worse and the old one stays */
+    if (k == EV_LINE && g_edit.on && strstr(text, " is worse (")) InterlockedIncrement(&g_edit_worse);
     if (k == EV_LINE) {             /* no message: TIMER_LINES handles it */
         EnterCriticalSection(&g_qlock);
         queue_line(text);
@@ -412,6 +422,15 @@ static int host_wait(void *ctx, const disk_turn *t, char *label, size_t llen, ch
     return (int)g_cmd;
 }
 
+/* edit: two reads as good as each other, the user says which stays; the
+ * worker waits for the answer */
+static int host_choose(void *ctx, const edit_choice *c)
+{
+    (void)ctx;
+    if (g_closing) return 0;
+    return (int)SendMessageW(g_wnd, WM_APP_CHOOSE, 0, (LPARAM)c);
+}
+
 static DWORD WINAPI worker(LPVOID p)
 {
     session_host host;
@@ -424,6 +443,7 @@ static DWORD WINAPI worker(LPVOID p)
     host.wait_disk = host_wait;
     host.ctx = NULL;
     host.ask_again = 1;         /* read failed or interrupted: Riprova on the same disk */
+    host.choose = host_choose;
     rc = session_run(&g_cfg, &host);
     PostMessageW(g_wnd, WM_APP_END, (WPARAM)rc, 0);
     return 0;
@@ -647,6 +667,7 @@ static arc_list g_arc;                  /* the last read of the folder */
 static int     *g_rows, g_nrows;        /* list rows: indexes into g_arc after the filter */
 static int      g_pick = -1;            /* the chosen box, index into g_arc */
 static int      g_arc_loaded, g_arc_empty, g_arc_missing, g_verifying;
+static int      g_saving;               /* an edit of the box's data is being saved */
 static volatile LONG g_arc_gen;
 static char     g_arc_root[512];        /* the folder that was read */
 static char     g_want_dir[600];        /* after the re-read this box gets selected */
@@ -676,6 +697,7 @@ static void build_archive(void)
     make_t(L"BUTTON", T_ARC_RESUME, WS_TABSTOP, 0, 0, 130, 26, ID_ARESUME);
     make_t(L"BUTTON", T_ARC_OPEN, WS_TABSTOP, 0, 0, 130, 26, ID_AOPEN);
     make_t(L"BUTTON", T_ARC_VERIFY, WS_TABSTOP, 0, 0, 130, 26, ID_AVERIFY);
+    make_t(L"BUTTON", T_BTN_EDIT, WS_TABSTOP, 0, 0, 130, 26, ID_AEDIT);
     make_t(L"STATIC", T_ARC_HINT, SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_AHINT);
     make_t(L"BUTTON", T_ARC_NEW, WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 150, 28, ID_ANEW);
     SendDlgItemMessageW(g_wnd, ID_ARESUME, WM_SETFONT, (WPARAM)g_bold, TRUE);
@@ -1355,6 +1377,19 @@ static int pick_open(void)
     return g_pick >= 0 && g_pick < g_arc.n && g_arc.box[g_pick].state == ARC_OPEN;
 }
 
+static int pick_closed(void)
+{
+    return g_pick >= 0 && g_pick < g_arc.n &&
+           (g_arc.box[g_pick].state == ARC_COMPLETE || g_arc.box[g_pick].state == ARC_INCOMPLETE);
+}
+
+/* Modifica: a closed box of this version, nothing else running on it */
+static int pick_editable(void)
+{
+    return pick_closed() && !g_arc.box[g_pick].old_format && !g_arc.box[g_pick].editing
+        && !g_verifying && !g_saving && !g_running;
+}
+
 /* the width of a label's text, plus a little margin */
 static int text_width(int id)
 {
@@ -1412,6 +1447,7 @@ static void layout_archive(int W, int H)
     put(ID_ADETAIL, 18, gy + 20, bx - 14 - 18, SEL_H - 28);
     k = gy + 20;
     if (pick_open()) { put(ID_ARESUME, bx, k, 130, 26); k += 32; }
+    else if (pick_closed()) { put(ID_AEDIT, bx, k, 130, 26); k += 32; }
     put(ID_AOPEN, bx, k, 130, 26);
     put(ID_AVERIFY, bx, k + 32, 130, 26);
     put(ID_AHINT, 8, by + 6, W - 16 - 150 - 12, 18);
@@ -2675,7 +2711,7 @@ static void sbar_update(void)
     if (mar) { plural(a, 64, mar, T_SUM_MARGINAL_ONE, T_SUM_MARGINAL_MANY); wcscat(w, L", "); wcscat(w, a); }
     if (err) { _snwprintf(b, 64, tr(T_SBAR_ERRORS), err); b[63] = 0; wcsncat(w, b, 199 - wcslen(w)); }
     sbar_text(1, w);
-    sbar_text(2, tr(g_bag_closed ? T_SBAR_BAG_CLOSED : T_SBAR_BAG_OPEN));
+    sbar_text(2, tr(g_bag_closed || g_edit.on ? T_SBAR_BAG_CLOSED : T_SBAR_BAG_OPEN));
     fmt_time(GetTickCount() - g_t_sess, a, 64);
     _snwprintf(w, 200, tr(T_SBAR_SESSION), a); w[199] = 0;
     sbar_text(3, w);
@@ -2707,6 +2743,7 @@ static int visible_in(int v, int id)
         if (v != V_ARCHIVE) return 0;
         if (g_arc_empty) return listed(in_empty, id);
         if (id == ID_ARESUME) return pick_open();
+        if (id == ID_AEDIT) return pick_closed();
         if (id == ID_AOPEN || id == ID_AVERIFY) return g_pick >= 0;
         return 1;
     }
@@ -2945,7 +2982,7 @@ static void seed_previous(void)
 {
     char data[640]; meta_box *b; strbuf err; int i, k;
     const char *names[MEDIA_KINDS];
-    if (!bag_is_open(g_bagdir)) return;
+    if (!bag_is_open(g_bagdir) && !g_edit.on) return;
     u8_join(data, sizeof(data), g_bagdir, "data");
     if (!(b = meta_new())) return;
     sb_init(&err);
@@ -2960,7 +2997,11 @@ static void seed_previous(void)
             if (d->n < 1 || d->n > META_MAXDISK) continue;
             copy_disk(&g_disk[d->n], d);
             /* the disks to redo are asked for again: for now they are ST_TO_READ */
-            if (!meta_disk_done(d)) g_disk[d->n].status[0] = 0;
+            if (!g_edit.on && !meta_disk_done(d)) g_disk[d->n].status[0] = 0;
+            if (g_edit.on && g_edit.reread[d->n]) {
+                g_disk[d->n].status[0] = g_disk[d->n].master[0] = 0;
+                g_disk[d->n].nreads = 0;
+            }
         }
     }
     sb_free(&err);
@@ -3296,8 +3337,15 @@ static void start(void)
         MessageBoxW(g_wnd, why, L"RetroArchiver", MB_ICONINFORMATION);
         return;
     }
+    if (g_edit.on) {                    /* only the kinds read again need their program */
+        int need[MEDIA_KINDS] = { 0, 0, 0 }, n2, kk, num;
+        for (n2 = 1; n2 <= META_MAXDISK; n2++)
+            if (g_edit.reread[n2]) { meta_slot_counts(c, n2, &kk, &num); need[kk] = 1; }
+        for (kk = 0; kk < MEDIA_KINDS; kk++) if (!need[kk]) c[kk] = 0;
+    }
     if (c[MEDIA_FLOPPY] && !samdisk_ready()) return;
     if ((c[MEDIA_CD] || c[MEDIA_DVD]) && !dic_ready()) return;
+    if (g_edit.on) setup_counts(c);
     meta_set_counts(g_box, c[MEDIA_FLOPPY], c[MEDIA_CD], c[MEDIA_DVD]);
     ini_save();
     get_u8(ID_DIR, g_outdir, sizeof(g_outdir));
@@ -3351,6 +3399,11 @@ static void start(void)
     g_cfg.media[MEDIA_CD] = &cd_media;
     g_cfg.media[MEDIA_DVD] = &dvd_media;
     g_cfg.copy_protection = meta_prot_key(g_prot);
+    if (g_edit.on) {
+        g_cfg.edit = 1;
+        memcpy(g_cfg.reread, g_edit.reread, sizeof(g_cfg.reread));
+        g_cfg.reason = g_edit.reason;
+    }
     /* copies for the window: while the session runs g_box belongs to the worker thread */
     str_copy(g_title, sizeof(g_title), g_box->title);
     session_bagdir(g_bagdir, sizeof(g_bagdir), g_outdir, g_box->title, g_box->edition);
@@ -3387,8 +3440,24 @@ static void start(void)
  * Like the SAMdisk check: a new re-read makes those still running
  * obsolete, and the result arrives with a PostMessage. */
 
-typedef struct { LONG gen; char root[512]; } arc_job;
-typedef struct { arc_list l; int missing; } arc_result;
+typedef struct { LONG gen; char root[512], busy[600]; } arc_job;
+typedef struct { arc_list l; int missing, recovered; } arc_result;
+
+/* an edit left halfway (a power cut, the program closed): finished or
+ * undone before the boxes are read, so the archive never shows a mix */
+typedef struct { const arc_job *job; int n; } rec_ctx;
+static void recover_one(void *c, const char *name, int isdir)
+{
+    rec_ctx *x = (rec_ctx *)c; char dir[600], ed[700], fin[1040]; strbuf log;
+    if (!isdir) return;
+    u8_join(dir, sizeof(dir), x->job->root, name);
+    if (!strcmp(dir, x->job->busy)) return;
+    u8_join(ed, sizeof(ed), dir, BAG_EDIT_DIR);
+    if (!u8_isdir(ed)) return;
+    sb_init(&log);
+    if (boxtxn_recover(dir, boxedit_tech, NULL, fin, sizeof(fin), &log) > 0) x->n++;
+    sb_free(&log);
+}
 
 static DWORD WINAPI archive_worker(LPVOID p)
 {
@@ -3396,6 +3465,11 @@ static DWORD WINAPI archive_worker(LPVOID p)
     arc_result *r = (arc_result *)calloc(1, sizeof(arc_result));
     if (r) {
         r->missing = !u8_isdir(job->root);
+        if (!r->missing) {
+            rec_ctx x; x.job = job; x.n = 0;
+            u8_listdir(job->root, recover_one, &x);
+            r->recovered = x.n;
+        }
         if (r->missing || arc_scan(job->root, &r->l)) memset(&r->l, 0, sizeof(r->l));
         if (!PostMessageW(g_wnd, WM_APP_ARCHIVE, (WPARAM)job->gen, (LPARAM)r)) { arc_free(&r->l); free(r); }
     }
@@ -3405,15 +3479,20 @@ static DWORD WINAPI archive_worker(LPVOID p)
 
 static void archive_scan(void)
 {
-    arc_job *job = (arc_job *)calloc(1, sizeof(arc_job));
+    arc_job *job;
     HANDLE th;
     KillTimer(g_wnd, TIMER_ADIR);
+    /* the recovery of the scan must not touch the box being saved: the
+     * archive is read again when the save ends */
+    if (g_saving) return;
+    job = (arc_job *)calloc(1, sizeof(arc_job));
     get_u8_trim(ID_ADIR, g_arc_root, sizeof(g_arc_root));
     InterlockedIncrement(&g_arc_gen);
     g_arc_loaded = 0;
     if (g_view == V_ARCHIVE) { sbar_update(); repaint(g_asum); repaint(g_adetail); }
     if (!job) return;
     str_copy(job->root, sizeof(job->root), g_arc_root);
+    if (g_running || g_saving) str_copy(job->busy, sizeof(job->busy), g_bagdir);
     job->gen = g_arc_gen;
     th = CreateThread(NULL, 0, archive_worker, job, 0, NULL);
     if (th) CloseHandle(th);
@@ -3524,10 +3603,11 @@ static void arc_row(int row, int idx)
 static void archive_buttons(void)
 {
     int i;
-    static const int ids[] = { ID_ARESUME, ID_AOPEN, ID_AVERIFY, 0 };
+    static const int ids[] = { ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, 0 };
     layout();
     if (g_view != V_ARCHIVE) return;
     EnableWindow(GetDlgItem(g_wnd, ID_AVERIFY), !g_verifying);
+    EnableWindow(GetDlgItem(g_wnd, ID_AEDIT), pick_editable());
     /* moved by layout, on XP they kept the neighbour's image: redraw them */
     for (i = 0; ids[i]; i++) {
         HWND b = GetDlgItem(g_wnd, ids[i]);
@@ -3595,13 +3675,14 @@ static const char *pick_dir(void)
 static void on_archive(WPARAM gen, arc_result *r)
 {
     char want[600];
-    int was_empty = g_arc_empty;
+    int was_empty = g_arc_empty, recovered;
     if ((LONG)gen != g_arc_gen) { arc_free(&r->l); free(r); return; }
     str_copy(want, sizeof(want), g_want_dir[0] ? g_want_dir : pick_dir());
     g_want_dir[0] = 0;
     arc_free(&g_arc);
     g_arc = r->l;
     g_arc_missing = r->missing;
+    recovered = r->recovered;
     free(r);
     g_arc_loaded = 1;
     g_arc_empty = g_arc.n == 0;
@@ -3612,6 +3693,11 @@ static void on_archive(WPARAM gen, arc_result *r)
     if (was_empty != g_arc_empty) view(V_ARCHIVE);   /* the visible controls change */
     else { layout(); InvalidateRect(g_wnd, &g_empty, TRUE); }
     sbar_update();
+    if (recovered) {
+        wchar_t w[300];
+        _snwprintf(w, 300, tr(T_EDIT_RECOVERED), recovered); w[299] = 0;
+        MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONINFORMATION);
+    }
 }
 
 /* ---- archive: summary and chosen box ---- */
@@ -3788,6 +3874,10 @@ static void paint_detail(HDC dc, int w, int h)
     /* the state and what to do, in a panel of its colour */
     arc_advice(b, adv, sizeof(adv));
     to_w(adv, t, 1200);
+    if (b->old_format && b->state != ARC_OPEN && wcslen(t) + 300 < 1200) {
+        wcscat(t, L"\n");
+        wcscat(t, tr(T_EDIT_OLD_FORMAT));
+    }
     SetRect(&r, 0, 0, w - 16, 0);
     DrawTextW(dc, t, -1, &r, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX);
     th = r.bottom;
@@ -3970,6 +4060,186 @@ static void on_verify(vf_result *r)
 }
 
 /* ---- running session ---- */
+
+/* ---- archive: Modifica, a closed box ---- */
+
+typedef struct { char dir[600], reason[256], reread[META_MAXDISK + 1]; int read; meta_box *box; } es_job;
+typedef struct { int rc, read; char dir[600], newdir[1024], err[600], reread[META_MAXDISK + 1], reason[256]; } es_result;
+
+static DWORD WINAPI edit_save_worker(LPVOID p)
+{
+    es_job *job = (es_job *)p;
+    es_result *r = (es_result *)calloc(1, sizeof(es_result));
+    strbuf err;
+    if (r) {
+        sb_init(&err);
+        r->rc = boxedit_save_data(job->dir, job->box, job->reason, r->newdir, sizeof(r->newdir), &err);
+        str_copy(r->err, sizeof(r->err), err.s ? err.s : "");
+        str_copy(r->dir, sizeof(r->dir), job->dir);
+        memcpy(r->reread, job->reread, sizeof(r->reread));
+        str_copy(r->reason, sizeof(r->reason), job->reason);
+        r->read = job->read;
+        sb_free(&err);
+        if (!PostMessageW(g_wnd, WM_APP_EDITSAVED, 0, (LPARAM)r)) free(r);
+    }
+    meta_delete(job->box);
+    free(job);
+    return 0;
+}
+
+/* the media to read again: the session in edit mode, from the setup
+ * filled in with the box, as Riprendi does */
+static void edit_start(const char *bagdir, const char *reread, const char *reason)
+{
+    char data[640]; meta_box *m; strbuf err; wchar_t w[700];
+    u8_join(data, sizeof(data), bagdir, "data");
+    if (!(m = meta_new())) return;
+    sb_init(&err);
+    if (meta_load(m, data, &err) == 0) {
+        go_setup(1);
+        set_u8(ID_DIR, g_arc_root);
+        fill_from(m);
+        g_edit.on = 1;
+        memcpy(g_edit.reread, reread, sizeof(g_edit.reread));
+        str_copy(g_edit.reason, sizeof(g_edit.reason), reason);
+        g_edit_worse = 0;
+        start();
+        if (!g_running) { g_edit.on = 0; archive_show(bagdir); }
+    } else {
+        to_w(err.s ? err.s : "", w, 700);
+        MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
+    }
+    sb_free(&err);
+    meta_delete(m);
+}
+
+static void on_edit_saved(es_result *r)
+{
+    wchar_t w[900], e[600], t[300];
+    g_saving = 0;
+    if (r->rc) {
+        to_w(r->err, e, 600);
+        _snwprintf(w, 900, tr(T_EDIT_FAILED), e); w[899] = 0;
+        MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
+        archive_show(r->dir);
+    } else if (r->read) {
+        edit_start(r->newdir, r->reread, r->reason);
+    } else {
+        archive_show(r->newdir);
+        if (g_pick >= 0) to_w(g_arc.box[g_pick].title, t, 300); else t[0] = 0;
+        _snwprintf(w, 900, tr(T_EDIT_SAVED), t); w[899] = 0;
+        sbar_text(0, w);
+    }
+    free(r);
+    archive_buttons();
+}
+
+static void name_of_kind(int kind, int num, wchar_t *out, int n)
+{
+    _snwprintf(out, n, L"%ls %d", kind_name(kind, KN_CAP), num);
+    out[n - 1] = 0;
+}
+
+/* the field's label without the " *" of the required ones */
+static void field_label(const char *key, wchar_t *out, int n)
+{
+    static const struct { const char *key; int t; } labels[] = {
+        { "title", T_SETUP_TITLE }, { "platform", T_SETUP_PLATFORM }, { "publisher", T_SETUP_PUBLISHER },
+        { "year", T_SETUP_YEAR }, { "language", T_SETUP_LANGUAGE }, { "edition", T_SETUP_EDITION },
+        { "notes", T_SETUP_NOTES }
+    };
+    size_t i, k;
+    out[0] = 0;
+    for (i = 0; i < sizeof(labels) / sizeof(labels[0]); i++)
+        if (!strcmp(labels[i].key, key)) { wcsncpy(out, tr(labels[i].t), n); out[n - 1] = 0; }
+    k = wcslen(out);
+    while (k && (out[k - 1] == L'*' || out[k - 1] == L' ')) out[--k] = 0;
+}
+
+/* "Save these changes?" with the list of them; 1 yes */
+static int edit_confirm(const meta_box *old, const edit_change *ch, int n)
+{
+    wchar_t list[4000], line[1200], a[520], b[520], t[300], all[5000];
+    int i;
+    list[0] = 0;
+    for (i = 0; i < n; i++) {
+        const edit_change *c = &ch[i];
+        if (c->what == CH_FIELD) {
+            field_label(c->field, t, 300);
+            to_w(c->from, a, 520); to_w(c->to, b, 520);
+            _snwprintf(line, 1200, tr(T_EDIT_CH_FIELD), t, a, b);
+        } else if (c->what == CH_FOLDER) {
+            to_w(c->from, a, 520); to_w(c->to, b, 520);
+            _snwprintf(line, 1200, tr(T_EDIT_CH_FOLDER), a, b);
+        } else {
+            name_of_kind(c->kind, c->num, t, 300);
+            _snwprintf(line, 1200, tr(c->what == CH_ADDED ? T_EDIT_CH_ADDED : T_EDIT_CH_REMOVED), t);
+        }
+        line[1199] = 0;
+        if (wcslen(list) + wcslen(line) + 4 < 4000) { wcscat(list, L"\x2022 "); wcscat(list, line); wcscat(list, L"\n"); }
+    }
+    to_w(old->title, t, 300);
+    _snwprintf(all, 5000, tr(T_EDIT_CONFIRM), t, list); all[4999] = 0;
+    return MessageBoxW(g_wnd, all, L"RetroArchiver", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON1) == IDYES;
+}
+
+static void edit_pick(void)
+{
+    char data[640], dir[600]; meta_box *m; strbuf err; wchar_t w[900], e[600];
+    box_edit_result r; edit_change ch[META_MAXDISK + 16]; int rc, n;
+    if (!pick_closed() || g_running || g_saving) return;
+    str_copy(dir, sizeof(dir), g_arc.box[g_pick].dir);
+    sb_init(&err);
+    if (!boxedit_editable(dir, &err)) {
+        if (g_arc.box[g_pick].old_format) wcsncpy(e, tr(T_EDIT_OLD_FORMAT), 600);
+        else to_w(err.s ? err.s : "", e, 600);
+        e[599] = 0;
+        _snwprintf(w, 900, tr(T_EDIT_CANNOT), e); w[899] = 0;
+        MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONINFORMATION);
+        sb_free(&err);
+        return;
+    }
+    u8_join(data, sizeof(data), dir, "data");
+    m = meta_new();
+    memset(&r, 0, sizeof(r));
+    r.box = meta_new();
+    if (!m || !r.box || meta_load(m, data, &err)) {
+        to_w(err.s ? err.s : "", e, 600);
+        MessageBoxW(g_wnd, e, L"RetroArchiver", MB_ICONEXCLAMATION);
+        meta_delete(m); meta_delete(r.box); sb_free(&err);
+        return;
+    }
+    sb_free(&err);
+    rc = box_edit_dialog(g_wnd, dir, m, platforms, &r);
+    n = rc == IDCANCEL ? 0 : boxedit_diff(dir, m, r.box, ch, (int)(sizeof(ch) / sizeof(ch[0])));
+    if (rc == IDCANCEL || (n > 0 && !edit_confirm(m, ch, n < (int)(sizeof(ch) / sizeof(ch[0])) ? n : (int)(sizeof(ch) / sizeof(ch[0]))))) {
+        meta_delete(m); meta_delete(r.box);
+        return;
+    }
+    meta_delete(m);
+    if (n == 0) {                       /* nothing to save: straight to the reads */
+        meta_delete(r.box);
+        if (rc == IDC_BE_READ) edit_start(dir, r.reread, r.reason);
+        return;
+    }
+    {
+        es_job *job = (es_job *)calloc(1, sizeof(es_job)); HANDLE th; wchar_t t[300];
+        if (!job) { meta_delete(r.box); return; }
+        str_copy(job->dir, sizeof(job->dir), dir);
+        str_copy(job->reason, sizeof(job->reason), r.reason);
+        memcpy(job->reread, r.reread, sizeof(job->reread));
+        job->read = rc == IDC_BE_READ;
+        job->box = r.box;
+        g_saving = 1;
+        archive_buttons();
+        to_w(r.box->title, t, 300);
+        _snwprintf(w, 900, tr(T_EDIT_SAVING), t); w[899] = 0;
+        sbar_text(0, w);
+        th = CreateThread(NULL, 0, edit_save_worker, job, 0, NULL);
+        if (th) CloseHandle(th);
+        else { meta_delete(job->box); free(job); g_saving = 0; archive_buttons(); }
+    }
+}
 
 /* the banner during the read: blue, orange if re-reading or the disk is
  * fragile */
@@ -4346,6 +4616,10 @@ static void wait_banner(void)
     int autom = g_auto_state != AUTO_OFF, again = g_turn.kind == MEDIA_FLOPPY ? g_fd_used : g_opt_used;
     if (!g_turn.readable) {
         wait_unreadable(&g_turn);
+    } else if (g_retry == 5) {          /* edit: the new read was worse, the old one stays */
+        _snwprintf(w, 160, tr(T_EDIT_WORSE_TITLE), kind_name(g_turn.kind, KN_CAP), g_turn.num);
+        w[159] = 0;
+        banner(B_ORANGE, L"!", 0, w, tr(T_EDIT_WORSE_TEXT));
     } else if (g_retry == 4) {
         wait_protection();
     } else if (g_retry == 3) {
@@ -4411,7 +4685,8 @@ static void on_wait(void)
     if (total > 0 && total != g_total) { g_total = total; list_rebuild(); box_progress(); }
     g_cur = n;
     g_retry = prot ? 4 : !retry ? 0 : !strcmp(last, ST_INTERRUPTED) ? 2 : !strcmp(last, ST_DUPLICATE) ? 3 : 1;
-    retry = retry || prot;
+    if (g_turn_in.edit_worse) g_retry = 5;
+    retry = retry || prot || g_turn_in.edit_worse;
     /* Salta is the Enter button when Leggi is absent */
     SendDlgItemMessageW(g_wnd, ID_READ, BM_SETSTYLE, g_turn.readable ? BS_DEFPUSHBUTTON : BS_PUSHBUTTON, TRUE);
     SendDlgItemMessageW(g_wnd, ID_SKIP, BM_SETSTYLE, g_turn.readable ? BS_PUSHBUTTON : BS_DEFPUSHBUTTON, TRUE);
@@ -4451,7 +4726,13 @@ static void end_banner(int rc)
         _snwprintf(later, 200, tr(T_END_LATER), tr(opt[MEDIA_CD] && opt[MEDIA_DVD] ? T_END_LATER_BOTH
                                                    : opt[MEDIA_CD] ? T_END_LATER_CD : T_END_LATER_DVD));
     later[199] = 0;
-    if (rc == SESSION_CLOSED) {
+    if (rc == SESSION_CLOSED && g_edit.on) {
+        int worse = g_edit_worse > 0;
+        _snwprintf(text, 700, tr(worse ? T_EDIT_DONE_OLD_TEXT : T_EDIT_DONE_TEXT), sum);
+        text[699] = 0;
+        if (worse) banner(B_ORANGE, L"!", 0, tr(T_EDIT_DONE_OLD), text);
+        else banner(B_GREEN, NULL, 1, tr(T_EDIT_DONE), text);
+    } else if (rc == SESSION_CLOSED) {
         _snwprintf(title, 200, tr(g_bag_complete ? T_END_COMPLETE : T_END_INCOMPLETE), nd, g_total);
         _snwprintf(text, 700, tr(T_END_CLOSED_TEXT), sum, g_aside_n ? tr(T_END_ASIDE) : L"");
         title[199] = 0; text[699] = 0;
@@ -4485,6 +4766,7 @@ static void on_end(int rc)
     g_phase_name[0] = 0;
     pills_clear();
     end_banner(rc);
+    g_edit.on = 0;
     box_progress();
     view(V_END);
     ShowWindow(GetDlgItem(g_wnd, ID_OPEN), u8_isdir(g_bagdir) ? SW_SHOW : SW_HIDE);
@@ -4693,6 +4975,7 @@ static HMENU menu_build(void)
 {
     HMENU bar = CreateMenu(), arc = CreatePopupMenu(), tools = CreatePopupMenu(), help = CreatePopupMenu();
     AppendMenuW(arc, MF_STRING, IDM_NEW, tr(T_MENU_NEW));
+    AppendMenuW(arc, MF_STRING, IDM_EDIT, tr(T_MENU_EDIT));
     AppendMenuW(arc, MF_STRING, IDM_OPENDIR, tr(T_MENU_OPENDIR));
     AppendMenuW(arc, MF_SEPARATOR, 0, NULL);
     AppendMenuW(arc, MF_STRING, IDM_EXIT, tr(T_MENU_EXIT));
@@ -4716,9 +4999,10 @@ static void menu_set(void)
 /* while a box is being read its settings and the window stay as they are */
 static void menu_states(HMENU m)
 {
-    UINT busy = g_running ? MF_GRAYED : MF_ENABLED;
+    UINT busy = g_running || g_saving ? MF_GRAYED : MF_ENABLED;
     EnableMenuItem(m, IDM_NEW, MF_BYCOMMAND | busy);
     EnableMenuItem(m, IDM_SETTINGS, MF_BYCOMMAND | busy);
+    EnableMenuItem(m, IDM_EDIT, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_editable() ? MF_ENABLED : MF_GRAYED));
 }
 
 static void menu_new_box(void)
@@ -4870,6 +5154,7 @@ static int on_command(HWND h, WPARAM wp)
     case ID_ARESUME: resume_pick(); return 1;
     case ID_AOPEN:   open_pick(); return 1;
     case ID_AVERIFY: verify_pick(); return 1;
+    case ID_AEDIT: edit_pick(); return 1;
     case ID_ANEW:    go_setup(1); return 1;
     case ID_START:  start(); return 1;
     case ID_RESUME: resume(); return 1;
@@ -4881,6 +5166,7 @@ static int on_command(HWND h, WPARAM wp)
     case IDM_EXIT:    PostMessageW(h, WM_CLOSE, 0, 0); return 1;
     case IDM_GUIDE:   menu_guide(); return 1;
     case IDM_ABOUT:   about_open(); return 1;
+    case IDM_EDIT:    edit_pick(); return 1;
     case ID_READ:   answer(CMD_READ); return 1;
     case ID_SKIP:   answer(CMD_SKIP); return 1;
     case ID_LABELREAD: label_read(); return 1;
@@ -4933,6 +5219,11 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_APP_VERIFY:
         on_verify((vf_result *)lp);
         return 0;
+    case WM_APP_EDITSAVED:
+        on_edit_saved((es_result *)lp);
+        return 0;
+    case WM_APP_CHOOSE:
+        return choose_dialog(h, (const edit_choice *)lp);
     case WM_APP_SAMDISK:
         on_samdisk(wp, (sd_result *)lp);
         return 0;
@@ -4993,6 +5284,10 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         }
         break;
     case WM_CLOSE:
+        if (g_saving) {             /* a few seconds: the save is not cut in half */
+            MessageBoxW(h, tr(T_EDIT_WAIT), L"RetroArchiver", MB_ICONINFORMATION);
+            return 0;
+        }
         if (g_running) {
             if (MessageBoxW(h, tr(T_CLOSE_ASK),
                             L"RetroArchiver", MB_YESNO | MB_ICONQUESTION) != IDYES) return 0;

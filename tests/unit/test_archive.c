@@ -50,7 +50,7 @@ static void bag(meta_box *b, const char *dir, const char *closed)
         snprintf(data, sizeof(data), "%s/data", dir);
         CHECK(meta_save(b, data, NULL, NULL, &err) == 0);
     }
-    if (closed) CHECK(bag_close(dir, b, &err, &bad) == 0);
+    if (closed) CHECK(bag_close(dir, b, NULL, &err, &bad) == 0);
     sb_free(&err);
     meta_delete(b);
 }
@@ -286,6 +286,34 @@ static void check_verify(void)
     sb_free(&err);
 }
 
+/* the good digests of a closed bag, and the flags of a box that cannot be edited */
+static void check_digests(void)
+{
+    arc_check c; strbuf err; bag_digests ok; arc_box a; meta_box *b;
+    memset(&ok, 0, sizeof(ok));
+    sb_init(&err);
+    u8_mkdirs(ROOT "2");
+    CHECK(bag_create(ROOT "2/Due", &err) == 0);
+    b = box("Due", "MS-DOS", 2);
+    disk(b, ROOT "2/Due", 1, "clean", "2026-10-12T10:00:00");
+    disk(b, ROOT "2/Due", 2, "fragile", "2026-10-12T10:05:00");
+    bag(b, ROOT "2/Due", "2026-10-12T10:06:00");
+    put(ROOT "2/Due/data/DISK02.dsk", "changed");
+    CHECK(arc_verify_digests(ROOT "2/Due", &c, &ok, &err) == 0);
+    CHECK(c.changed == 1);
+    /* DISK01.dsk and metadata.json are good */
+    CHECK(ok.n == 2);
+    CHECK(bag_digests_find(&ok, "data/DISK01.dsk") >= 0);
+    CHECK(bag_digests_find(&ok, "data/DISK02.dsk") == -1);
+    CHECK(arc_load(ROOT "2/Due", &a) && !a.editing && !a.old_format);
+    u8_mkdir(ROOT "2/Due/editing");
+    CHECK(arc_load(ROOT "2/Due", &a) && a.editing);
+    u8_mkdir(ROOT "2/Due/messi-da-parte");
+    CHECK(arc_load(ROOT "2/Due", &a) && a.old_format);
+    bag_digests_free(&ok);
+    sb_free(&err);
+}
+
 void test_archive(void)
 {
     arc_list l;
@@ -294,6 +322,7 @@ void test_archive(void)
     check_list();
     check_texts();
     check_verify();
+    check_digests();
     /* a new, empty archive: no boxes, but no error */
     u8_mkdirs("tmp_unit/archivio_vuoto");
     CHECK(arc_scan("tmp_unit/archivio_vuoto", &l) == 0 && l.n == 0);

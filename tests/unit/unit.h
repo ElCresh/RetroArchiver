@@ -28,6 +28,9 @@ void test_runner(void);
 void test_floppy(void);
 void test_session(void);
 void test_archive(void);
+void test_boxtxn(void);
+void test_boxedit(void);
+void test_session_edit(void);
 void test_optical(void);
 void test_lang(void);
 

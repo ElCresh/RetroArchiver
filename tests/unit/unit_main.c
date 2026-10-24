@@ -18,6 +18,9 @@ int main(void)
     test_floppy();
     test_session();
     test_archive();
+    test_boxtxn();
+    test_boxedit();
+    test_session_edit();
     test_optical();
     test_lang();                    /* src/gui/lang.c: portable, tested here */
     printf("  %d checks, %s\n", unit_n,

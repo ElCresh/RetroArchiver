@@ -1064,6 +1064,98 @@ rc, out = run("Word", 2, ["ident_a", "ident_b"], [""], ["-e", "6"])
 ok("edition in the title, same folder: clear error",
    rc == 2 and "holds the box" in out and meta(bag("Word (6)"))["box"]["title"] == "Word (6)", out)
 
+print("\nreread (--reread)")
+
+
+def manifest(b):
+    with open(os.path.join(b, "manifest-sha256.txt"), "rb") as f:
+        return f.read()
+
+
+def aside(b):
+    d = os.path.join(b, "set-aside")
+    return sorted(os.listdir(d)) if os.path.isdir(d) else []
+
+
+# a marginal floppy read again with good reads: the new one is kept
+rc, out = run("Rilettura", 1, ["bad_a", "bad_b"], [""], ["-m", "2"])
+b = bag("Rilettura")
+ok("reread floppy: closed marginal first", rc == 0 and meta(b)["media"][0]["status"] == "marginal", out)
+old_master = meta(b)["media"][0]["reads"][0]["sha256"]
+rc, out = run("Rilettura", 0, ["good_1", "good_2"], [""], ["--reread", "floppy1"])
+m = meta(b)
+ok("reread floppy: closed and valid", rc == 0 and check_bag.check(b, PROFILE) == [], out)
+ok("reread floppy: the new read is the master", m["media"][0]["status"] == "clean"
+   and m["media"][0]["reads"][0]["sha256"] != old_master, json.dumps(m["media"][0]))
+ok("reread floppy: the old reads in set-aside as .replaced",
+   "disco01.dsk.replaced" in aside(b) and "disco01_b.dsk.replaced" in aside(b), str(aside(b)))
+h = m.get("history") or [{}]
+ok("reread floppy: the history says what changed",
+   h[-1].get("action") == "edit" and h[-1]["media"][0]["medium"] == "floppy 1"
+   and h[-1]["media"][0]["kept"] == "new" and h[-1]["media"][0]["old"]["status"] == "marginal", json.dumps(h))
+ok("reread floppy: no editing/ left", not os.path.exists(os.path.join(b, "editing")))
+
+# a worse read: the old one stays, the bag is not touched
+rc, out = run("Rilettura peggiore", 1, ["ident_a", "ident_b"], [""])
+b = bag("Rilettura peggiore")
+before = manifest(b)
+rc, out = run("Rilettura peggiore", 0, ["bad_a", "bad_b", "bad_a", "bad_b"], ["", "S"], ["--reread", "floppy1", "-r"])
+ok("reread worse: the old read stays, the manifest is the same",
+   rc == 0 and manifest(b) == before and "disco01.dsk.rejected" in aside(b), out + str(aside(b)))
+ok("reread worse: asked again saying so", "was worse than the old one" in out, out)
+ok("reread worse: valid bag", check_bag.check(b, PROFILE) == [], out)
+
+# Windows 2000 Server: read with data on a drive without lead-in, then with cd
+dic_log()
+rc, out = run("Windows 2000 Server", 0, [], [""], ["-C", "1"], tpl=None,
+              dic=["LEADIN2 data_good", "data_good"], env_extra=disc_env(DISC_PLAIN))
+b = bag("Windows 2000 Server")
+ok("reread CD: first read with data", rc == 0 and meta(b)["media"][0]["disc"]["read_method"] == "dic-data", out)
+rc, out = run("Windows 2000 Server", 0, [], [""], ["--reread", "cd1"], tpl=None,
+              dic=["cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
+m = meta(b)
+cd = m["media"][0]
+h = (m.get("history") or [{}])[-1]
+ok("reread CD: read again with cd, kept without asking", rc == 0 and cd["disc"]["read_method"] == "dic-cd"
+   and "as good as the old one" not in out and "Keeping the new read of CD 1" in out, json.dumps(cd) + out)
+ok("reread CD: the history has the old method", h.get("media") and h["media"][0]["old"].get("read_method") == "dic-data"
+   and h["media"][0]["new"].get("read_method") == "dic-cd", json.dumps(h))
+ok("reread CD: valid bag, the old read in set-aside", check_bag.check(b, PROFILE) == [] and "CD01.replaced" in aside(b),
+   str(aside(b)))
+
+# the same grade, different reads: the user chooses
+rc, out = run("Stesso grado", 1, ["ident_a", "ident_b"], [""])
+b = bag("Stesso grado")
+rc, out = run("Stesso grado", 0, ["good_1", "good_2"], ["", "N"], ["--reread", "floppy1"])
+ok("same grade: asked, N keeps the new one", rc == 0 and "as good as the old one" in out
+   and "disco01.dsk.replaced" in aside(b), out)
+rc, out = run("Stesso grado", 0, ["ident_a", "ident_b"], ["", "O"], ["--reread", "floppy1"])
+ok("same grade: O keeps the old one", rc == 0 and "disco01.dsk.rejected" in aside(b)
+   and check_bag.check(b, PROFILE) == [], out + str(aside(b)))
+
+# a closed incomplete box: the missing medium read with --reread missing
+rc, out = run("Completare", 2, ["ident_a", "ident_b"], ["", "F"])
+b = bag("Completare")
+ok("missing: closed incomplete first", info(b).get("Box-Status") == "incomplete", out)
+rc, out = run("Completare", 0, ["fat_144", "fat_144"], [""], ["--reread", "missing"])
+ok("missing: read and complete", rc == 0 and info(b).get("Box-Status") == "complete"
+   and meta(b)["media"][1]["status"] == "clean" and check_bag.check(b, PROFILE) == [], out)
+
+# errors of use
+rc, out = run("Aperto da rileggere", 2, ["ident_a", "ident_b"], ["", "Q"])
+rc, out = run("Aperto da rileggere", 0, [], [""], ["--reread", "floppy1"])
+ok("reread: an open box is refused", rc == 2 and "still open" in out, out)
+rc, out = run("Rilettura", 0, [], [""], ["--reread", "floppy9"])
+ok("reread: a medium the box does not have", rc == 2 and "floppy 9" in out, out)
+mj = os.path.join(bag("Antico"), "data", "metadata.json")
+with open(mj, encoding="utf-8") as f:
+    old_m = json.load(f)
+old_m["schema"] = "retroarchiver-2"
+with open(mj, "w", encoding="utf-8") as f:
+    json.dump(old_m, f)
+rc, out = run("Antico", 0, [], [""], ["--reread", "floppy1", "-e", "1.0"])
+ok("reread: a box of 261017 is refused", rc == 2 and "convert it first" in out, out)
+
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))
 sys.exit(1 if fails else 0)

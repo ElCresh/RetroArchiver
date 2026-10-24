@@ -2,6 +2,7 @@
 #include "unit.h"
 #include "core/media.h"
 #include "core/fsu8.h"
+#include "core/sha256.h"
 
 static int lines;
 static void count(void *ctx, const char *line) { (void)ctx; (void)line; lines++; }
@@ -9,6 +10,17 @@ static void count(void *ctx, const char *line) { (void)ctx; (void)line; lines++;
 void test_floppy(void)
 {
     json_writer w; strbuf msg; FILE *f;
+
+    /* identity_is_sha256: a floppy is compared by its image */
+    CHECK(floppy_media.identity != NULL);
+    if (floppy_media.identity) {
+        media_identity id; char hex[65];
+        CHECK(floppy_media.identity("fixtures/ident_a.dsk", &id) == 0);
+        sha256_file("fixtures/ident_a.dsk", hex, NULL);
+        CHECK_STR(id.key, hex);
+        CHECK_STR(id.method, "");
+        CHECK(floppy_media.identity("fixtures/none.dsk", &id) == -1);
+    }
 
     jw_init(&w);
     jw_begin_obj(&w, NULL);

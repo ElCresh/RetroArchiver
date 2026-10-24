@@ -18,6 +18,33 @@ static int contains(const char *path, const char *needle)
     return strstr(buf, needle) != NULL;
 }
 
+/* digests already verified are reused; the others are computed */
+static void bag_known(meta_box *b)
+{
+    static const char zero[] = "0000000000000000000000000000000000000000000000000000000000000000";
+    bag_digests k, m; strbuf err; int bad; char hex[65];
+    memset(&k, 0, sizeof(k)); memset(&m, 0, sizeof(m));
+    sb_init(&err);
+    CHECK(bag_create("tmp_unit/bag5", &err) == 0);
+    put("tmp_unit/bag5/data/disco01.dsk", "abc");
+    put("tmp_unit/bag5/data/b.bin", "other");
+    bag_digests_add(&k, "data/b.bin", zero);
+    CHECK(bag_digests_find(&k, "data/b.bin") == 0);
+    CHECK(bag_digests_find(&k, "data/x") == -1);
+    CHECK(bag_close("tmp_unit/bag5", b, &k, &err, &bad) == 0);
+    CHECK(contains("tmp_unit/bag5/manifest-sha256.txt", "0000000000000000000000000000000000000000000000000000000000000000  data/b.bin\n"));
+    CHECK(contains("tmp_unit/bag5/manifest-sha256.txt",
+                   "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  data/disco01.dsk\n"));
+    CHECK(bag_manifest_load("tmp_unit/bag5", "manifest-sha256.txt", &m) == 0);
+    CHECK(m.n == 2);
+    CHECK(bag_digests_find(&m, "data/disco01.dsk") >= 0);
+    sha256_file("tmp_unit/bag5/bag-info.txt", hex, NULL);
+    CHECK(bag_manifest_load("tmp_unit/bag5", "nothing.txt", &m) == -1);
+    bag_digests_free(&k);
+    bag_digests_free(&m);
+    sb_free(&err);
+}
+
 void test_bagit(void)
 {
     char name[96], longt[301]; meta_box *b = meta_new(); meta_disk *d; strbuf err; int bad = -1;
@@ -64,7 +91,7 @@ void test_bagit(void)
     str_copy(d->reads[0].file, sizeof(d->reads[0].file), "disco01.dsk");
     sha256_file("tmp_unit/bag1/data/disco01.dsk", d->reads[0].sha256, &d->reads[0].bytes);
 
-    CHECK(bag_close("tmp_unit/bag1", b, &err, &bad) == 0);
+    CHECK(bag_close("tmp_unit/bag1", b, NULL, &err, &bad) == 0);
     CHECK(bad == 0);
     CHECK(!bag_is_open("tmp_unit/bag1"));
     CHECK(contains("tmp_unit/bag1/bag-info.txt", "Box-Status: incomplete\n"));
@@ -83,14 +110,14 @@ void test_bagit(void)
     CHECK(bag_create("tmp_unit/bag2", &err) == 0);
     put("tmp_unit/bag2/data/disco01.dsk", "abX");
     sb_clear(&err);
-    CHECK(bag_close("tmp_unit/bag2", b, &err, &bad) == -1);
+    CHECK(bag_close("tmp_unit/bag2", b, NULL, &err, &bad) == -1);
     CHECK(strstr(err.s, "changed") != NULL);
     CHECK(bad == 1);
     CHECK(bag_is_open("tmp_unit/bag2"));
     /* a missing file: there too we know which disk to re-read */
     u8_remove("tmp_unit/bag2/data/disco01.dsk");
     sb_clear(&err);
-    CHECK(bag_close("tmp_unit/bag2", b, &err, &bad) == -1);
+    CHECK(bag_close("tmp_unit/bag2", b, NULL, &err, &bad) == -1);
     CHECK(strstr(err.s, "missing") != NULL);
     CHECK(bad == 1);
 
@@ -100,7 +127,7 @@ void test_bagit(void)
         str_copy(e->title, sizeof(e->title), "Senza piattaforma");
         sb_clear(&err);
         CHECK(bag_create("tmp_unit/bag3", &err) == 0);
-        CHECK(bag_close("tmp_unit/bag3", e, &err, &bad) == -1);
+        CHECK(bag_close("tmp_unit/bag3", e, NULL, &err, &bad) == -1);
         CHECK(bag_is_open("tmp_unit/bag3"));
         CHECK(strstr(err.s, "platform") != NULL);
         meta_delete(e);
@@ -112,7 +139,7 @@ void test_bagit(void)
     CHECK(bag_is_open("tmp_unit/bag4"));
     put("tmp_unit/bag4/data/disco01.dsk", "abc");
     sb_clear(&err);
-    CHECK(bag_close("tmp_unit/bag4", b, &err, &bad) == 0);
+    CHECK(bag_close("tmp_unit/bag4", b, NULL, &err, &bad) == 0);
     CHECK(!bag_is_open("tmp_unit/bag4") && !u8_exists("tmp_unit/bag4/" BAG_OPEN_MARK_OLD));
     CHECK(bag_status_complete("completo") && bag_status_complete(BAG_COMPLETE));
     CHECK(!bag_status_complete("incompleto") && !bag_status_complete(BAG_INCOMPLETE));
@@ -123,6 +150,7 @@ void test_bagit(void)
     CHECK(system("python3 -I check_bag.py tmp_unit/bag1 > /dev/null") != 0);
 #endif
 
+    bag_known(b);
     meta_delete(b);
     sb_free(&err);
 }

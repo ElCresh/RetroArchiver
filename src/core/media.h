@@ -15,6 +15,12 @@
 #define MEDIA_NOTOOL -2
 
 typedef struct {
+    char key[65];             /* SHA-256 */
+    char method[16];          /* "dic-cd", "dic-data"; "" for a floppy */
+    char drive[160];          /* "PLEXTOR DVDR PX-760A 1.07"; "" unknown */
+} media_identity;
+
+typedef struct {
     const char *name;         /* "floppy", like meta_kind_key() */
     const char *ext;          /* ".dsk" */
     /* does the drive respond? 0 yes, -1 no, with the instruction in msg */
@@ -52,6 +58,11 @@ typedef struct {
      * resets itself); 2 made with it, and the drive reset itself: the scan
      * is the cause, to read again without */
     int (*protection_used)(void);
+    /* what tells two reads of the same medium apart: the fingerprint to
+     * compare them by (the image of a floppy, only the tracks of a CD: its
+     * folder holds logs that change at every read), how it was read and
+     * with which drive; 0 ok, -1 the read cannot be loaded */
+    int (*identity)(const char *img, media_identity *out);
 } media_ops;
 
 extern const media_ops floppy_media;

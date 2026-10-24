@@ -74,6 +74,9 @@ typedef struct {
     char names[MEDIA_KINDS][64];    /* naming scheme per type, "" = not decided */
     int  copy_protection;           /* META_PROT_..., auto in boxes made before it */
     char started[20], closed[20];   /* "" = not yet */
+    char schema[32];                /* as read from metadata.json; "" for a new box */
+    /* the changes made after closing: the JSON array as text, "" if none */
+    char history[131072];
     int  ndisk;
     meta_disk disk[META_MAXDISK];   /* in order of n */
 } meta_box;
@@ -111,6 +114,9 @@ void meta_now(char out[20]);
 /* the technical data of a medium, from its master image */
 typedef void (*meta_tech_fn)(void *ctx, const meta_disk *d, const char *master_path, json_writer *w);
 int  meta_save(const meta_box *b, const char *datadir, meta_tech_fn tech, void *ctx, strbuf *err);
+/* adds one JSON object to the history; -1 if it does not fit or is not
+ * valid, and then the history stays as it was */
+int  meta_history_add(meta_box *b, const char *entry);
 /* also reads the old schema "retroarchiver-floppy-1" (all floppies) */
 int  meta_load(meta_box *b, const char *datadir, strbuf *err);
 

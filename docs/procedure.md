@@ -79,6 +79,50 @@ After moving the archive, a package can be checked again with
 `python3 tests/check_bag.py "D:\Archive\Monkey Island"` (any BagIt 1.0
 validator works too).
 
+## Editing a closed box
+
+A closed box can be changed from the archive: select it and press
+**Edit** (or Archive > Edit box...). The dialog has two tabs:
+
+- **Box**: title, platform, publisher, year, language, edition, notes.
+  Changing the title or the edition renames the folder, "Title (Edition)";
+  the line at the bottom shows the new name.
+- **Media**: how many floppies, CDs and DVDs, and one row per medium with
+  its outcome and how it was read. Tick the media to read again, or to
+  read if they are missing. A lower number removes the **last** media of
+  that kind; file names never change.
+
+**Save** shows what will change and asks for confirmation; the package
+is checked, changed and closed again in one step. **Save and read** then
+reads the ticked media one at a time, with the usual flow (reads,
+comparison, EDC/ECC, redump). Each medium is saved as soon as it is read:
+
+- the new read is better: it is kept, the old one goes to
+  `set-aside/NAME.replaced`;
+- it is worse: the old one stays, the new one goes to
+  `set-aside/NAME.rejected`, and the window offers Retry (clean the disc);
+- as good but different: the window asks which one to keep;
+- identical: nothing changes.
+
+The order, from best: verified by redump, clean read with DiscImageCreator
+`cd` (or a clean floppy), clean read with `data`, marginal or unstable,
+fragile or read once, with errors, failed.
+
+Nothing is ever deleted: removed media go to `set-aside/NAME.removed`,
+damaged files of a medium read again to `.damaged`, and the old manifests
+and `metadata.json` to `set-aside/previous-DATE/`. The `history` list in
+`metadata.json` says what changed, when, why (the optional Reason) and,
+for a CD, with which drive and method. Stopping in the middle leaves the
+medium in hand as it was; those already saved keep their new reads.
+
+The change goes through a journal in the bag's `editing/` folder: after a
+power cut the archive finishes it or puts the old box back when it opens,
+never a mix. Boxes made by 261017 must be converted before they can be
+edited.
+
+From the console: `dskrun --reread cd1,cd2 -t "Windows 2000 Server"`
+(or `--reread missing` to complete a closed incomplete box).
+
 ## SAMdisk traps already met
 
 Verified by hand on the target PC.

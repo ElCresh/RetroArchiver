@@ -25,6 +25,7 @@ void jw_end_arr(json_writer *w);
 void jw_str(json_writer *w, const char *key, const char *val);  /* NULL -> null */
 void jw_int(json_writer *w, const char *key, long long v);
 void jw_null(json_writer *w, const char *key);
+void jw_bool(json_writer *w, const char *key, int v);
 
 typedef enum { J_NULL, J_BOOL, J_NUM, J_STR, J_ARR, J_OBJ } jtype;
 
@@ -44,5 +45,7 @@ void  json_free(jval *v);
 const jval *json_get(const jval *obj, const char *key);
 const char *json_str(const jval *obj, const char *key);  /* NULL if missing */
 long long   json_int(const jval *obj, const char *key, long long def);
+/* writes again a value that was read (an object, an array...) */
+void json_write_val(json_writer *w, const char *key, const jval *v);
 
 #endif

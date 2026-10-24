@@ -8,6 +8,7 @@
 #include "edsk.h"
 #include "fat12.h"
 #include "fsu8.h"
+#include "sha256.h"
 
 static char samdisk[512] = "samdisk";
 /* where to read from: the drive, or an image (testing with the real
@@ -235,7 +236,13 @@ static int volume_label(const char *img, char *out, size_t n)
     return ok;
 }
 
+static int identity(const char *img, media_identity *out)
+{
+    memset(out, 0, sizeof(*out));
+    return sha256_file(img, out->key, NULL) ? -1 : 0;
+}
+
 const media_ops floppy_media = {
     "floppy", ".dsk", check, scan, read_disk, compare_files, tech, problems, careful,
-    "SAMdisk", "Scan", 0, NULL, volume_label
+    "SAMdisk", "Scan", 0, NULL, volume_label, NULL, NULL, identity
 };

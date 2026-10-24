@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "unit.h"
 #include "core/meta.h"
 #include "core/fsu8.h"
@@ -131,6 +132,40 @@ static void test_meta_old(void)
     sb_free(&err);
 }
 
+/* the history survives a save and a load, in order; a full one refuses */
+static void history_roundtrip(void)
+{
+    meta_box *b = meta_new(), *c = meta_new(); strbuf err; char *big; size_t n;
+    sb_init(&err);
+    str_copy(b->title, sizeof(b->title), "H");
+    str_copy(b->platform, sizeof(b->platform), "X");
+    b->media_expected = 1;
+    CHECK(meta_history_add(b, "{\"action\": \"edit\", \"n\": 1}") == 0);
+    CHECK(meta_history_add(b, "{\"action\": \"edit\", \"n\": 2}") == 0);
+    u8_mkdirs("tmp_unit/hist");
+    CHECK(meta_save(b, "tmp_unit/hist", NULL, NULL, &err) == 0);
+    CHECK(meta_load(c, "tmp_unit/hist", &err) == 0);
+    CHECK_STR(c->schema, "retroarchiver-3");
+    {
+        char e[160]; jval *h = json_parse(c->history, e, sizeof(e));
+        CHECK(h && h->t == J_ARR && h->child && json_int(h->child, "n", 0) == 1
+              && h->child->next && json_int(h->child->next, "n", 0) == 2);
+        json_free(h);
+    }
+    n = sizeof(b->history);
+    big = (char *)malloc(n + 16);
+    memset(big, ' ', n); memcpy(big, "{\"x\": 1", 7); strcpy(big + n - 2, "}");
+    {
+        char before[64];
+        str_copy(before, sizeof(before), b->history);
+        CHECK(meta_history_add(b, big) == -1);
+        CHECK(!strncmp(b->history, before, strlen(before)));
+    }
+    free(big);
+    meta_delete(b); meta_delete(c);
+    sb_free(&err);
+}
+
 void test_meta(void)
 {
     meta_box *b = meta_new(), *c = meta_new();
@@ -212,4 +247,5 @@ void test_meta(void)
     sb_free(&err);
     test_meta_mixed();
     test_meta_old();
+    history_roundtrip();
 }

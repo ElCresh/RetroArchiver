@@ -30,7 +30,19 @@ typedef struct {
      * 2 without (with it the drive reset itself). The window says so, and
      * Skip keeps what there is; 0 an ordinary turn */
     int protection_retry;
+    /* edit: the new read of this medium was worse than the old one, which
+     * is kept; asked again so it can be cleaned and read once more */
+    int edit_worse;
 } disk_turn;
+
+/* edit: two reads of the same medium, as good as each other but different */
+typedef struct {
+    int n, kind, num;
+    char old_status[24], new_status[24];
+    char old_method[16], new_method[16];      /* "dic-cd", "dic-data", "" */
+    char old_drive[160], new_drive[160];
+    char old_at[20], new_at[20];
+} edit_choice;
 
 typedef struct {
     void (*event)(void *ctx, event_kind k, int disk, const char *text);
@@ -41,6 +53,8 @@ typedef struct {
     /* nonzero: a "read failed" or "interrupted" disk is asked for again
      * right away with wait_disk (Retry) instead of moving on or exiting */
     int ask_again;
+    /* edit: which read to keep, 1 the new one, 0 the old one; NULL keeps the old one */
+    int  (*choose)(void *ctx, const edit_choice *c);
 } session_host;
 
 typedef struct {
@@ -58,6 +72,12 @@ typedef struct {
     const char *copy_protection;
     /* who reads each kind; NULL = reading not available yet */
     const media_ops *media[MEDIA_KINDS];
+    /* 1: the box is closed and some of its media are read again, each in
+     * its own transaction; reread[n] = 1 for those. The box is loaded from
+     * its folder (title and edition say which) */
+    int edit;
+    char reread[META_MAXDISK + 1];
+    const char *reason;         /* why, for the history; may be NULL */
 } session_cfg;
 
 #define SESSION_CLOSED 0        /* bag closed, complete or incomplete */
@@ -87,6 +107,8 @@ const char *session_aside_dir(const char *bagdir);
 /* the archive's log, one row per disk, next to the boxes; 261017 wrote
  * archivio.csv, which stays as it is */
 #define SESSION_CSV "archive.csv"
+/* one row of it for d, with its own status or status; -1 if it cannot be written */
+int  session_csv_row(const char *outroot, const char *box_title, const meta_disk *d, const char *status);
 /* the names of the files set aside in the bag, one per line ('\n'); how many */
 int  session_aside_list(const char *bagdir, strbuf *out);
 /* {n} {nn} {nnn} {set} {date} ({data} as in 261017); the result is truncated to n bytes */
@@ -94,6 +116,9 @@ void session_expand(char *out, size_t n, const char *tpl, int disk, const char *
 /* bag folder: outroot + cleaned-up "Title (Edition)"; the title alone
  * without an edition, or for a box made that way with this edition */
 void session_bagdir(char *out, size_t n, const char *outroot, const char *title, const char *edition);
+/* the same without looking at the disk: always "Title (Edition)" with an
+ * edition. An edited box gets this one when its title or edition changes */
+void session_bagdir_fresh(char *out, size_t n, const char *outroot, const char *title, const char *edition);
 
 /* the naming scheme of a kind: the one fixed in the box, otherwise the
  * one in names (may be NULL), otherwise FLOPPY{nn} CD{nn} DVD{nn} */

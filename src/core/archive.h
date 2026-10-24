@@ -4,6 +4,7 @@
 #ifndef ARCHIVE_H
 #define ARCHIVE_H
 #include <stddef.h>
+#include "bagit.h"
 #include "meta.h"
 #include "strbuf.h"
 
@@ -30,6 +31,8 @@ typedef struct {
     long long bytes;                /* everything there is in data/ */
     char date[20];                  /* closing, or the last read if open */
     char error[300];                /* ARC_BROKEN: what is wrong */
+    int  editing;                   /* an edit is under way, or was interrupted (editing/) */
+    int  old_format;                /* written by 261017: to convert before editing it */
 } arc_box;
 
 typedef struct { int n, cap; arc_box *box; } arc_list;
@@ -60,5 +63,8 @@ typedef struct {
 } arc_check;
 
 int  arc_verify(const char *bagdir, arc_check *c, strbuf *err);   /* -1 if it cannot */
+/* the closed bag against its manifest, as arc_verify; ok gets the files
+ * whose digest matches */
+int  arc_verify_digests(const char *bagdir, arc_check *c, bag_digests *ok, strbuf *err);
 
 #endif

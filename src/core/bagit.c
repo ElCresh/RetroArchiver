@@ -127,6 +127,52 @@ int bag_status_complete(const char *status)
     return !strcmp(status, BAG_COMPLETE) || !strcmp(status, "completo");
 }
 
+void bag_digests_add(bag_digests *d, const char *rel, const char *hex)
+{
+    size_t len = strlen(rel) + 1;
+    if (d->n == d->cap) {
+        d->cap = d->cap ? d->cap * 2 : 64;
+        d->rel = (char **)realloc(d->rel, (size_t)d->cap * sizeof(char *));
+        d->hex = (char (*)[65])realloc(d->hex, (size_t)d->cap * sizeof(*d->hex));
+    }
+    d->rel[d->n] = (char *)malloc(len);
+    memcpy(d->rel[d->n], rel, len);
+    str_copy(d->hex[d->n], sizeof(d->hex[d->n]), hex);
+    d->n++;
+}
+
+int bag_digests_find(const bag_digests *d, const char *rel)
+{
+    int i;
+    for (i = 0; d && i < d->n; i++) if (!strcmp(d->rel[i], rel)) return i;
+    return -1;
+}
+
+void bag_digests_free(bag_digests *d)
+{
+    int i;
+    for (i = 0; i < d->n; i++) free(d->rel[i]);
+    free(d->rel); free(d->hex);
+    memset(d, 0, sizeof(*d));
+}
+
+int bag_manifest_load(const char *bagdir, const char *name, bag_digests *out)
+{
+    char p[1024], line[1200], *sp, *e; FILE *f;
+    u8_join(p, sizeof(p), bagdir, name);
+    if (!(f = u8_fopen(p, "rb"))) return -1;
+    while (fgets(line, sizeof(line), f)) {
+        e = line + strlen(line);
+        while (e > line && (e[-1] == '\n' || e[-1] == '\r')) *--e = 0;
+        if (!(sp = strchr(line, ' '))) continue;
+        *sp++ = 0;
+        while (*sp == ' ' || *sp == '*') sp++;
+        bag_digests_add(out, sp, line);
+    }
+    fclose(f);
+    return 0;
+}
+
 typedef struct { char **names; int n, cap; } namelist;
 
 /* the files inside the optical media folders too (data/CD01/...) */
@@ -198,7 +244,8 @@ static int tag_file(const char *bagdir, const char *name, const char *text,
     return 0;
 }
 
-int bag_close(const char *bagdir, const meta_box *box, strbuf *err, int *bad_disk)
+int bag_close(const char *bagdir, const meta_box *box, const bag_digests *known,
+              strbuf *err, int *bad_disk)
 {
     char data[1024], p[1024], hex[65], date[11], now[20], comp[80], name[32];
     namelist l = { NULL, 0, 0 };
@@ -220,8 +267,12 @@ int bag_close(const char *bagdir, const meta_box *box, strbuf *err, int *bad_dis
     sb_init(&man); sb_init(&info); sb_init(&tag);
 
     for (i = 0; i < l.n; i++) {
+        char rel[1040]; int kn;
         u8_join(p, sizeof(p), data, l.names[i]);
-        if (sha256_file(p, hex, &bytes)) { sb_printf(err, "cannot read %s", p); goto out; }
+        snprintf(rel, sizeof(rel), "data/%s", l.names[i]);
+        if ((kn = bag_digests_find(known, rel)) >= 0 && (bytes = u8_filesize(p)) >= 0)
+            memcpy(hex, known->hex[kn], 65);
+        else if (sha256_file(p, hex, &bytes)) { sb_printf(err, "cannot read %s", p); goto out; }
         hashes[i] = (char *)malloc(65);
         memcpy(hashes[i], hex, 65);
         total += bytes;

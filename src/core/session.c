@@ -14,6 +14,8 @@
 #include "fsu8.h"
 #include "runner.h"
 #include "sha256.h"
+#include "archive.h"
+#include "boxedit.h"
 
 #define CP(dst, src) str_copy(dst, sizeof(dst), src)
 
@@ -29,6 +31,13 @@ typedef struct {
     int prot_retry;             /* the disk to read again at once, with or without the scan */
     int prot_retry_on;          /* 1 with the copy protection scan, 0 without */
     strbuf msg;
+    /* edit: the box as it is in the closed bag, the records of the media
+     * read again as they were (old[n]), the digests verified at the start
+     * and the manifest lines that did not match */
+    meta_box *committed;
+    meta_disk *old;
+    bag_digests known, bad;
+    int edit_worse;             /* the medium whose new read was worse: asked again saying so */
 } run_ctx;
 
 void session_expand(char *out, size_t n, const char *tpl, int disk, const char *title)
@@ -69,10 +78,19 @@ static int bag_has_edition(const char *bagdir, const char *edition)
  * alone: a box made that way keeps its folder if it has the same edition. */
 void session_bagdir(char *out, size_t n, const char *outroot, const char *title, const char *edition)
 {
-    char name[96], ed[48], both[150];
+    char name[96];
     bag_dirname(title, name, 81);
     u8_join(out, n, outroot, name);
     if (!edition || !edition[0] || (u8_exists(out) && bag_has_edition(out, edition))) return;
+    session_bagdir_fresh(out, n, outroot, title, edition);
+}
+
+void session_bagdir_fresh(char *out, size_t n, const char *outroot, const char *title, const char *edition)
+{
+    char name[96], ed[48], both[150];
+    bag_dirname(title, name, 81);
+    u8_join(out, n, outroot, name);
+    if (!edition || !edition[0]) return;
     /* the edition is never cut away by a long title: it is what tells them apart */
     bag_dirname(edition, ed, 41);
     bag_dirname(title, name, 81 - strlen(ed) - 3);
@@ -151,7 +169,8 @@ static void tech_of(void *ctx, const meta_disk *d, const char *img, json_writer 
 static int save(run_ctx *r)
 {
     sb_clear(&r->msg);
-    if (meta_save(r->cfg->box, r->datadir, tech_of, r, &r->msg)) {
+    /* edit: the stage's metadata.json only says which reads are finished */
+    if (meta_save(r->cfg->box, r->datadir, r->cfg->edit ? NULL : tech_of, r, &r->msg)) {
         r->host->event(r->host->ctx, EV_ERROR, r->cur, r->msg.s);
         return -1;
     }
@@ -183,19 +202,26 @@ static void write_report(run_ctx *r, meta_disk *d, const char *base, const char 
     if (fclose(f) == 0) CP(d->report, name);
 }
 
-static void csv_row(run_ctx *r, const meta_disk *d)
+int session_csv_row(const char *outroot, const char *box_title, const meta_disk *d, const char *status)
 {
     char p[1024], ts[20], title[256]; FILE *f; long long sz; char *q;
-    u8_join(p, sizeof(p), r->cfg->outroot, SESSION_CSV);
+    u8_join(p, sizeof(p), outroot, SESSION_CSV);
     sz = u8_filesize(p);
-    f = u8_fopen(p, "ab");
-    if (!f) { ev(r, EV_LINE, d->n, "WARNING: cannot write %s", p); return; }
+    if (!(f = u8_fopen(p, "ab"))) return -1;
     if (sz <= 0) fputs("disk;master;reads;status;when;box\n", f);
     meta_now(ts); ts[10] = ' '; ts[16] = 0;        /* "2026-10-15 21:04" as before */
-    CP(title, r->cfg->box->title);
+    CP(title, box_title);
     for (q = title; *q; q++) if (*q == ';') *q = ',';
-    fprintf(f, "%d;%s;%d;%s;%s;%s\n", d->n, d->master, d->nreads, d->status, ts, title);
-    fclose(f);
+    fprintf(f, "%d;%s;%d;%s;%s;%s\n", d->n, d->master, d->nreads, status ? status : d->status, ts, title);
+    return fclose(f) == 0 ? 0 : -1;
+}
+
+static void csv_row(run_ctx *r, const meta_disk *d)
+{
+    char p[1024];
+    if (session_csv_row(r->cfg->outroot, r->cfg->box->title, d, NULL) == 0) return;
+    u8_join(p, sizeof(p), r->cfg->outroot, SESSION_CSV);
+    ev(r, EV_LINE, d->n, "WARNING: cannot write %s", p);
 }
 
 /* free name for a new read: base.dsk, then base_b.dsk, base_c.dsk...
@@ -652,12 +678,15 @@ static void box_name(const char *title, const char *edition, char *out, size_t n
     else snprintf(out, n, "\"%s\"", title);
 }
 
+static int open_edit(run_ctx *r);
+
 /* new or resumed bag; -1 if it cannot go on */
 static int open_bag(run_ctx *r)
 {
     meta_box *box = r->cfg->box;
     char want[sizeof(box->title)], want_ed[sizeof(box->edition)], mp[1040], was[80], now[80];
     int nwant = box->media_expected;
+    if (r->cfg->edit) return open_edit(r);
     if (u8_exists(r->bagdir)) {
         if (!bag_is_open(r->bagdir)) {
             ev(r, EV_ERROR, 0, "The box \"%s\" is already closed in %s: choose another title, "
@@ -836,6 +865,243 @@ static void check_twin(run_ctx *r, meta_disk *d)
     CP(d->status, ST_DUPLICATE);
 }
 
+/* ---- edit: media of a closed box read again ---- */
+
+/* the medium a file of data/ belongs to ("data/CD01/CD01.bin": CD 1) */
+static const meta_disk *owner_of(const meta_box *b, const char *rel)
+{
+    const char *files[META_MAXREAD + 2]; int i, k, n; size_t l;
+    for (i = 0; i < b->ndisk; i++) {
+        const meta_disk *d = &b->disk[i];
+        for (k = 0, n = 0; k < d->nreads; k++) files[n++] = d->reads[k].file;
+        if (d->scan[0]) files[n++] = d->scan;
+        if (d->report[0]) files[n++] = d->report;
+        for (k = 0; k < n; k++) {
+            l = strlen(files[k]);
+            if (!strncmp(rel, "data/", 5) && !strncmp(rel + 5, files[k], l) && (!rel[5 + l] || rel[5 + l] == '/'))
+                return d;
+        }
+    }
+    return NULL;
+}
+
+/* the bag must match its manifest, except for files of media read again
+ * (an edit also repairs a damaged medium) */
+static int edit_check(run_ctx *r)
+{
+    arc_check c; bag_digests man; const meta_disk *o; char who[32]; int i, rc = 0;
+    memset(&man, 0, sizeof(man));
+    sb_clear(&r->msg);
+    if (arc_verify_digests(r->bagdir, &c, &r->known, &r->msg)) { ev(r, EV_ERROR, 0, "%s", r->msg.s); return -1; }
+    if (c.extra) {
+        ev(r, EV_ERROR, 0, "%s is not in the manifest of the box: move it out of data and try again.", c.first);
+        return -1;
+    }
+    bag_manifest_load(r->bagdir, "manifest-sha256.txt", &man);
+    for (i = 0; i < man.n && !rc; i++) {
+        if (bag_digests_find(&r->known, man.rel[i]) >= 0) continue;
+        bag_digests_add(&r->bad, man.rel[i], man.hex[i]);
+        o = owner_of(r->committed, man.rel[i]);
+        if (o && r->cfg->reread[o->n]) continue;
+        if (o) ev(r, EV_ERROR, 0, "%s does not match its fingerprint any more: read %s again too.", man.rel[i],
+                  name_of(r->committed, o->n, who, sizeof(who)));
+        else ev(r, EV_ERROR, 0, "%s does not match its fingerprint any more: the box is damaged.", man.rel[i]);
+        rc = -1;
+    }
+    bag_digests_free(&man);
+    return rc;
+}
+
+/* a closed box to edit: loaded from its folder, checked, the media to read
+ * again emptied in memory; the reads go to editing/data */
+static int open_edit(run_ctx *r)
+{
+    meta_box *box = r->cfg->box; strbuf why;
+    char want[sizeof(box->title)], want_ed[sizeof(box->edition)], mp[1040];
+    int n;
+    if (!u8_exists(r->bagdir)) {
+        ev(r, EV_ERROR, 0, "There is no box \"%s\" in %s: check the title and the edition.", box->title, r->bagdir);
+        return -1;
+    }
+    sb_init(&why);
+    if (!boxedit_editable(r->bagdir, &why)) {
+        ev(r, EV_ERROR, 0, "The box in %s cannot be edited: %s.", r->bagdir, why.s);
+        sb_free(&why);
+        return -1;
+    }
+    sb_free(&why);
+    CP(want, box->title);
+    CP(want_ed, box->edition);
+    u8_join(mp, sizeof(mp), r->bagdir, "data");
+    if (meta_load(box, mp, &r->msg)) { ev(r, EV_ERROR, 0, "%s", r->msg.s); return -1; }
+    if (strcmp(box->title, want) || strcmp(box->edition, want_ed)) {
+        ev(r, EV_ERROR, 0, "The folder %s holds the box \"%s\", not \"%s\": use its exact title and edition.",
+           r->bagdir, box->title, want);
+        return -1;
+    }
+    if (!(r->committed = meta_new()) || !(r->old = (meta_disk *)calloc(META_MAXDISK + 1, sizeof(meta_disk)))) {
+        ev(r, EV_ERROR, 0, "Out of memory.");
+        return -1;
+    }
+    *r->committed = *box;
+    if (edit_check(r)) return -1;
+    for (n = 1; n <= box->media_expected && n <= META_MAXDISK; n++) {
+        meta_disk *d;
+        if (!r->cfg->reread[n] || !(d = meta_disk_get(box, n))) continue;
+        r->old[n] = *d;
+        d->status[0] = d->master[0] = d->scan[0] = d->report[0] = d->verdict[0] = 0;
+        d->nreads = d->agree = d->unstable_tracks = d->duplicate_of = 0;
+    }
+    u8_join(mp, sizeof(mp), r->bagdir, BAG_EDIT_DIR);
+    u8_join(r->datadir, sizeof(r->datadir), mp, "data");
+    if (u8_mkdirs(r->datadir)) {
+        ev(r, EV_ERROR, 0, "Cannot create the folder %s: check the permissions.", r->datadir);
+        return -1;
+    }
+    ev(r, EV_LINE, 0, "Editing the box \"%s\" in %s: the new reads wait in %s until they are kept.",
+       box->title, r->bagdir, BOXTXN_STAGE);
+    return save(r);
+}
+
+static void identity_of(const run_ctx *r, const meta_disk *d, const char *dir, media_identity *id)
+{
+    const media_ops *m = r->cfg->media[d->kind]; char p[1024]; int i;
+    memset(id, 0, sizeof(*id));
+    if (!d->master[0]) return;
+    u8_join(p, sizeof(p), dir, d->master);
+    if (m && m->identity && m->identity(p, id) == 0) return;
+    memset(id, 0, sizeof(*id));
+    for (i = 0; i < d->nreads; i++)
+        if (!strcmp(d->reads[i].file, d->master)) CP(id->key, d->reads[i].sha256);
+}
+
+static void choice_of(const meta_disk *o, const meta_disk *d, const media_identity *oi,
+                      const media_identity *ni, edit_choice *c)
+{
+    int i;
+    memset(c, 0, sizeof(*c));
+    c->n = d->n; c->kind = d->kind; c->num = d->num;
+    CP(c->old_status, o->status); CP(c->new_status, d->status);
+    CP(c->old_method, oi->method); CP(c->new_method, ni->method);
+    CP(c->old_drive, oi->drive); CP(c->new_drive, ni->drive);
+    for (i = 0; i < o->nreads; i++) if (!strcmp(o->reads[i].file, o->master)) CP(c->old_at, o->reads[i].at);
+    for (i = 0; i < d->nreads; i++) if (!strcmp(d->reads[i].file, d->master)) CP(c->new_at, d->reads[i].at);
+}
+
+static void csv_rejected(run_ctx *r, const meta_disk *d)
+{
+    meta_disk *t = (meta_disk *)malloc(sizeof(meta_disk));
+    if (!t) return;
+    *t = *d;
+    t->master[0] = 0;
+    csv_row(r, t);
+    free(t);
+}
+
+/* back to the record before the edit, with the new reads set aside */
+static void edit_keep_old(run_ctx *r, meta_disk *d, const char *suffix)
+{
+    const char *files[META_MAXREAD + 2]; char rel[400]; int k, n = 0;
+    for (k = 0; k < d->nreads; k++) files[n++] = d->reads[k].file;
+    if (d->scan[0]) files[n++] = d->scan;
+    if (d->report[0]) files[n++] = d->report;
+    for (k = 0; k < n; k++) {
+        char p[1024];
+        u8_join(p, sizeof(p), r->datadir, files[k]);
+        /* never deleted: if it cannot be set aside it waits in editing/ */
+        if (u8_exists(p) && move_aside(r, files[k], suffix, rel, sizeof(rel)))
+            ev(r, EV_LINE, d->n, "WARNING: cannot set %s aside: it stays in %s. Close the program "
+                                 "that keeps it open; the archive sets it aside when it opens.", files[k], r->datadir);
+    }
+    *d = r->old[d->n];
+}
+
+static int old_damaged(const run_ctx *r, int n)
+{
+    const meta_disk *o; int i;
+    for (i = 0; i < r->bad.n; i++)
+        if ((o = owner_of(r->committed, r->bad.rel[i])) != NULL && o->n == n) return 1;
+    return 0;
+}
+
+enum { EDIT_DONE, EDIT_AGAIN };
+
+/* The new reads of d are finished (or there are none): which read stays,
+ * and that medium's transaction. EDIT_AGAIN: the new one was worse, ask
+ * for the medium again */
+static int edit_finish_disk(run_ctx *r, meta_disk *d, int cmd)
+{
+    const meta_disk *o = &r->old[d->n]; edit_disk e; edit_choice c; char who[32];
+    int og, ng, worse = 0;
+    name_of(r->cfg->box, d->n, who, sizeof(who));
+    memset(&e, 0, sizeof(e));
+    identity_of(r, d, r->datadir, &e.new_id);
+    ng = boxedit_grade(d->status, e.new_id.method);
+    if (cmd != CMD_READ || !d->master[0] || !ng) {
+        edit_keep_old(r, d, EDIT_REJECTED);
+        ev(r, EV_LINE, d->n, "%s stays as it was.", who);
+        r->host->event(r->host->ctx, EV_DISK_DONE, d->n, d->status[0] ? d->status : ST_TO_READ);
+        return EDIT_DONE;
+    }
+    {
+        char data[1040];
+        u8_join(data, sizeof(data), r->bagdir, "data");
+        identity_of(r, o, data, &e.old_id);
+    }
+    /* an old read that no longer matches its fingerprint is no read */
+    og = o->master[0] && !old_damaged(r, d->n) ? boxedit_grade(o->status, e.old_id.method) : 0;
+    e.old = o; e.now = d; e.reason = r->cfg->reason;
+    e.keep = boxedit_decide(og, e.old_id.key, ng, e.new_id.key);
+    worse = e.keep == KEEP_OLD;
+    if (e.keep == KEEP_ASK) {
+        choice_of(o, d, &e.old_id, &e.new_id, &c);
+        e.keep = r->host->choose && r->host->choose(r->host->ctx, &c) ? KEEP_NEW : KEEP_OLD;
+    }
+    sb_clear(&r->msg);
+    if (boxedit_commit_disk(r->bagdir, r->committed, &e, &r->known, &r->bad, tech_of, r, &r->msg)) {
+        ev(r, EV_ERROR, d->n, "%s. %s stays as it was.", r->msg.s, who);
+        edit_keep_old(r, d, ".unused");
+    } else if (e.keep == KEEP_NEW) {
+        csv_row(r, d);
+        ev(r, EV_LINE, d->n, "Keeping the new read of %s (%s): the old one is in %s, out of the data package.",
+           who, d->status, session_aside_dir(r->bagdir));
+    } else if (e.keep == KEEP_OLD_IDENTICAL) {
+        ev(r, EV_LINE, d->n, "The new read of %s is identical to the one kept: nothing changes.", who);
+        *d = r->old[d->n];
+    } else {
+        csv_rejected(r, d);
+        if (worse) ev(r, EV_LINE, d->n, "The new read of %s is worse (%s) than the one kept (%s): keeping the old one, "
+                                        "the new one is in %s as " EDIT_REJECTED ".", who, d->status, o->status,
+                      session_aside_dir(r->bagdir));
+        else ev(r, EV_LINE, d->n, "Keeping the old read of %s: the new one is in %s as " EDIT_REJECTED ".",
+                who, session_aside_dir(r->bagdir));
+        *d = r->old[d->n];
+        if (worse && r->host->ask_again) {
+            r->edit_worse = d->n;
+            d->status[0] = d->master[0] = d->scan[0] = d->report[0] = d->verdict[0] = 0;
+            d->nreads = d->agree = d->unstable_tracks = d->duplicate_of = 0;
+            return EDIT_AGAIN;
+        }
+    }
+    r->host->event(r->host->ctx, EV_DISK_DONE, d->n, d->status[0] ? d->status : ST_TO_READ);
+    return EDIT_DONE;
+}
+
+/* the end of an edit: what is left in editing/ set aside, the box as it is */
+static int edit_end(run_ctx *r)
+{
+    char fin[1040]; strbuf log; meta_box *box = r->cfg->box;
+    sb_init(&log);
+    if (r->committed) {
+        boxtxn_recover(r->bagdir, tech_of, r, fin, sizeof(fin), &log);
+        *box = *r->committed;
+        ev(r, EV_LINE, 0, "Edit of \"%s\" finished: the box is closed and verified.", box->title);
+        r->host->event(r->host->ctx, EV_BOX_DONE, 0, all_done(box) ? BAG_COMPLETE : BAG_INCOMPLETE);
+    }
+    sb_free(&log);
+    return SESSION_CLOSED;
+}
+
 enum { DISK_NEXT, DISK_QUIT, DISK_FINISH, DISK_FAIL };
 
 /* one round on the disk: asks for it, reads or skips it, records the outcome */
@@ -847,6 +1113,8 @@ static int ask_and_do(run_ctx *r, meta_disk *d, int *cmd, char *bye, size_t blen
     t.kind = d->kind; t.num = d->num; t.count = meta_count(r->cfg->box, d->kind);
     t.readable = r->cfg->media[d->kind] != NULL;
     t.protection_retry = r->prot_retry != d->n ? 0 : r->prot_retry_on ? 1 : 2;
+    t.edit_worse = r->edit_worse == d->n;
+    r->edit_worse = 0;
     CP(label, d->label);
     CP(note, d->note);
     r->cur = d->n;
@@ -873,7 +1141,7 @@ static int ask_and_do(run_ctx *r, meta_disk *d, int *cmd, char *bye, size_t blen
                             "start again with the same title.", tool ? tool : "the reading program");
         return DISK_QUIT;
     } else check_twin(r, d);
-    csv_row(r, d);
+    if (!r->cfg->edit) csv_row(r, d);       /* edit: once it is known which read stays */
     if (save(r)) return DISK_FAIL;
     host->event(host->ctx, EV_DISK_DONE, d->n, d->status);
     return DISK_NEXT;
@@ -931,6 +1199,31 @@ static void still_to_read(const run_ctx *r, char *bye, size_t blen)
     sb_free(&s);
 }
 
+/* edit: the media to read again, one at a time; stopping leaves the one in
+ * hand as it was, those already done keep their new reads */
+static int edit_loop(run_ctx *r, char *bye, size_t blen)
+{
+    meta_box *box = r->cfg->box; char who[32];
+    int n, cmd = CMD_QUIT, act, stopped = 0;
+    for (n = 1; n <= box->media_expected && !stopped; n++) {
+        meta_disk *d = meta_disk_get(box, n);
+        if (!d || !r->cfg->reread[n]) continue;
+        for (;;) {
+            do act = ask_and_do(r, d, &cmd, bye, blen);
+            while (act == DISK_NEXT && retry_wanted(r, d, cmd));
+            stopped = act != DISK_NEXT || !strcmp(d->status, ST_INTERRUPTED)
+                   || (cmd == CMD_READ && runner_stopped() && !r->host->ask_again);
+            if (edit_finish_disk(r, d, stopped ? CMD_QUIT : cmd) == EDIT_AGAIN && !stopped) continue;
+            break;
+        }
+        if (stopped)
+            ev(r, EV_LINE, 0, "Stopped: %s and the media after it stay as they were; the media already done keep "
+                              "their new reads. Edit the box again to read the others.",
+               name_of(box, n, who, sizeof(who)));
+    }
+    return edit_end(r);
+}
+
 int session_run(const session_cfg *cfg, const session_host *host)
 {
     run_ctx r; meta_box *box = cfg->box;
@@ -959,6 +1252,7 @@ int session_run(const session_cfg *cfg, const session_host *host)
     }
     session_settle_names(box, cfg->names);
     if (names_collide(&r)) goto out;        /* resumed with other media or other names */
+    if (cfg->edit) { rc = edit_loop(&r, bye, sizeof(bye)); goto out; }
 
     for (n = cfg->start > 0 ? cfg->start : 1; n <= box->media_expected; n++) {
         meta_disk *d = meta_disk_get(box, n);
@@ -992,7 +1286,7 @@ int session_run(const session_cfg *cfg, const session_host *host)
     }
     meta_now(box->closed);
     sb_clear(&r.msg);
-    if (save(&r) == 0 && bag_close(r.bagdir, box, &r.msg, &bad) == 0) {
+    if (save(&r) == 0 && bag_close(r.bagdir, box, NULL, &r.msg, &bad) == 0) {
         tell_aside(&r);
         host->event(host->ctx, EV_BOX_DONE, 0, all_done(box) ? BAG_COMPLETE : BAG_INCOMPLETE);
         rc = SESSION_CLOSED;
@@ -1010,6 +1304,17 @@ int session_run(const session_cfg *cfg, const session_host *host)
         rc = SESSION_OPEN;
     }
 out:
+    if (cfg->edit && r.committed) {
+        /* stopped by an error: what waits in editing/ is set aside */
+        char fin[1040]; strbuf log;
+        sb_init(&log);
+        boxtxn_recover(r.bagdir, tech_of, &r, fin, sizeof(fin), &log);
+        sb_free(&log);
+    }
+    meta_delete(r.committed);
+    free(r.old);
+    bag_digests_free(&r.known);
+    bag_digests_free(&r.bad);
     sb_free(&r.msg);
     return rc;
 }

@@ -70,6 +70,9 @@ def check(bag, profile_path=None):
     # .in-corso: the open marker of version 261017
     if os.path.exists(os.path.join(bag, ".in-progress")) or os.path.exists(os.path.join(bag, ".in-corso")):
         errors.append("the bag is still open (.in-progress)")
+    # editing/: an edit under way or interrupted, never left in a closed bag
+    if os.path.exists(os.path.join(bag, "editing")):
+        errors.append("an edit was left halfway (editing/)")
     for name in TAG_FILES:
         if not os.path.isfile(os.path.join(bag, name)):
             errors.append("%s is missing" % name)

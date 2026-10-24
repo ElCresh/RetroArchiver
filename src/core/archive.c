@@ -3,6 +3,7 @@
 #include <string.h>
 #include "archive.h"
 #include "bagit.h"
+#include "session.h"
 #include "fsu8.h"
 #include "sha256.h"
 
@@ -169,6 +170,13 @@ int arc_load(const char *bagdir, arc_box *b)
         if (!b->title[0]) CP(b->title, base_name(bagdir));
         CP(b->error, err.s ? err.s : "out of memory");
     }
+    if (m && b->state != ARC_BROKEN && strcmp(m->schema, META_SCHEMA)) b->old_format = 1;
+    u8_join(p, sizeof(p), bagdir, SESSION_ASIDE_DIR_OLD);
+    if (u8_isdir(p)) b->old_format = 1;
+    u8_join(p, sizeof(p), bagdir, BAG_OPEN_MARK_OLD);
+    if (u8_exists(p)) b->old_format = 1;
+    u8_join(p, sizeof(p), bagdir, BAG_EDIT_DIR);
+    b->editing = u8_isdir(p);
     meta_delete(m);
     sb_free(&err);
     return 1;
@@ -457,7 +465,8 @@ void arc_advice(const arc_box *b, char *out, size_t n)
 
 /* ---- digest recheck ---- */
 
-static void check_file(const char *bagdir, const char *rel, const char *want, arc_check *c)
+static void check_file(const char *bagdir, const char *rel, const char *want, arc_check *c,
+                       bag_digests *ok)
 {
     char p[1024], rp[512], hex[65], *q;
     str_copy(rp, sizeof(rp), rel);
@@ -466,12 +475,13 @@ static void check_file(const char *bagdir, const char *rel, const char *want, ar
     c->files++;
     if (sha256_path(p, hex, NULL)) c->lost++;
     else if (strcmp(hex, want)) c->changed++;
-    else return;
+    else { if (ok) bag_digests_add(ok, rel, hex); return; }
     if (!c->first[0]) str_copy(c->first, sizeof(c->first), rel);
 }
 
 /* "digest  path" per line; names collects the paths, if it is not NULL */
-static int check_manifest(const char *bagdir, const char *name, arc_check *c, strbuf *names)
+static int check_manifest(const char *bagdir, const char *name, arc_check *c, strbuf *names,
+                          bag_digests *ok)
 {
     char p[1024], line[1200], *sp, *e;
     FILE *f;
@@ -483,7 +493,7 @@ static int check_manifest(const char *bagdir, const char *name, arc_check *c, st
         if (!(sp = strchr(line, ' '))) continue;
         *sp++ = 0;
         while (*sp == ' ' || *sp == '*') sp++;
-        check_file(bagdir, sp, line, c);
+        check_file(bagdir, sp, line, c, ok);
         if (names) { sb_puts(names, sp); sb_puts(names, "\n"); }
     }
     fclose(f);
@@ -503,17 +513,17 @@ static void find_extra(void *ctx, const char *name)
     if (!x->c->first[0]) snprintf(x->c->first, sizeof(x->c->first), "data/%s", name);
 }
 
-static int verify_closed(const char *bagdir, arc_check *c, strbuf *err)
+static int verify_closed(const char *bagdir, arc_check *c, bag_digests *ok, strbuf *err)
 {
     char data[1024];
     strbuf names; extra_ctx x;
     sb_init(&names);
-    if (check_manifest(bagdir, "manifest-sha256.txt", c, &names)) {
+    if (check_manifest(bagdir, "manifest-sha256.txt", c, &names, ok)) {
         sb_printf(err, "manifest-sha256.txt is missing in %s: the package was not closed properly", bagdir);
         sb_free(&names);
         return -1;
     }
-    check_manifest(bagdir, "tagmanifest-sha256.txt", c, NULL);
+    check_manifest(bagdir, "tagmanifest-sha256.txt", c, NULL, NULL);
     u8_join(data, sizeof(data), bagdir, "data");
     x.names = names.s; x.c = c;
     u8_walk(data, find_extra, &x);
@@ -531,7 +541,7 @@ static int verify_open(const char *bagdir, arc_check *c, strbuf *err)
     for (i = 0; i < m->ndisk; i++)
         for (k = 0; k < m->disk[i].nreads; k++) {
             snprintf(rel, sizeof(rel), "data/%s", m->disk[i].reads[k].file);
-            check_file(bagdir, rel, m->disk[i].reads[k].sha256, c);
+            check_file(bagdir, rel, m->disk[i].reads[k].sha256, c, NULL);
         }
     meta_delete(m);
     return 0;
@@ -540,5 +550,11 @@ static int verify_open(const char *bagdir, arc_check *c, strbuf *err)
 int arc_verify(const char *bagdir, arc_check *c, strbuf *err)
 {
     memset(c, 0, sizeof(*c));
-    return bag_is_open(bagdir) ? verify_open(bagdir, c, err) : verify_closed(bagdir, c, err);
+    return bag_is_open(bagdir) ? verify_open(bagdir, c, err) : verify_closed(bagdir, c, NULL, err);
+}
+
+int arc_verify_digests(const char *bagdir, arc_check *c, bag_digests *ok, strbuf *err)
+{
+    memset(c, 0, sizeof(*c));
+    return verify_closed(bagdir, c, ok, err);
 }

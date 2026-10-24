@@ -15,6 +15,36 @@ static const char *expected =
     "  \"vuoto\": []\n"
     "}\n";
 
+/* a value read and written again keeps its values */
+static void write_val_roundtrip(void)
+{
+    char err[160]; json_writer w; jval *a, *b; const jval *arr, *e;
+    a = json_parse("{\"a\":[1,\"x\",true,null,{\"b\":2.5}]}", err, sizeof(err));
+    CHECK(a != NULL);
+    jw_init(&w);
+    json_write_val(&w, NULL, a);
+    b = json_parse(w.out.s, err, sizeof(err));
+    CHECK(b != NULL);
+    arr = b ? json_get(b, "a") : NULL;
+    e = arr ? arr->child : NULL;
+    CHECK(e && e->t == J_NUM && e->n == 1);
+    e = e ? e->next : NULL;
+    CHECK(e && e->t == J_STR && !strcmp(e->s, "x"));
+    e = e ? e->next : NULL;
+    CHECK(e && e->t == J_BOOL && e->b);
+    e = e ? e->next : NULL;
+    CHECK(e && e->t == J_NULL);
+    e = e ? e->next : NULL;
+    CHECK(e && e->t == J_OBJ && json_get(e, "b") && json_get(e, "b")->n == 2.5);
+    json_free(a); json_free(b); jw_free(&w);
+    jw_init(&w);
+    jw_begin_obj(&w, NULL);
+    jw_bool(&w, "t", 1);
+    jw_end_obj(&w);
+    CHECK(strstr(w.out.s, "\"t\": true") != NULL);
+    jw_free(&w);
+}
+
 void test_json(void)
 {
     json_writer w; jval *root; const jval *arr; char err[160];
@@ -102,4 +132,5 @@ void test_json(void)
         json_free(root);
         jw_free(&w2);
     }
+    write_val_roundtrip();
 }

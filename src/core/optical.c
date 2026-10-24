@@ -2142,13 +2142,30 @@ static int volume_label(const char *img, char *out, size_t n)
     return ok;
 }
 
+static int identity(const char *img, media_identity *out)
+{
+    dump *d = (dump *)calloc(1, sizeof(dump));
+    strbuf why; int rc = -1;
+    memset(out, 0, sizeof(*out));
+    sb_init(&why);
+    if (d && load_dump(img, d, &why) == 0 && d->n > 0) {
+        tracks_key(d, out->key);
+        str_copy(out->method, sizeof(out->method), d->data_read ? "dic-data" : "dic-cd");
+        str_copy(out->drive, sizeof(out->drive), d->drive);
+        rc = 0;
+    }
+    sb_free(&why);
+    free(d);
+    return rc;
+}
+
 const media_ops cd_media = {
     "cd", "", check, scan, read_cd, compare_cd, tech, NULL, NULL,
     "DiscImageCreator", "TOC", 1, phase_of, volume_label,
-    set_protection, protection_used
+    set_protection, protection_used, identity
 };
 
 const media_ops dvd_media = {
     "dvd", "", check, scan, read_dvd, compare_dvd, tech, NULL, NULL,
-    "DiscImageCreator", "TOC", 1, phase_of, volume_label
+    "DiscImageCreator", "TOC", 1, phase_of, volume_label, NULL, NULL, identity
 };
