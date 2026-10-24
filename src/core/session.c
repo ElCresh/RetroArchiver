@@ -12,6 +12,7 @@
 #include "session.h"
 #include "bagit.h"
 #include "fsu8.h"
+#include "messages.h"
 #include "runner.h"
 #include "sha256.h"
 #include "archive.h"
@@ -135,6 +136,7 @@ static void disk_base(const run_ctx *r, int kind, int num, char base[96])
     session_disk_base(r->cfg->box, r->cfg->names, kind, num, base, 96);
 }
 
+static void ev(run_ctx *r, event_kind k, int disk, const char *fmt, ...) RA_PRINTF(4, 5);
 static void ev(run_ctx *r, event_kind k, int disk, const char *fmt, ...)
 {
     strbuf b; va_list ap;
@@ -445,8 +447,7 @@ static int process(run_ctx *r, meta_disk *d)
             break;
         }
         if (record(r, d, file)) {
-            ev(r, EV_ERROR, d->n, "cannot read back %s, just written: "
-                                  "check the destination disk.", file);
+            ev(r, EV_ERROR, d->n, M_SES_READ_BACK, file);
             u8_rmtree(path);
             CP(d->status, ST_FAILED);
             break;
@@ -625,8 +626,7 @@ static void orphan(void *c, const char *name, int isdir)
             return;
         }
         r->stuck = 1;
-        ev(r, EV_ERROR, 0, "cannot move data/%s to %s: is it open in another program? "
-                           "close it and start again.", name, session_aside_dir(r->bagdir));
+        ev(r, EV_ERROR, 0, M_SES_MOVE_ASIDE, name, session_aside_dir(r->bagdir));
         return;
     }
     /* a folder is removed only if it is a half-done read of a CD or DVD
@@ -643,8 +643,7 @@ static void orphan(void *c, const char *name, int isdir)
         return;
     }
     r->stuck = 1;
-    ev(r, EV_ERROR, 0, "cannot remove data/%s: is it open in another program? "
-                       "close it and start again.", name);
+    ev(r, EV_ERROR, 0, M_SES_REMOVE, name);
 }
 
 /* the reads of disk n that no longer match their fingerprint are set
@@ -758,8 +757,7 @@ static int open_bag(run_ctx *r)
     if (r->cfg->edit) return open_edit(r);
     if (u8_exists(r->bagdir)) {
         if (!bag_is_open(r->bagdir)) {
-            ev(r, EV_ERROR, 0, "The box \"%s\" is already closed in %s: choose another title, "
-                               "or tell it apart with the edition.", box->title, r->bagdir);
+            ev(r, EV_ERROR, 0, M_SES_CLOSED, box->title, r->bagdir);
             return -1;
         }
         u8_join(mp, sizeof(mp), r->datadir, "metadata.json");
@@ -768,7 +766,7 @@ static int open_bag(run_ctx *r)
             ev(r, EV_LINE, 0, "metadata.json is missing in %s: starting this box over from scratch.",
                r->bagdir);
             if (u8_mkdir(r->datadir)) {
-                ev(r, EV_ERROR, 0, "Cannot create the folder %s: check the permissions.", r->datadir);
+                ev(r, EV_ERROR, 0, M_SES_MKDIR_PERM, r->datadir);
                 return -1;
             }
             meta_now(box->started);
@@ -787,8 +785,7 @@ static int open_bag(run_ctx *r)
             char had[400], asked[400];
             box_name(box->title, box->edition, had, sizeof(had));
             box_name(want, want_ed, asked, sizeof(asked));
-            ev(r, EV_ERROR, 0, "The folder %s holds the box %s, not %s: choose a different "
-                               "title, or resume that box with its exact title and edition.",
+            ev(r, EV_ERROR, 0, M_SES_HOLDS,
                r->bagdir, had, asked);
             return -1;
         }
@@ -823,8 +820,7 @@ static int names_collide(run_ctx *r)
         disk_base(r, kind, num, base[i]);
         for (k = 0; k < i; k++) {
             if (!same_name(base[i], base[k])) continue;
-            ev(r, EV_ERROR, 0, "The naming scheme \"%s\" gives the same name to different media: "
-                               "use {n}, {nn} or {nnn} and a shorter title.", tpl_for(r, kind));
+            ev(r, EV_ERROR, 0, M_SES_NAMES, tpl_for(r, kind));
             return 1;
         }
     }
@@ -963,7 +959,7 @@ static int edit_check(run_ctx *r)
     sb_clear(&r->msg);
     if (arc_verify_digests(r->bagdir, &c, &r->known, &r->msg)) { ev(r, EV_ERROR, 0, "%s", r->msg.s); return -1; }
     if (c.extra) {
-        ev(r, EV_ERROR, 0, "%s is not in the manifest of the box: move it out of data and try again.", c.first);
+        ev(r, EV_ERROR, 0, M_SES_NOT_IN_MANIFEST, c.first);
         return -1;
     }
     bag_manifest_load(r->bagdir, "manifest-sha256.txt", &man);
@@ -972,9 +968,9 @@ static int edit_check(run_ctx *r)
         bag_digests_add(&r->bad, man.rel[i], man.hex[i]);
         o = owner_of(r->committed, man.rel[i]);
         if (o && r->cfg->reread[o->n]) continue;
-        if (o) ev(r, EV_ERROR, 0, "%s does not match its fingerprint any more: read %s again too.", man.rel[i],
+        if (o) ev(r, EV_ERROR, 0, M_SES_REREAD_TOO, man.rel[i],
                   name_of(r->committed, o->n, who, sizeof(who)));
-        else ev(r, EV_ERROR, 0, "%s does not match its fingerprint any more: the box is damaged.", man.rel[i]);
+        else ev(r, EV_ERROR, 0, M_SES_DAMAGED, man.rel[i]);
         rc = -1;
     }
     bag_digests_free(&man);
@@ -989,12 +985,12 @@ static int open_edit(run_ctx *r)
     char want[sizeof(box->title)], want_ed[sizeof(box->edition)], mp[1040];
     int n;
     if (!u8_exists(r->bagdir)) {
-        ev(r, EV_ERROR, 0, "There is no box \"%s\" in %s: check the title and the edition.", box->title, r->bagdir);
+        ev(r, EV_ERROR, 0, M_SES_NO_BOX, box->title, r->bagdir);
         return -1;
     }
     sb_init(&why);
     if (!boxedit_editable(r->bagdir, &why)) {
-        ev(r, EV_ERROR, 0, "The box in %s cannot be edited: %s.", r->bagdir, why.s);
+        ev(r, EV_ERROR, 0, M_SES_NOT_EDITABLE, r->bagdir, why.s);
         sb_free(&why);
         return -1;
     }
@@ -1004,12 +1000,12 @@ static int open_edit(run_ctx *r)
     u8_join(mp, sizeof(mp), r->bagdir, "data");
     if (meta_load(box, mp, &r->msg)) { ev(r, EV_ERROR, 0, "%s", r->msg.s); return -1; }
     if (strcmp(box->title, want) || strcmp(box->edition, want_ed)) {
-        ev(r, EV_ERROR, 0, "The folder %s holds the box \"%s\", not \"%s\": use its exact title and edition.",
+        ev(r, EV_ERROR, 0, M_SES_EDIT_HOLDS,
            r->bagdir, box->title, want);
         return -1;
     }
     if (!(r->committed = meta_new()) || !(r->old = (meta_disk *)calloc(META_MAXDISK + 1, sizeof(meta_disk)))) {
-        ev(r, EV_ERROR, 0, "Out of memory.");
+        ev(r, EV_ERROR, 0, M_SES_NOMEM);
         return -1;
     }
     *r->committed = *box;
@@ -1024,7 +1020,7 @@ static int open_edit(run_ctx *r)
     u8_join(mp, sizeof(mp), r->bagdir, BAG_EDIT_DIR);
     u8_join(r->datadir, sizeof(r->datadir), mp, "data");
     if (u8_mkdirs(r->datadir)) {
-        ev(r, EV_ERROR, 0, "Cannot create the folder %s: check the permissions.", r->datadir);
+        ev(r, EV_ERROR, 0, M_SES_MKDIR_PERM, r->datadir);
         return -1;
     }
     ev(r, EV_LINE, 0, "Editing the box \"%s\" in %s: the new reads wait in %s until they are kept.",
@@ -1128,7 +1124,7 @@ static int edit_finish_disk(run_ctx *r, meta_disk *d, int cmd)
     }
     sb_clear(&r->msg);
     if (boxedit_commit_disk(r->bagdir, r->committed, &e, &r->known, &r->bad, tech_of, r, &r->msg)) {
-        ev(r, EV_ERROR, d->n, "%s. %s stays as it was.", r->msg.s, who);
+        ev(r, EV_ERROR, d->n, M_SES_STAYS_ERR, r->msg.s, who);
         edit_keep_old(r, d, ".unused");
     } else if (e.keep == KEEP_NEW) {
         csv_row(r, d);
@@ -1304,7 +1300,7 @@ int session_run(const session_cfg *cfg, const session_host *host)
     sb_init(&r.msg);
     runner_clear();
     if (u8_mkdirs(cfg->outroot)) {
-        ev(&r, EV_ERROR, 0, "Cannot create the folder %s: check the path.", cfg->outroot);
+        ev(&r, EV_ERROR, 0, M_SES_MKDIR_PATH, cfg->outroot);
         goto out;
     }
     session_bagdir(r.bagdir, sizeof(r.bagdir), cfg->outroot, box->title, box->edition);
@@ -1325,7 +1321,7 @@ int session_run(const session_cfg *cfg, const session_host *host)
 
     for (n = cfg->start > 0 ? cfg->start : 1; n <= box->media_expected; n++) {
         meta_disk *d = meta_disk_get(box, n);
-        if (!d) { ev(&r, EV_ERROR, n, "Too many media: at most %d per box.", META_MAXDISK); break; }
+        if (!d) { ev(&r, EV_ERROR, n, M_SES_TOO_MANY, META_MAXDISK); break; }
         if (meta_disk_done(d)) continue;
         do act = ask_and_do(&r, d, &cmd, bye, sizeof(bye));
         while (act == DISK_NEXT && retry_wanted(&r, d, cmd));
@@ -1368,8 +1364,7 @@ int session_run(const session_cfg *cfg, const session_host *host)
         if (bad > 0) {
             set_aside(&r, bad);
             char who[32];
-            ev(&r, EV_ERROR, bad, "%s. Start again with the same title: %s will be "
-                                  "asked for again.", r.msg.s, name_of(box, bad, who, sizeof(who)));
+            ev(&r, EV_ERROR, bad, M_SES_CLOSE_FAILED, r.msg.s, name_of(box, bad, who, sizeof(who)));
         } else if (r.msg.len) {
             ev(&r, EV_ERROR, 0, "%s", r.msg.s);
         }

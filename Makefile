@@ -20,8 +20,8 @@ CORE   = $(wildcard src/core/*.c)
 CORE_H = $(wildcard src/core/*.h)
 UNIT   = $(wildcard tests/unit/*.c)
 # the window's languages: portable C, tested with the core
-LANG_C = src/gui/lang.c
-LANG_H = src/gui/lang.h src/gui/lang_en.h
+LANG_C = src/gui/lang.c src/gui/arc_text.c
+LANG_H = src/gui/lang.h src/gui/lang_en.h src/gui/arc_text.h src/core/messages.h src/core/messages_list.h
 LANGS  = $(wildcard lang/*.lng)
 
 BIN = dskdiff.exe dskrun.exe RetroArchiver.exe
@@ -95,7 +95,7 @@ build/fake_dic.exe: tests/fake_dic.c | build
 
 test: native
 	rm -rf tests/tmp_unit tests/tmp_session
-	cd tests && python3 -I gen_edsk.py && python3 -I gen_dic.py && ../build/unit && ./run_tests.sh && ./golden.sh && python3 -I run_session_tests.py && python3 -I test_third_party.py
+	cd tests && python3 -I gen_edsk.py && python3 -I gen_dic.py && ../build/unit && ./run_tests.sh && ./golden.sh && python3 -I run_session_tests.py && python3 -I test_third_party.py && sh check_core_texts.sh
 	@# the window settings and the hidden console are Windows only:
 	@# tested here if WSL can run .exe files, otherwise on the VM (make xp-tests)
 	@if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ]; then \

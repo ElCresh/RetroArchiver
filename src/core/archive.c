@@ -5,6 +5,7 @@
 #include "bagit.h"
 #include "session.h"
 #include "fsu8.h"
+#include "messages.h"
 #include "sha256.h"
 
 #define CP(dst, src) str_copy(dst, sizeof(dst), src)
@@ -168,7 +169,7 @@ int arc_load(const char *bagdir, arc_box *b)
         b->state = ARC_BROKEN;
         if (has_info) { from_info(b, &bi); CP(b->date, bi.date); }
         if (!b->title[0]) CP(b->title, base_name(bagdir));
-        CP(b->error, err.s ? err.s : "out of memory");
+        CP(b->error, err.s ? err.s : M_EDIT_NOMEM);
     }
     if (m && b->state != ARC_BROKEN && strcmp(m->schema, META_SCHEMA)) b->old_format = 1;
     u8_join(p, sizeof(p), bagdir, SESSION_ASIDE_DIR_OLD);
@@ -519,7 +520,7 @@ static int verify_closed(const char *bagdir, arc_check *c, bag_digests *ok, strb
     strbuf names; extra_ctx x;
     sb_init(&names);
     if (check_manifest(bagdir, "manifest-sha256.txt", c, &names, ok)) {
-        sb_printf(err, "manifest-sha256.txt is missing in %s: the package was not closed properly", bagdir);
+        sb_printf(err, M_ARC_NO_MANIFEST, bagdir);
         sb_free(&names);
         return -1;
     }

@@ -35,6 +35,7 @@
 #include "gui/winutil.h"
 #include "gui/dialogs.h"
 #include "gui/resource.h"
+#include "gui/arc_text.h"
 
 #define WM_APP_EVENT (WM_APP + 1)   /* there is an event in g_qhead   */
 #define WM_APP_WAIT  (WM_APP + 2)   /* the requested medium is in g_turn_in */
@@ -287,6 +288,15 @@ static void phase_text(const wchar_t *p, wchar_t *out, int n)
 
 /* the EDIT accepts up to LOG_LIMIT characters; before reaching it the
  * oldest third is removed, cutting at a newline, so it never gets stuck */
+/* a text the core wrote in English (an error, why a CD was not read), in
+ * the window's language; the log keeps the English */
+static void core_w(const char *en, wchar_t *out, int n, int cap)
+{
+    lang_core_text(en ? en : "", out, (size_t)n);
+    /* cap: it starts a paragraph (a banner, a message box) */
+    if (cap && out[0]) out[0] = (wchar_t)towupper(out[0]);
+}
+
 static void log_trim(void)
 {
     int len = GetWindowTextLengthW(g_log), cut;
@@ -3182,7 +3192,7 @@ static void resume(void)
         sb_init(&err);
         if (meta_load(l.tmp, data, &err) == 0) fill_from(l.tmp);
         else {
-            to_w(err.s ? err.s : "", w, 700);
+            core_w(err.s, w, 700, 1);
             MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
         }
         sb_free(&err);
@@ -3603,7 +3613,7 @@ static void arc_text(int row, int col, const wchar_t *t)
 static void arc_row(int row, int idx)
 {
     const arc_box *b = &g_arc.box[idx];
-    LVITEMW it; wchar_t w[300]; char o[200];
+    LVITEMW it; wchar_t w[300];
     memset(&it, 0, sizeof(it));
     it.mask = LVIF_TEXT | LVIF_IMAGE | LVIF_PARAM;
     it.iItem = row;
@@ -3614,10 +3624,8 @@ static void arc_row(int row, int idx)
     SendMessageW(g_alist, LVM_INSERTITEMW, 0, (LPARAM)&it);
     to_w(b->platform, w, 300); arc_text(row, 1, w);
     to_w(b->year, w, 300);     arc_text(row, 2, w);
-    arc_media(b, o, sizeof(o));                     /* "3 / 3 floppy, 0 / 1 CD" */
-    to_w(o, w, 300);           arc_text(row, 3, w);
-    arc_outcome(b, o, sizeof(o));
-    to_w(o, w, 300);           arc_text(row, 4, w);
+    arc_media_w(b, w, 300);    arc_text(row, 3, w);     /* "3 / 3 floppy, 0 / 1 CD" */
+    arc_outcome_w(b, w, 300);  arc_text(row, 4, w);
     fmt_date(b->date, w, 300); arc_text(row, 5, w);
 }
 
@@ -3878,7 +3886,6 @@ static void paint_detail(HDC dc, int w, int h)
 {
     const arc_box *b;
     wchar_t t[1200], n[600];
-    char adv[1000];
     RECT r = { 0, 0, w, h };
     int y = 0, k, th;
     if (g_pick < 0 || g_pick >= g_arc.n) {
@@ -3904,8 +3911,7 @@ static void paint_detail(HDC dc, int w, int h)
     y += 20;
 
     /* the state and what to do, in a panel of its colour */
-    arc_advice(b, adv, sizeof(adv));
-    to_w(adv, t, 1200);
+    arc_advice_w(b, t, 1200);
     if (b->old_format && b->state != ARC_OPEN && wcslen(t) + 300 < 1200) {
         wcscat(t, L"\n");
         wcscat(t, tr(T_EDIT_OLD_FORMAT));
@@ -3997,7 +4003,7 @@ static void resume_pick(void)
         fill_from(m);
         start();
     } else {
-        to_w(err.s ? err.s : "", w, 700);
+        core_w(err.s, w, 700, 1);
         MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
     }
     sb_free(&err);
@@ -4073,7 +4079,7 @@ static void on_verify(vf_result *r)
     add_count(what, 300, r->c.lost, T_VF_LOST_ONE, T_VF_LOST_MANY);
     add_count(what, 300, r->c.extra, T_VF_EXTRA_ONE, T_VF_EXTRA_MANY);
     if (r->rc) {
-        to_w(r->err, what, 300);
+        core_w(r->err, what, 300, 0);
         _snwprintf(w, 1200, tr(T_VF_CANNOT), title, what);
         icon = MB_ICONEXCLAMATION;
     } else if (r->open && !r->c.files) {
@@ -4278,7 +4284,7 @@ static void edit_start(const char *bagdir, const char *reread, const char *reaso
         start();
         if (!g_running) { g_edit.on = 0; archive_show(bagdir); }
     } else {
-        to_w(err.s ? err.s : "", w, 700);
+        core_w(err.s, w, 700, 1);
         MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
     }
     sb_free(&err);
@@ -4290,7 +4296,7 @@ static void on_edit_saved(es_result *r)
     wchar_t w[900], e[600], t[300];
     g_saving = 0;
     if (r->rc) {
-        to_w(r->err, e, 600);
+        core_w(r->err, e, 600, 1);
         _snwprintf(w, 900, tr(T_EDIT_FAILED), e); w[899] = 0;
         MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
         archive_show(r->dir);
@@ -4415,7 +4421,7 @@ static void edit_pick(void)
     sb_init(&err);
     if (!boxedit_editable(dir, &err)) {
         if (g_arc.box[g_pick].old_format) wcsncpy(e, tr(T_EDIT_OLD_FORMAT), 600);
-        else to_w(err.s ? err.s : "", e, 600);
+        else core_w(err.s, e, 600, 1);
         e[599] = 0;
         _snwprintf(w, 900, tr(T_EDIT_CANNOT), e); w[899] = 0;
         MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONINFORMATION);
@@ -4427,7 +4433,7 @@ static void edit_pick(void)
     memset(&r, 0, sizeof(r));
     r.box = meta_new();
     if (!m || !r.box || meta_load(m, data, &err)) {
-        to_w(err.s ? err.s : "", e, 600);
+        core_w(err.s, e, 600, 1);
         MessageBoxW(g_wnd, e, L"RetroArchiver", MB_ICONEXCLAMATION);
         meta_delete(m); meta_delete(r.box); sb_free(&err);
         return;
@@ -4629,6 +4635,20 @@ static int starts(const char *s, const char *head)
 
 /* two core notices change the banner and the expected phases; the text is
  * session.c's and optical.c's, in English: if it changes only the colour is lost */
+/* one of the reasons optical.c gives for a CD it did not read */
+static int cd_reason(const char *s)
+{
+    static const int ids[] = {
+        T_M_OPT_WRONG_DISC, T_M_OPT_STOPPED, T_M_OPT_DENIED, T_M_OPT_INCOMPLETE, T_M_OPT_FIRMWARE,
+        T_M_OPT_OFFSET, T_M_OPT_RESETS_SF, T_M_OPT_WITH_RESETS, T_M_OPT_CANNOT_READ, T_M_OPT_MKDIR,
+        T_M_OPT_C2_SLOWER, T_M_OPT_C2_LOWEST
+    };
+    int id = lang_core_match(s);
+    size_t i;
+    for (i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) if (ids[i] == id) return 1;
+    return 0;
+}
+
 static void notice(const char *s)
 {
     /* a CD not found in redump: second read and comparison */
@@ -4644,12 +4664,9 @@ static void notice(const char *s)
         g_fragile = 1;
         if (g_pcur >= 0) { pills_future(); repaint(g_pills); }
         work_banner();
-    } else if (starts(s, "The drive does not hold a ") || starts(s, "DiscImageCreator stopped") ||
-               starts(s, "DiscImageCreator cannot open") || starts(s, "DiscImageCreator finished") ||
-               starts(s, "DiscImageCreator does not read with this drive") ||
-               starts(s, "The drive's read offset is not set") || starts(s, "The drive was reset ")) {
+    } else if (cd_reason(s)) {
         /* why a CD read failed (optical.c): it goes into the Riprova banner */
-        to_w(s, g_why, 600);
+        core_w(s, g_why, 600, 1);
     }
 }
 
@@ -4768,10 +4785,11 @@ static void on_event(gui_event *e)
         sbar_update();
         break;
     case EV_ERROR:
-        wcsncpy(g_last_err, t, 599); g_last_err[599] = 0;
+        /* the log stays as the core wrote it; the banner and the end say it in the window's language */
+        core_w(s, g_last_err, 600, 1);
         _snwprintf(w, 1100, tr(T_LOG_ERROR), t); w[1099] = 0;
         log_append(w);
-        if (g_view == V_WORK) banner(B_RED, L"!", 0, tr(T_BANNER_ERROR), t);
+        if (g_view == V_WORK) banner(B_RED, L"!", 0, tr(T_BANNER_ERROR), g_last_err);
         sound(SND_ERROR);
         g_errbeep = 1;
         break;

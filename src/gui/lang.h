@@ -26,11 +26,18 @@
 #include <stddef.h>
 #include <wchar.h>
 
-/* the ids: T_BTN_READ... from lang_en.h */
+/* the ids: T_BTN_READ... from lang_en.h, then T_M_... for the core's
+ * messages (core/messages_list.h), whose English is their format with
+ * every conversion made %ls */
 enum {
 #define T(id, key, text) id,
 #include "gui/lang_en.h"
 #undef T
+    T_GUI_COUNT,
+    T_CORE_BEFORE_ = T_GUI_COUNT - 1,
+#define MSG(m, key, kinds) T_##m,
+#include "core/messages_list.h"
+#undef MSG
     T_COUNT
 };
 
@@ -66,6 +73,16 @@ int lang_load_file(const char *path, lang_report *rep);
 /* the value of a key in a file, without loading it: the language's own
  * name (language.name) for the menu. 1 found */
 int lang_peek_file(const char *path, const char *key, wchar_t *out, size_t n);
+
+/* A text the core wrote in English (an error, why a CD was not read): the
+ * id of the message of core/messages.h it comes from, the most specific
+ * one if more match; -1 if it is none. The first letter's case does not
+ * count (the session makes it a capital) */
+int lang_core_match(const char *text);
+/* the same text in the current language, its arguments that are messages
+ * themselves translated too; 1 done, 0 not a message (out gets the text as
+ * it is: a fallback that should never be needed) */
+int lang_core_text(const char *text, wchar_t *out, size_t n);
 
 /* 1 if fmt has the same printf conversions as ref, in the same order */
 int lang_same_format(const wchar_t *fmt, const wchar_t *ref);

@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include "bagit.h"
 #include "fsu8.h"
+#include "messages.h"
 #include "sha256.h"
 
 /* SAMdisk 3.8.12 receives its arguments in the ANSI code page (cp1252 on
@@ -99,16 +100,16 @@ static int write_text(const char *path, const char *text)
 int bag_create(const char *bagdir, strbuf *err)
 {
     char p[1024];
-    if (u8_mkdir(bagdir)) { sb_printf(err, "cannot create the folder %s", bagdir); return -1; }
+    if (u8_mkdir(bagdir)) { sb_printf(err, M_BAG_MKDIR, bagdir); return -1; }
     u8_join(p, sizeof(p), bagdir, "data");
-    if (u8_mkdir(p)) { sb_printf(err, "cannot create the folder %s", p); return -1; }
+    if (u8_mkdir(p)) { sb_printf(err, M_BAG_MKDIR, p); return -1; }
     u8_join(p, sizeof(p), bagdir, "bagit.txt");
     if (write_text(p, "BagIt-Version: 1.0\nTag-File-Character-Encoding: UTF-8\n")) {
-        sb_printf(err, "cannot write %s", p); return -1;
+        sb_printf(err, M_BAG_WRITE, p); return -1;
     }
     u8_join(p, sizeof(p), bagdir, BAG_OPEN_MARK);
     if (write_text(p, "Box being archived: the manifests are not written yet.\n")) {
-        sb_printf(err, "cannot write %s", p); return -1;
+        sb_printf(err, M_BAG_WRITE, p); return -1;
     }
     return 0;
 }
@@ -238,8 +239,8 @@ static int tag_file(const char *bagdir, const char *name, const char *text,
 {
     char p[1024], hex[65];
     u8_join(p, sizeof(p), bagdir, name);
-    if (text && write_text(p, text)) { sb_printf(err, "cannot write %s", p); return -1; }
-    if (sha256_file(p, hex, NULL)) { sb_printf(err, "cannot read %s", p); return -1; }
+    if (text && write_text(p, text)) { sb_printf(err, M_BAG_WRITE, p); return -1; }
+    if (sha256_file(p, hex, NULL)) { sb_printf(err, M_BAG_READ, p); return -1; }
     sb_printf(tag, "%s  %s\n", hex, name);
     return 0;
 }
@@ -256,12 +257,11 @@ int bag_close(const char *bagdir, const meta_box *box, const bag_digests *known,
 
     if (bad_disk) *bad_disk = 0;
     if (!box->title[0] || !box->platform[0] || box->media_expected < 1) {
-        sb_printf(err, "the title, the platform or the composition is missing: "
-                       "fill them in before closing the box");
+        sb_printf(err, M_BAG_NO_DATA);
         return -1;
     }
     u8_join(data, sizeof(data), bagdir, "data");
-    if (u8_walk(data, collect, &l)) { sb_printf(err, "cannot read %s", data); return -1; }
+    if (u8_walk(data, collect, &l)) { sb_printf(err, M_BAG_READ, data); return -1; }
     if (l.n) qsort(l.names, (size_t)l.n, sizeof(char *), by_name);
     hashes = (char **)calloc((size_t)(l.n ? l.n : 1), sizeof(char *));
     sb_init(&man); sb_init(&info); sb_init(&tag);
@@ -272,7 +272,7 @@ int bag_close(const char *bagdir, const meta_box *box, const bag_digests *known,
         snprintf(rel, sizeof(rel), "data/%s", l.names[i]);
         if ((kn = bag_digests_find(known, rel)) >= 0 && (bytes = u8_filesize(p)) >= 0)
             memcpy(hex, known->hex[kn], 65);
-        else if (sha256_file(p, hex, &bytes)) { sb_printf(err, "cannot read %s", p); goto out; }
+        else if (sha256_file(p, hex, &bytes)) { sb_printf(err, M_BAG_READ, p); goto out; }
         hashes[i] = (char *)malloc(65);
         memcpy(hashes[i], hex, 65);
         total += bytes;
@@ -289,14 +289,13 @@ int bag_close(const char *bagdir, const meta_box *box, const bag_digests *known,
             else if (tree_hash(&l, hashes, d->reads[k].file, hex)) got = hex;
             if (!got) {
                 meta_disk_name(d->kind, d->num, name, sizeof(name));
-                sb_printf(err, "data/%s is missing: read %s again", d->reads[k].file, name);
+                sb_printf(err, M_BAG_MISSING, d->reads[k].file, name);
                 if (bad_disk) *bad_disk = d->n;
                 goto out;
             }
             if (strcmp(got, d->reads[k].sha256)) {
                 meta_disk_name(d->kind, d->num, name, sizeof(name));
-                sb_printf(err, "data/%s changed after the read (different fingerprint): "
-                               "read %s again", d->reads[k].file, name);
+                sb_printf(err, M_BAG_CHANGED, d->reads[k].file, name);
                 if (bad_disk) *bad_disk = d->n;
                 goto out;
             }
@@ -345,16 +344,16 @@ int bag_close(const char *bagdir, const meta_box *box, const bag_digests *known,
         tag_file(bagdir, "bag-info.txt", info.s, &tag, err) ||
         tag_file(bagdir, "manifest-sha256.txt", man.s, &tag, err)) goto out;
     u8_join(p, sizeof(p), bagdir, "tagmanifest-sha256.txt");
-    if (write_text(p, tag.s)) { sb_printf(err, "cannot write %s", p); goto out; }
+    if (write_text(p, tag.s)) { sb_printf(err, M_BAG_WRITE, p); goto out; }
     /* the marker, new or old; neither left means closed */
     u8_join(p, sizeof(p), bagdir, BAG_OPEN_MARK);
     if (u8_exists(p) && u8_remove(p)) {
-        sb_printf(err, "cannot remove %s from %s: check the permissions", BAG_OPEN_MARK, bagdir);
+        sb_printf(err, M_BAG_REMOVE_MARK, BAG_OPEN_MARK, bagdir);
         goto out;
     }
     u8_join(p, sizeof(p), bagdir, BAG_OPEN_MARK_OLD);
     if (u8_exists(p) && u8_remove(p)) {
-        sb_printf(err, "cannot remove %s from %s: check the permissions", BAG_OPEN_MARK_OLD, bagdir);
+        sb_printf(err, M_BAG_REMOVE_MARK, BAG_OPEN_MARK_OLD, bagdir);
         goto out;
     }
     rc = 0;

@@ -3,6 +3,7 @@
  * conversions as the English text, en.lng equal to the compiled one. */
 #include "unit.h"
 #include "gui/lang.h"
+#include "core/messages.h"
 #include <stdlib.h>
 #include <wchar.h>
 
@@ -149,8 +150,97 @@ static void test_files(void)
     CHECK(wsame(tr(T_LANG_NAME), L"English"));      /* peeking loads nothing */
 }
 
+/* ---- the core's messages ---- */
+
+static const char *const core_fmts[] = {
+#define MSG(m, key, kinds) m,
+#include "core/messages_list.h"
+#undef MSG
+};
+
+/* fmt with sample arguments: strings "a<k>z" (k from 1), numbers 7<k> */
+static void sample(const char *fmt, char *out, size_t n)
+{
+    size_t o = 0; int k = 0; const char *p = fmt;
+    while (*p && o + 16 < n) {
+        if (*p != '%') { out[o++] = *p++; continue; }
+        p++;
+        if (*p == '%') { out[o++] = '%'; p++; continue; }
+        while (*p && !strchr("sdiuxc", *p)) p++;
+        k++;
+        if (*p == 's') o += (size_t)snprintf(out + o, n - o, "a%dz", k);
+        else o += (size_t)snprintf(out + o, n - o, "7%d", k);
+        if (*p) p++;
+    }
+    out[o] = 0;
+}
+
+static void test_core(void)
+{
+    char text[1200]; wchar_t w[1200], expect[1200];
+    int i, n = (int)(sizeof(core_fmts) / sizeof(core_fmts[0])), bad = 0;
+    CHECK(T_COUNT - T_GUI_COUNT == n);
+    lang_reset();
+    /* every message, formatted and recognized again: the same message */
+    for (i = 0; i < n; i++) {
+        sample(core_fmts[i], text, sizeof(text));
+        if (lang_core_match(text) != T_GUI_COUNT + i) {
+            bad++;
+            printf("  core message %s not recognized as itself: %s\n", lang_key(T_GUI_COUNT + i), text);
+        }
+    }
+    CHECK(bad == 0);
+    /* in English the text comes back as it was */
+    sample(M_SES_CLOSED, text, sizeof(text));
+    CHECK(lang_core_text(text, w, 1200) == 1);
+    mbstowcs(expect, text, 1200);
+    CHECK(wsame(w, expect));
+    /* a title with ": " and ". " inside does not break it */
+    CHECK(lang_core_match("The box \"A: b. c\" is already closed in X: y: choose another title, "
+                          "or tell it apart with the edition.") == T_M_SES_CLOSED);
+    /* the first letter made a capital by the session still matches */
+    CHECK(lang_core_match("Cannot read back x.dsk, just written: check the destination disk.") == T_M_SES_READ_BACK);
+    /* the most specific format wins over a shorter one that also matches */
+    CHECK(lang_core_match("cannot write /a/b: is the destination disk full or write-protected?") == T_M_META_WRITE);
+    /* a reason with ": " inside "Cannot read the CD: %s.": the reason is the message */
+    lang_load_file("../lang/it.lng", NULL);
+    CHECK(lang_core_text("Cannot read the CD: C:/RA has 10 MB free and the read needs about 800: free some "
+                         "space or choose another archive folder.", w, 1200) == 1);
+    CHECK(wsame(w, L"Non riesco a leggere il CD: C:/RA ha 10 MB liberi e la lettura ne chiede circa 800: "
+                   L"libera dello spazio o scegli un'altra cartella dell'archivio."));
+    /* a title is the user's: never translated, even if it looks like a message */
+    CHECK(lang_core_text("The box \"Model Railway\" is already closed in C:/RA/Model Railway: choose another "
+                         "title, or tell it apart with the edition.", w, 1200) == 1);
+    CHECK(wcsstr(w, L"“Model Railway”") != NULL);
+    /* the parse that explains more of the text wins: a message inside a message */
+    CHECK(lang_core_match("the box cannot be read: X cannot be read (Y): if the box is damaged, move its "
+                          "folder away and start over") == T_M_EDIT_UNREADABLE);
+    lang_reset();
+    /* only the conversions the matcher knows, in the core's formats */
+    for (i = 0; i < n; i++) {
+        const char *p = core_fmts[i];
+        while ((p = strchr(p, '%')) != NULL) {
+            p++;
+            if (*p == '%') { p++; continue; }
+            while (*p && strchr("0123456789.l", *p)) p++;
+            if (*p != 's' && *p != 'd') { printf("  %s: conversion %%%c not allowed\n", lang_key(T_GUI_COUNT + i), *p); bad++; }
+        }
+    }
+    CHECK(bad == 0);
+    /* not a message: copied as it is, 0 */
+    CHECK(lang_core_text("Something else entirely", w, 1200) == 0 && wsame(w, L"Something else entirely"));
+    /* translated, with the arguments that are messages translated too */
+    load_str("core.ses.stays.err=%ls. %ls resta com'era.\n"
+             "core.bag.missing=manca data/%ls: rileggi %ls\n"
+             "core.medium.floppy=dischetto %ls\n");
+    CHECK(lang_core_text("data/x.dsk is missing: read floppy 2 again. floppy 2 stays as it was.", w, 1200) == 1);
+    CHECK(wsame(w, L"manca data/x.dsk: rileggi dischetto 2. dischetto 2 resta com'era."));
+    lang_reset();
+}
+
 void test_lang(void)
 {
+    test_core();
     test_table();
     test_formats();
     test_parse();

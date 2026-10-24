@@ -52,6 +52,7 @@
 #include "media.h"
 #include "meta.h"
 #include "fsu8.h"
+#include "messages.h"
 #include "iso9660.h"
 #include "romhash.h"
 #include "sha256.h"
@@ -385,13 +386,9 @@ static int no_tool(int code, runner_line_fn on_line, void *ctx)
 {
     char line[900];
     if (dll_missing(code))
-        snprintf(line, sizeof(line), "%s does not start: the Visual C++ 2015-2019 x86 runtimes are missing "
-                                     "(VCRUNTIME140.dll). On Windows XP install version 14.27 "
-                                     "of the Visual C++ Redistributable.", dic);
+        snprintf(line, sizeof(line), M_OPT_NODLL, dic);
     else
-        snprintf(line, sizeof(line), "Cannot find %s: put it in the same folder as the program "
-                                     "or in the PATH, or give the full path of "
-                                     "DiscImageCreator.exe.", dic);
+        snprintf(line, sizeof(line), M_OPT_NOTOOL, dic);
     if (on_line) on_line(ctx, line);
     return MEDIA_NOTOOL;
 }
@@ -784,8 +781,7 @@ static long long need_bytes(int dvd)
 int optical_fs_ok(const char *fsname, long long biggest, strbuf *why)
 {
     if (fsname && !strncmp(fsname, "FAT", 3) && biggest > FAT_MAX) {
-        sb_printf(why, "the folder is on a %s drive, which cannot hold files over 4 GB, and the image of "
-                       "this disc will be %lld MB: choose a folder on an NTFS drive", fsname, biggest / MB);
+        sb_printf(why, M_OPT_FAT32, fsname, biggest / MB);
         return -1;
     }
     return 0;
@@ -849,9 +845,7 @@ int optical_dic_path(const char *dir, const char *file, char *out, size_t n, str
         free(wf);
     }
     free(w);
-    sb_printf(why, "the name of folder %s has characters that DiscImageCreator (an ANSI program) cannot "
-                   "read, and it has no 8.3 short name: choose an archive folder whose name has "
-                   "no foreign letters", dir);
+    sb_printf(why, M_OPT_ANSI, dir);
     return -1;
 }
 
@@ -922,8 +916,7 @@ int optical_room(const char *dir, long long need, long long biggest, strbuf *why
     fs_name(dir, fs, sizeof(fs));
     if (optical_fs_ok(fs, biggest, why)) return -1;
     if (avail >= 0 && avail < need) {
-        sb_printf(why, "%s has %lld MB free and the read needs about %lld: free some space or "
-                       "choose another archive folder", dir, avail / MB, need / MB);
+        sb_printf(why, M_OPT_SPACE, dir, avail / MB, need / MB);
         return -1;
     }
     return 0;
@@ -933,10 +926,9 @@ int optical_room(const char *dir, long long need, long long biggest, strbuf *why
 static void stop_message(char *p, size_t n, int code, const tee *t, const char *dir)
 {
     char last[320]; long long avail = optical_free_bytes(dir);
-    if (t->last[0]) snprintf(last, sizeof(last), " Last line: \"%.280s\".", t->last);
+    if (t->last[0]) snprintf(last, sizeof(last), M_OPT_LAST_LINE, t->last);
     else last[0] = 0;
-    snprintf(p, n, "DiscImageCreator stopped with error %d.%s Check that the disc is in "
-                   "drive %s: and clean, and the space in folder %s (%lld MB free), then try again.",
+    snprintf(p, n, M_OPT_STOPPED,
              code, last, drive, dir, avail >= 0 ? avail / MB : -1LL);
 }
 
@@ -1100,11 +1092,9 @@ static void offset_message(char *p, size_t n, const char *dir, const char *base)
 {
     char model[120], what[160];
     drive_model(dir, base, 0, model, sizeof(model));
-    if (model[0]) snprintf(what, sizeof(what), "model %s", model);
-    else str_copy(what, sizeof(what), "this drive's model (see the _drive.txt log of the read)");
-    snprintf(p, n, "The drive's read offset is not set, and DiscImageCreator does not know this drive: "
-                   "look it up for %s in the AccurateRip or redump list and set [Optical] DriveOffset "
-                   "in RetroArchiver.ini (dskrun: --drive-offset), then read it again.", what);
+    if (model[0]) snprintf(what, sizeof(what), M_OPT_MODEL, model);
+    else str_copy(what, sizeof(what), M_OPT_MODEL_UNKNOWN);
+    snprintf(p, n, M_OPT_OFFSET, what);
 }
 
 /* with the offset set, DIC's question gets it from a file in the read's
@@ -1128,40 +1118,31 @@ static void fail_text(char *p, size_t n, int dvd, int code, const tee *t, const 
                       const char *base, const char *missing)
 {
     if (t->stopped)
-        snprintf(p, n, "The drive was reset %d times while DiscImageCreator looked for copy "
-                       "protections (/sf): stopped it, it would go on like this for an hour. Read the "
-                       "CD again without the protection scan (Copy protection: Off).", t->unit_att);
+        snprintf(p, n, M_OPT_RESETS_SF, t->unit_att);
     else if (t->ask_offset && !offset[0])
         offset_message(p, n, out_dir, base);
     else if (t->wrong)
-        snprintf(p, n, "The drive does not hold a %s: DiscImageCreator says the disc is of "
-                       "another type. Check the disc, or the contents of the box.",
+        snprintf(p, n, M_OPT_WRONG_DISC,
                  dvd ? "DVD" : "CD");
     else if (t->denied)
-        snprintf(p, n, "DiscImageCreator cannot open drive %s: (access denied): run the program "
-                       "as an administrator.", drive);
+        snprintf(p, n, M_OPT_DENIED, drive);
     else if (t->c2_left > 0 && !dvd && slowed_to)
-        snprintf(p, n, "DiscImageCreator stopped with %d sectors still unreadable after %s rereads (C2 "
-                       "errors) at %sx: the disc is scratched or dirty there. Retry reads it again at %dx; "
-                       "washing it first helps (water and a drop of soap, dried from the centre outwards).",
+        snprintf(p, n, M_OPT_C2_SLOWER,
                  t->c2_left, C2_REREAD, cur_speed, slowed_to);
     else if (t->c2_left > 0 && !dvd)
-        snprintf(p, n, "DiscImageCreator stopped with %d sectors still unreadable after %s rereads (C2 "
-                       "errors) at %sx, the lowest speed RetroArchiver uses: the disc is scratched or "
-                       "dirty there. Wash it with water and a drop of soap, dry it from the centre "
-                       "outwards and try again, or read it with another drive.",
+        snprintf(p, n, M_OPT_C2_LOWEST,
                  t->c2_left, C2_REREAD, cur_speed);
     else if (t->firmware)
-        snprintf(p, n, "DiscImageCreator does not read with this drive until its firmware is the "
-                       "latest one: update the drive's firmware (DiscImageCreator's log says where "
-                       "to find it), restart the PC and read the %s again.", dvd ? "DVD" : "CD");
+        snprintf(p, n, M_OPT_FIRMWARE, dvd ? "DVD" : "CD");
     else if (code != 0)
         stop_message(p, n, code, t, out_dir);
     else
-        snprintf(p, n, "DiscImageCreator finished but %.200s is missing: the read is incomplete.", missing);
-    if (t->resets && !t->sf && strlen(p) + 200 < n)
-        strcat(p, " The drive was reset during the read (UNIT_ATTENTION, timeouts): the copy protection "
-                  "scan would not help, it makes the drive reset even more.");
+        snprintf(p, n, M_OPT_INCOMPLETE, missing);
+    if (t->resets && !t->sf && strlen(p) + 200 < n) {
+        char first[1600];
+        str_copy(first, sizeof(first), p);
+        snprintf(p, n, M_OPT_WITH_RESETS, first);
+    }
 }
 
 /* ---- the data command: a data CD on a drive without lead-in ---- */
@@ -1361,13 +1342,13 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
     if (sep) *sep = 0;
     sb_init(&why);
     if (optical_room(u8_isdir(parent) ? parent : out_dir, need, dvd ? need : 0, &why)) {
-        snprintf(p, sizeof(p), "Cannot read the %s: %s.", dvd ? "DVD" : "CD", why.s);
+        snprintf(p, sizeof(p), M_OPT_CANNOT_READ, dvd ? "DVD" : "CD", why.s);
         say(on_line, ctx, p);
         sb_free(&why);
         return -1;
     }
     if (u8_mkdirs(out_dir)) {
-        snprintf(p, sizeof(p), "Cannot create folder %s: check the destination drive.", out_dir);
+        snprintf(p, sizeof(p), M_OPT_MKDIR, out_dir);
         say(on_line, ctx, p);
         sb_free(&why);
         return -1;
@@ -1375,7 +1356,7 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
     snprintf(p, sizeof(p), "%s%s", base, dvd ? ".iso" : ".bin");
     u8_join(img, sizeof(img), out_dir, p);
     if (optical_dic_path(out_dir, p, arg, sizeof(arg), &why)) {
-        snprintf(p, sizeof(p), "Cannot read the %s: %s.", dvd ? "DVD" : "CD", why.s);
+        snprintf(p, sizeof(p), M_OPT_CANNOT_READ, dvd ? "DVD" : "CD", why.s);
         say(on_line, ctx, p);
         sb_free(&why);
         u8_rmtree(out_dir);

@@ -22,6 +22,7 @@ int main(void)
     test_boxedit();
     test_session_edit();
     test_optical();
+    test_arc_text();
     test_lang();                    /* src/gui/lang.c: portable, tested here */
     printf("  %d checks, %s\n", unit_n,
            unit_fail ? "at least one FAIL." : "all green.");

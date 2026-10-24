@@ -1,9 +1,11 @@
 /* The window's texts in several languages: see lang.h */
 #include "gui/lang.h"
 #include "core/fsu8.h"
+#include "core/messages.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wctype.h>
 
 #define LANG_MAXFILE (1024 * 1024)   /* a language file is a few dozen KB */
 #define LANG_MAXKEY  128
@@ -12,20 +14,64 @@ static const char *const keys[T_COUNT] = {
 #define T(id, key, text) key,
 #include "gui/lang_en.h"
 #undef T
+#define MSG(m, key, kinds) key,
+#include "core/messages_list.h"
+#undef MSG
 };
 
-static const wchar_t *const builtin[T_COUNT] = {
+static const wchar_t *const builtin_gui[T_GUI_COUNT] = {
 #define T(id, key, text) text,
 #include "gui/lang_en.h"
 #undef T
 };
 
+/* the core's formats, and their English as the window uses it */
+#define NCORE (T_COUNT - T_GUI_COUNT)
+static const char *const core_fmt[NCORE] = {
+#define MSG(m, key, kinds) m,
+#include "core/messages_list.h"
+#undef MSG
+};
+/* the kind of each argument, see messages_list.h */
+static const char *const core_kinds[NCORE] = {
+#define MSG(m, key, kinds) kinds,
+#include "core/messages_list.h"
+#undef MSG
+};
+static wchar_t *core_en[NCORE];
+
 static wchar_t *loaded[T_COUNT];     /* NULL: the English one */
+
+/* a core format with every conversion %ls: "%d.%s" -> "%ls.%ls" */
+static wchar_t *core_english(const char *f)
+{
+    wchar_t *w = (wchar_t *)malloc((strlen(f) * 3 + 1) * sizeof(wchar_t));
+    size_t o = 0;
+    if (!w) return NULL;
+    while (*f) {
+        if (*f != '%') { w[o++] = (wchar_t)(unsigned char)*f++; continue; }
+        if (f[1] == '%') { w[o++] = L'%'; w[o++] = L'%'; f += 2; continue; }
+        f++;
+        while (*f && !strchr("sdiuxc", *f)) f++;
+        if (*f) f++;
+        w[o++] = L'%'; w[o++] = L'l'; w[o++] = L's';
+    }
+    w[o] = 0;
+    return w;
+}
+
+static const wchar_t *builtin(int id)
+{
+    if (id < T_GUI_COUNT) return builtin_gui[id];
+    id -= T_GUI_COUNT;
+    if (!core_en[id]) core_en[id] = core_english(core_fmt[id]);
+    return core_en[id] ? core_en[id] : L"";
+}
 
 const wchar_t *tr(int id)
 {
     if (id < 0 || id >= T_COUNT) return L"";
-    return loaded[id] ? loaded[id] : builtin[id];
+    return loaded[id] ? loaded[id] : builtin(id);
 }
 
 const char *lang_key(int id)
@@ -35,7 +81,7 @@ const char *lang_key(int id)
 
 const wchar_t *lang_builtin(int id)
 {
-    return id >= 0 && id < T_COUNT ? builtin[id] : L"";
+    return id >= 0 && id < T_COUNT ? builtin(id) : L"";
 }
 
 int lang_find(const char *key)
@@ -222,7 +268,7 @@ static int load_line(void *ctx, const char *key, const char *val, size_t vlen)
     c->seen[id] = 1;
     if (!(w = value_w(val, vlen))) return 0;
     /* a wrong conversion could crash the window: the English text stays */
-    if (!lang_same_format(w, builtin[id])) {
+    if (!lang_same_format(w, builtin(id))) {
         c->r.badfmt++;
         problem(&c->r, "conversions differ from the English text", key);
         free(w);
@@ -336,4 +382,218 @@ void lang_date(const char *iso, wchar_t *out, size_t n)
         }
     }
     out[k] = 0;
+}
+
+/* ---- the core's messages ---- */
+
+#define MAXARG    8
+#define ARGLEN    1600   /* an argument copied to be recognized on its own */
+#define MAXDEPTH  4      /* messages inside messages */
+#define BUDGET    50000  /* steps of one search: texts are a few lines */
+
+typedef struct { const char *s[MAXARG]; size_t n[MAXARG]; int k; } core_args;
+
+/* one format against one text: every split is tried, the best one kept */
+typedef struct {
+    const char *kinds;   /* p m o n, one per conversion (messages_list.h) */
+    const char *t0;
+    int depth;
+    int *budget;
+    long lit;            /* the format's literal characters */
+    core_args cur, best;
+    long best_score;     /* -1: no split matches */
+} core_search;
+
+static long recognize(const char *text, int depth, int *budget, int *id, core_args *out);
+
+static int lower(int c) { return c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c; }
+
+/* the conversion at f ('%' already passed): its letter, f moved past it */
+static char conv(const char **f)
+{
+    const char *p = *f;
+    while (*p && !strchr("sd", *p)) p++;
+    *f = *p ? p + 1 : p;
+    return *p;
+}
+
+/* the characters of a format that are not conversions: how specific it is */
+static size_t literal_len(const char *f)
+{
+    size_t n = 0;
+    while (*f) {
+        if (*f == '%' && f[1] != '%') { f++; conv(&f); continue; }
+        if (*f == '%') f++;
+        f++; n++;
+    }
+    return n;
+}
+
+static int kind_of(const char *kinds, int i)
+{
+    return i < (int)strlen(kinds) ? kinds[i] : 'p';
+}
+
+static void copy_arg(const core_args *a, int i, char *buf)
+{
+    size_t len = a->n[i] < ARGLEN - 1 ? a->n[i] : ARGLEN - 1;
+    memcpy(buf, a->s[i], len);
+    buf[len] = 0;
+}
+
+/* how much of the text a split explains: the format's literal text and
+ * that of the arguments that are messages. One that is not a message
+ * explains nothing, but does not rule the split out: the text is shown
+ * all the same, that argument as it is */
+static long split_score(core_search *S)
+{
+    long score = S->lit;
+    int i;
+    for (i = 0; i < S->cur.k; i++) {
+        int k = kind_of(S->kinds, i);
+        if ((k == 'm' || k == 'o') && S->cur.n[i]) {
+            char *buf = (char *)malloc(ARGLEN);
+            long sc;
+            if (!buf) continue;
+            copy_arg(&S->cur, i, buf);
+            sc = recognize(buf, S->depth + 1, S->budget, NULL, NULL);
+            if (sc > 0) score += sc;
+            free(buf);
+        }
+    }
+    return score;
+}
+
+/* fmt against all of text; a string tries only where the literal text
+ * after it appears, from the farthest, so that of two splits that explain
+ * as much the one with the longest user text (a title with ": ") wins */
+static void match(const char *f, const char *t, core_search *S)
+{
+    char c;
+    if (--*S->budget <= 0) return;
+    if (!*f) {
+        long sc;
+        if (*t) return;
+        sc = split_score(S);
+        if (sc > S->best_score) { S->best_score = sc; S->best = S->cur; }
+        return;
+    }
+    if (*f != '%' || f[1] == '%') {
+        int fc = (unsigned char)*f, tc = (unsigned char)*t;
+        if (*f == '%') f++;
+        if (t == S->t0 ? lower(fc) != lower(tc) : fc != tc) return;
+        match(f + 1, t + 1, S);
+        return;
+    }
+    f++;
+    c = conv(&f);
+    if (S->cur.k >= MAXARG) return;
+    if (c == 's') {
+        char seg[256]; size_t sl = 0, len = strlen(t);
+        const char *q = f;
+        while (*q && sl + 1 < sizeof(seg) && (*q != '%' || q[1] == '%')) {
+            if (*q == '%') q++;
+            seg[sl++] = *q++;
+        }
+        seg[sl] = 0;
+        for (;; len--) {
+            if (!sl || !strncmp(t + len, seg, sl)) {
+                S->cur.s[S->cur.k] = t; S->cur.n[S->cur.k] = len; S->cur.k++;
+                match(f, t + len, S);
+                S->cur.k--;
+            }
+            if (!len || *S->budget <= 0) return;
+        }
+    }
+    {   /* a number: an optional minus and digits */
+        const char *e = t;
+        if (*e == '-') e++;
+        while (*e >= '0' && *e <= '9') e++;
+        for (; e > t && (e[-1] >= '0' && e[-1] <= '9'); e--) {
+            S->cur.s[S->cur.k] = t; S->cur.n[S->cur.k] = (size_t)(e - t); S->cur.k++;
+            match(f, e, S);
+            S->cur.k--;
+        }
+    }
+}
+
+/* the message text comes from: its score (-1 none), its index and the
+ * arguments of its best split */
+static long recognize(const char *text, int depth, int *budget, int *id, core_args *out)
+{
+    long best = -1;
+    int i;
+    if (depth >= MAXDEPTH) return -1;
+    for (i = 0; i < NCORE && *budget > 0; i++) {
+        core_search S;
+        memset(&S, 0, sizeof(S));
+        S.kinds = core_kinds[i]; S.t0 = text; S.depth = depth; S.budget = budget;
+        S.lit = (long)literal_len(core_fmt[i]);
+        S.best_score = -1;
+        match(core_fmt[i], text, &S);
+        if (S.best_score > best) {
+            best = S.best_score;
+            if (id) *id = i;
+            if (out) *out = S.best;
+        }
+    }
+    return best;
+}
+
+int lang_core_match(const char *text)
+{
+    int i = -1, budget = BUDGET;
+    if (!text || recognize(text, 0, &budget, &i, NULL) < 0) return -1;
+    return T_GUI_COUNT + i;
+}
+
+static void append(wchar_t *out, size_t n, size_t *o, const wchar_t *s)
+{
+    while (*s && *o + 1 < n) out[(*o)++] = *s++;
+    out[*o] = 0;
+}
+
+static int core_text(const char *text, wchar_t *out, size_t n, int depth)
+{
+    core_args a; int i = -1, k = 0, budget = BUDGET; size_t o = 0; const wchar_t *t;
+    if (recognize(text, depth, &budget, &i, &a) < 0) {
+        u8_to_wide(text, strlen(text), out, n);
+        return 0;
+    }
+    out[0] = 0;
+    for (t = tr(T_GUI_COUNT + i); *t && o + 1 < n; t++) {
+        if (t[0] == L'%' && t[1] == L'%') { append(out, n, &o, L"%"); t++; continue; }
+        if (t[0] == L'%') {
+            /* the translation has the English conversions: all %ls */
+            const wchar_t *p = t + 1;
+            while (*p && !wcschr(L"sd", *p)) p++;
+            if (k < a.k) {
+                char *arg = (char *)malloc(ARGLEN);
+                wchar_t *w = (wchar_t *)malloc(ARGLEN * sizeof(wchar_t));
+                int kind = kind_of(core_kinds[i], k);
+                if (arg && w) {
+                    copy_arg(&a, k, arg);
+                    /* only a message is translated: a title or a path is the user's */
+                    if (kind == 'm' || kind == 'o') core_text(arg, w, ARGLEN, depth + 1);
+                    else u8_to_wide(arg, strlen(arg), w, ARGLEN);
+                    append(out, n, &o, w);
+                }
+                free(arg); free(w);
+                k++;
+            }
+            t = *p ? p : p - 1;
+            continue;
+        }
+        out[o++] = *t; out[o] = 0;
+    }
+    /* the session gives a capital to a message that starts a sentence */
+    if (text[0] >= 'A' && text[0] <= 'Z' && out[0]) out[0] = (wchar_t)towupper(out[0]);
+    return 1;
+}
+
+int lang_core_text(const char *text, wchar_t *out, size_t n)
+{
+    if (!n) return 0;
+    out[0] = 0;
+    return text ? core_text(text, out, n, 0) : 0;
 }

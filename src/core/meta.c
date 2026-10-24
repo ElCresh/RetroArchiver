@@ -4,6 +4,7 @@
 #include <time.h>
 #include "meta.h"
 #include "fsu8.h"
+#include "messages.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -14,7 +15,6 @@
 #endif
 
 #define CP(dst, src) str_copy(dst, sizeof(dst), src)
-#define FIXIT ": if the box is damaged, move its folder away and start over"
 
 static const char *const kind_keys[MEDIA_KINDS] = { "floppy", "cd", "dvd" };
 static const char *const kind_labels[MEDIA_KINDS] = { "floppy", "CD", "DVD" };
@@ -96,7 +96,8 @@ void meta_slot(const meta_box *b, int n, int *kind, int *num)
 
 void meta_disk_name(int kind, int num, char *out, size_t n)
 {
-    snprintf(out, n, "%s %d", meta_kind_label(kind), num);
+    /* one format per kind: the window recognizes it inside other messages */
+    snprintf(out, n, kind == MEDIA_CD ? M_MEDIUM_CD : kind == MEDIA_DVD ? M_MEDIUM_DVD : M_MEDIUM_FLOPPY, num);
 }
 
 void meta_composition_counts(const int count[MEDIA_KINDS], char *out, size_t n)
@@ -304,7 +305,7 @@ int meta_save(const meta_box *b, const char *datadir, meta_tech_fn tech, void *c
     if (f && fclose(f) != 0) ok = 0;
     if (ok && u8_rename_replace(tmp, path) != 0) ok = 0;
     if (!ok) {
-        sb_printf(err, "cannot write %s: is the destination disk full or write-protected?", path);
+        sb_printf(err, M_META_WRITE, path);
         u8_remove(tmp);
     }
     jw_free(&w);
@@ -401,18 +402,17 @@ int meta_load(meta_box *b, const char *datadir, strbuf *err)
 
     u8_join(path, sizeof(path), datadir, "metadata.json");
     text = slurp(path);
-    if (!text) { sb_printf(err, "cannot find %s" FIXIT, path); return -1; }
+    if (!text) { sb_printf(err, M_META_NOT_FOUND, path); return -1; }
     root = json_parse(text, perr, sizeof(perr));
     free(text);
-    if (!root) { sb_printf(err, "%s cannot be read (%s)" FIXIT, path, perr); return -1; }
+    if (!root) { sb_printf(err, M_META_UNREADABLE, path, perr); return -1; }
     schema = json_str(root, "schema");
     old = schema && !strcmp(schema, "retroarchiver-floppy-1");
     if (!schema || (!old && strcmp(schema, META_SCHEMA) && strcmp(schema, META_SCHEMA_2))) {
         if (schema && !strncmp(schema, "retroarchiver-", 14))
-            sb_printf(err, "%s comes from a newer version of RetroArchiver: "
-                           "update the program to open this box", path);
+            sb_printf(err, M_META_NEWER, path);
         else
-            sb_printf(err, "%s is not a RetroArchiver box" FIXIT, path);
+            sb_printf(err, M_META_NOT_BOX, path);
         json_free(root);
         return -1;
     }

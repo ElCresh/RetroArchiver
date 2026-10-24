@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include "boxtxn.h"
 #include "fsu8.h"
+#include "messages.h"
 #include "session.h"
 #include "sha256.h"
 
@@ -164,16 +165,16 @@ static int precheck(const char *bagdir, const txn_moves *m, const char *newdir, 
     int i;
     for (i = 0; i < m->n; i++) {
         if (!rel_exists(bagdir, m->from[i])) {
-            sb_printf(err, "%s is missing in %s: nothing was changed", m->from[i], bagdir);
+            sb_printf(err, M_TXN_MISSING, m->from[i], bagdir);
             return -1;
         }
         if (rel_exists(bagdir, m->to[i]) && !freed_before(m, i)) {
-            sb_printf(err, "%s already exists in %s: nothing was changed", m->to[i], bagdir);
+            sb_printf(err, M_TXN_EXISTS, m->to[i], bagdir);
             return -1;
         }
     }
     if (newdir && !same_ci(newdir, bagdir) && u8_exists(newdir)) {
-        sb_printf(err, "the folder %s already exists: choose another title or edition", newdir);
+        sb_printf(err, M_TXN_FOLDER_EXISTS, newdir);
         return -1;
     }
     return 0;
@@ -184,12 +185,12 @@ static int keep_old(const char *bagdir, const meta_box *box, strbuf *err)
 {
     char from[1024], to[1024], rel[200]; int i;
     path_of(bagdir, OLD_DIR, to, sizeof(to));
-    if (u8_mkdirs(to)) { sb_printf(err, "cannot create %s", to); return -1; }
+    if (u8_mkdirs(to)) { sb_printf(err, M_TXN_MKDIR, to); return -1; }
     for (i = 0; i < NTAG; i++) {
         path_of(bagdir, tag_files[i], from, sizeof(from));
         snprintf(rel, sizeof(rel), OLD_DIR "/%s", base_of(tag_files[i]));
         path_of(bagdir, rel, to, sizeof(to));
-        if (copy_file(from, to)) { sb_printf(err, "cannot copy %s", from); return -1; }
+        if (copy_file(from, to)) { sb_printf(err, M_TXN_COPY, from); return -1; }
     }
     path_of(bagdir, NEW_DIR, to, sizeof(to));
     if (u8_mkdirs(to) || meta_save(box, to, NULL, NULL, err)) return -1;
@@ -206,7 +207,7 @@ static int write_journal(const char *bagdir, const txn_moves *m, const char *new
     for (i = 0; i < m->n; i++) sb_printf(&j, "move\t%s\t%s\n", m->from[i], m->to[i]);
     path_of(bagdir, JOURNAL, p, sizeof(p));
     rc = write_atomic(p, j.s);
-    if (rc) sb_printf(err, "cannot write %s", p);
+    if (rc) sb_printf(err, M_BAG_WRITE, p);
     sb_free(&j);
     return rc;
 }
@@ -217,7 +218,7 @@ static int mark_open(const char *bagdir, strbuf *err)
     char p[1024];
     u8_join(p, sizeof(p), bagdir, BAG_OPEN_MARK);
     if (write_atomic(p, "Box being edited: the manifests are being written again.\n")) {
-        sb_printf(err, "cannot write %s", p);
+        sb_printf(err, M_BAG_WRITE, p);
         return -1;
     }
     return 0;
@@ -264,7 +265,7 @@ static int do_moves(const char *bagdir, const txn_moves *m, int *done, strbuf *e
     for (; *done < m->n; ++*done) {
         i = *done;
         if ((g_fail == 5 && i > first) || do_move(bagdir, m->from[i], m->to[i])) {
-            sb_printf(err, "cannot move %s to %s: is it open in another program?", m->from[i], m->to[i]);
+            sb_printf(err, M_TXN_MOVE, m->from[i], m->to[i]);
             return -1;
         }
         set_progress(bagdir, i + 1);
@@ -298,7 +299,7 @@ static int close_new(const char *bagdir, const meta_box *box, meta_tech_fn tech,
     char data[1024]; int bad;
     u8_join(data, sizeof(data), bagdir, "data");
     if (meta_save(box, data, tech, ctx, err)) return -1;
-    if (g_fail == 6) { sb_puts(err, "cannot write the manifests: is the disk full?"); return -1; }
+    if (g_fail == 6) { sb_puts(err, M_TXN_DISK_FULL); return -1; }
     return bag_close(bagdir, box, trusted, err, &bad);
 }
 
@@ -325,26 +326,26 @@ static int check_new(const char *bagdir, const bag_digests *trusted, strbuf *err
 {
     bag_digests man, tag; char data[1024]; extra_ctx x; int i, rc = -1;
     memset(&man, 0, sizeof(man)); memset(&tag, 0, sizeof(tag));
-    if (g_fail == 7) { sb_puts(err, "the new package does not match its manifest"); return -1; }
+    if (g_fail == 7) { sb_puts(err, M_TXN_NO_MATCH); return -1; }
     if (bag_manifest_load(bagdir, "manifest-sha256.txt", &man) ||
         bag_manifest_load(bagdir, "tagmanifest-sha256.txt", &tag)) {
-        sb_printf(err, "the manifests of %s cannot be read", bagdir);
+        sb_printf(err, M_TXN_MANIFESTS, bagdir);
         goto out;
     }
     for (i = 0; i < tag.n; i++)
         if (!line_ok(bagdir, tag.rel[i], tag.hex[i], NULL)) {
-            sb_printf(err, "%s does not match the new manifest", tag.rel[i]);
+            sb_printf(err, M_TXN_LINE, tag.rel[i]);
             goto out;
         }
     for (i = 0; i < man.n; i++)
         if (!line_ok(bagdir, man.rel[i], man.hex[i], trusted)) {
-            sb_printf(err, "%s does not match the new manifest", man.rel[i]);
+            sb_printf(err, M_TXN_LINE, man.rel[i]);
             goto out;
         }
     x.man = &man; x.extra = 0;
     u8_join(data, sizeof(data), bagdir, "data");
     u8_walk(data, count_extra, &x);
-    if (x.extra) { sb_printf(err, "data/ in %s has files the new manifest does not list", bagdir); goto out; }
+    if (x.extra) { sb_printf(err, M_TXN_EXTRA, bagdir); goto out; }
     rc = 0;
 out:
     bag_digests_free(&man); bag_digests_free(&tag);
@@ -367,7 +368,7 @@ static int rename_bag(const char *bagdir, const char *newdir, strbuf *err)
             return 0;
         }
     }
-    sb_printf(err, "cannot rename %s: close the folder if it is open in Explorer and try again", bagdir);
+    sb_printf(err, M_TXN_RENAME, bagdir);
     return -1;
 }
 

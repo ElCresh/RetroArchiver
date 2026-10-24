@@ -8,6 +8,7 @@
 #include "edsk.h"
 #include "fat12.h"
 #include "fsu8.h"
+#include "messages.h"
 #include "sha256.h"
 
 static char samdisk[512] = "samdisk";
@@ -93,8 +94,7 @@ static int check(strbuf *msg)
 static int no_tool(runner_line_fn on_line, void *ctx)
 {
     char line[640];
-    snprintf(line, sizeof(line), "Cannot find %s: put it in the program folder "
-                                 "or in the PATH, or give the full path of samdisk.exe.", samdisk);
+    snprintf(line, sizeof(line), M_FLP_NOTOOL, samdisk);
     if (on_line) on_line(ctx, line);
     return MEDIA_NOTOOL;
 }

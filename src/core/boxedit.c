@@ -4,6 +4,7 @@
 #include "boxedit.h"
 #include "archive.h"
 #include "fsu8.h"
+#include "messages.h"
 #include "media.h"
 #include "session.h"
 
@@ -38,12 +39,12 @@ int boxedit_editable(const char *bagdir, strbuf *why)
 {
     arc_box *a = (arc_box *)calloc(1, sizeof(arc_box)); int ok = 0;
     if (!a) return 0;
-    if (!arc_load(bagdir, a)) sb_printf(why, "%s is not a box", bagdir);
+    if (!arc_load(bagdir, a)) sb_printf(why, M_EDIT_NOT_BOX, bagdir);
     else if (a->editing)
-        sb_puts(why, "an edit of this box was interrupted: open the archive again to finish or undo it");
-    else if (a->state == ARC_OPEN) sb_puts(why, "the box is still open: resume it instead");
-    else if (a->state == ARC_BROKEN) sb_printf(why, "the box cannot be read: %s", a->error);
-    else if (a->old_format) sb_puts(why, "the box was made by RetroArchiver 261017: convert it first");
+        sb_puts(why, M_EDIT_INTERRUPTED);
+    else if (a->state == ARC_OPEN) sb_puts(why, M_EDIT_OPEN);
+    else if (a->state == ARC_BROKEN) sb_printf(why, M_EDIT_UNREADABLE, a->error);
+    else if (a->old_format) sb_puts(why, M_EDIT_OLD);
     else ok = 1;
     free(a);
     return ok;
@@ -303,8 +304,7 @@ static int freeze_set(meta_box *nb, const char *old_title, strbuf *err)
         if (!(s = strstr(nb->names[k], "{set}"))) continue;
         snprintf(tpl, sizeof(tpl), "%.*s%s%s", (int)(s - nb->names[k]), nb->names[k], old_title, s + 5);
         if (strlen(tpl) >= sizeof(nb->names[k])) {
-            sb_printf(err, "the file names of the %s use the title, and with \"%s\" they would be too long: "
-                           "choose a shorter title", meta_kind_label(k), old_title);
+            sb_printf(err, M_EDIT_NAMES_LONG, meta_kind_label(k), old_title);
             return -1;
         }
         CP(nb->names[k], tpl);
@@ -345,8 +345,7 @@ static int damaged(const char *bagdir, bag_digests *ok, strbuf *err)
     arc_check c;
     if (arc_verify_digests(bagdir, &c, ok, err)) return -1;
     if (!c.changed && !c.lost && !c.extra) return 0;
-    sb_printf(err, "%s does not match the manifest: read that medium again with Edit, "
-                   "without changing the data of the box", c.first);
+    sb_printf(err, M_EDIT_DAMAGED, c.first);
     return -1;
 }
 
@@ -360,13 +359,13 @@ int boxedit_save_data(const char *bagdir, const meta_box *edited, const char *re
     str_copy(newbagdir, n, bagdir);
     memset(&m, 0, sizeof(m)); memset(&ok, 0, sizeof(ok));
     jw_init(&w);
-    if (!old || !nb) { sb_puts(err, "out of memory"); goto out; }
+    if (!old || !nb) { sb_puts(err, M_EDIT_NOMEM); goto out; }
     if (!boxedit_editable(bagdir, err)) goto out;
     u8_join(data, sizeof(data), bagdir, "data");
     if (meta_load(old, data, err)) goto out;
     if (!boxedit_diff(bagdir, old, edited, &one, 1)) { rc = 0; goto out; }
     if (!edited->title[0] || !edited->platform[0]) {
-        sb_puts(err, "the title and the platform cannot be empty");
+        sb_puts(err, M_EDIT_EMPTY);
         goto out;
     }
     if (damaged(bagdir, &ok, err)) goto out;
@@ -388,7 +387,7 @@ int boxedit_save_data(const char *bagdir, const meta_box *edited, const char *re
     jw_end_arr(&w);
     jw_end_obj(&w);
     if (meta_history_add(nb, w.out.s)) {
-        sb_puts(err, "the history of the box is full: no more changes can be recorded");
+        sb_puts(err, M_EDIT_HISTORY_FULL);
         goto out;
     }
     meta_now(nb->closed);
@@ -543,7 +542,7 @@ int boxedit_commit_disk(const char *bagdir, meta_box *box, const edit_disk *e, b
     keep_tech kt; int rc = -1, damaged = 0, same = e->keep == KEEP_OLD_IDENTICAL;
 
     if (e->keep == KEEP_OLD) { drop_new(bagdir, e->now, EDIT_REJECTED); return 0; }
-    if (!(nb = meta_new())) { sb_puts(err, "out of memory"); return -1; }
+    if (!(nb = meta_new())) { sb_puts(err, M_EDIT_NOMEM); return -1; }
     *nb = *box;
     memset(&m, 0, sizeof(m)); memset(&trust, 0, sizeof(trust));
     jw_init(&w);
@@ -572,7 +571,7 @@ int boxedit_commit_disk(const char *bagdir, meta_box *box, const edit_disk *e, b
     with_bad(known, bad, &trust);
     keep_tech_open(&kt, bagdir, same ? -1 : e->now->kind, e->now->num, tech, ctx);
     if (!d || meta_history_add(nb, w.out.s)) {
-        sb_puts(err, "the history of the box is full: no more changes can be recorded");
+        sb_puts(err, M_EDIT_HISTORY_FULL);
     } else if (boxtxn_commit(bagdir, &m, nb, kept_tech, &kt, &trust, NULL, err) == 0) {
         *box = *nb;
         bag_digests_free(known);
@@ -663,17 +662,17 @@ int boxedit_convert(const char *bagdir, conv_why *whyp, strbuf *err)
     }
     sb_free(&log);
     str_copy(dir, sizeof(dir), fin);
-    if (!(a = (arc_box *)calloc(1, sizeof(arc_box)))) { sb_puts(err, "out of memory"); goto out; }
-    if (!arc_load(dir, a)) { sb_printf(err, "%s is not a box", dir); WHY(CONV_NOT_A_BOX); }
+    if (!(a = (arc_box *)calloc(1, sizeof(arc_box)))) { sb_puts(err, M_EDIT_NOMEM); goto out; }
+    if (!arc_load(dir, a)) { sb_printf(err, M_EDIT_NOT_BOX, dir); WHY(CONV_NOT_A_BOX); }
     else if (a->state == ARC_OPEN) { sb_puts(err, "the box is still open: resume it, closing it converts it"); WHY(CONV_OPEN); }
-    else if (a->state == ARC_BROKEN) { sb_printf(err, "the box cannot be read: %s", a->error); WHY(CONV_BROKEN); }
+    else if (a->state == ARC_BROKEN) { sb_printf(err, M_EDIT_UNREADABLE, a->error); WHY(CONV_BROKEN); }
     else if (!a->old_format) { rc = 1; WHY(CONV_CURRENT); }
     else rc = 0;
     free(a);
     if (rc != 0) goto out;
     rc = -1;
     u8_join(data, sizeof(data), dir, "data");
-    if (!(old = meta_new()) || !(nb = meta_new())) { sb_puts(err, "out of memory"); goto out; }
+    if (!(old = meta_new()) || !(nb = meta_new())) { sb_puts(err, M_EDIT_NOMEM); goto out; }
     if (meta_load(old, data, err)) { WHY(CONV_BROKEN); goto out; }
     /* already schema 3, an empty messi-da-parte/ left (a conversion finished
      * by a recovery): only the folder goes, no second entry in the history */
@@ -709,7 +708,7 @@ int boxedit_convert(const char *bagdir, conv_why *whyp, strbuf *err)
     /* set-aside/ before the transaction: the old tag files go there, not
      * into messi-da-parte/ */
     rel_path(dir, SESSION_ASIDE_DIR, p, sizeof(p));
-    if (u8_mkdir(p)) { sb_printf(err, "cannot create %s", p); goto out; }
+    if (u8_mkdir(p)) { sb_printf(err, M_TXN_MKDIR, p); goto out; }
     keep_tech_open(&kt, dir, -1, 0, boxedit_tech, NULL);
     rc = boxtxn_commit(dir, &m, nb, kept_tech, &kt, &ok, NULL, err) ? -1 : 0;
     keep_tech_close(&kt);
