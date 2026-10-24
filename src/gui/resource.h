@@ -63,6 +63,9 @@
 #define IDC_NOLEADIN_L   1317
 #define IDC_NOLEADIN     1318
 #define IDC_FORGET       1319
+#define IDC_CDSPEED_L    1320
+#define IDC_CDSPEED      1321
+#define IDC_CDSPEED_U    1322
 
 /* Automatic */
 #define IDC_AUTO_INTRO   1400

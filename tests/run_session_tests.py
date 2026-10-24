@@ -896,6 +896,19 @@ ok("old firmware: the log says to update it, no copy protection scan after it",
    rc == 0 and "update the drive's firmware" in out
    and dic_log() == ["cd nosf offset none"] * 3 and cd["status"] == "clean", out)
 
+# a scratched CD (Office 2000 on the PLEXTOR): DIC ends with C2 errors left and
+# no image; the log says to clean it and read it slower, and no /sf after it
+rc, out = run("CD graffiato", 0, [], ["", ""], ["-C", "1", "-r", "--cd-speed=4"], tpl=None,
+              dic=["C2STOP", "cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
+cd = meta(bag("CD graffiato"))["media"][0]
+ok("C2 errors left: the log says the disc is scratched and to read it slower, no /sf after it",
+   rc == 0 and "929 sectors still unreadable after 20 rereads" in out and "--cd-speed=4" in out
+   and dic_log() == ["cd nosf offset none"] * 3 and cd["status"] == "clean", out)
+ok("CD speed: in the metadata of the read",
+   cd["disc"].get("read_speed") == "4x", json.dumps(cd.get("disc", {}).get("read_speed")))
+rc, out = run("Velocita sbagliata", 0, [], [""], ["-C", "1", "--cd-speed=99"], tpl=None)
+ok("CD speed out of range gives the usage", rc == 2 and "--cd-speed=N" in out, out)
+
 # reads with errors: proposed again, Skip keeps what there is
 rc, out = run("Protezione errori", 0, [], ["", "S"], ["-C", "1", "-r"], tpl=None,
               dic=["cd_c2", "cd_c2"], env_extra=disc_env(DISC_PLAIN))

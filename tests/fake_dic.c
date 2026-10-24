@@ -10,7 +10,8 @@
  *   FAKE_DIC_SCRIPT   one line per read: the folder name
  *                     (cd_good, cd_noise, cd_c2, dvd_good), or FAIL
  *                     (error), WRONG (disc of the other type),
- *                     FIRMWARE (a known drive without its last firmware) or
+ *                     FIRMWARE (a known drive without its last firmware),
+ *                     C2STOP (C2 errors left after the rereads: no image) or
  *                     SLOW folder (5 seconds first) or EXITn folder
  *                     (complete read but exit code n), RESETSn folder (n
  *                     drive resets first, then the folder or FAIL), LEADIN
@@ -275,6 +276,14 @@ static int dump(int kind, const char *file, int sf)
     if (!strcmp(what, "WRONG")) {
         printf("Wrong command. The disc isn't CD, CD-R, CD-RW, GD\n");
         return 1;
+    }
+    /* a scratched CD (PLEXTOR PX-760A on the PC): C2 errors left after the
+     * rereads, and DIC ends there without .img, .cue or EDC/ECC check */
+    if (!strcmp(what, "C2STOP")) {
+        printf("Need to reread sector: 182416\nRemains 1254 c2 error. Rereading times:    1/  20\n"
+               "Need to reread sector: 181062\nRemains 929 c2 error. Rereading times:   20/  20\n"
+               "Done. See _c2Error.txt\n");
+        return 0;
     }
     if (!strcmp(what, "FIRMWARE")) {
         printf("[ERROR] This drive isn't latest firmware. Please update\n"

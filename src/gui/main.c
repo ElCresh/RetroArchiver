@@ -3373,6 +3373,7 @@ static void start(void)
          * know the drive. The Settings window checks it; by hand in the ini
          * it can still be wrong */
         wchar_t w[600];
+        optical_set_cd_speed(g_prefs.cd_speed);      /* prefs_load keeps it in range */
         to_u8(g_prefs.offset, buf, sizeof(buf));
         if (optical_set_drive_offset(buf)) {
             optical_set_drive_offset("");

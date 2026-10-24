@@ -267,6 +267,7 @@ static const struct { const wchar_t *sec, *key, *def; size_t off; int n; } text_
 static const struct { const wchar_t *sec, *key; size_t off; int def, min, max; } int_prefs[] = {
     { SEC_GENERAL, KEY_MAXREADS,   offsetof(prefs, maxreads),    3, PREFS_MAXREADS_MIN, META_MAXREAD },
     { SEC_GENERAL, KEY_SOUNDS,     offsetof(prefs, sounds),      0, 0, 1 },
+    { SEC_OPTICAL, KEY_CDSPEED,    offsetof(prefs, cd_speed),   16, PREFS_CDSPEED_MIN, PREFS_CDSPEED_MAX },
     { SEC_AUTO,    KEY_COUNTDOWN,  offsetof(prefs, countdown),   5, PREFS_COUNTDOWN_MIN, PREFS_COUNTDOWN_MAX },
     { SEC_AUTO,    KEY_FLOPPYPOLL, offsetof(prefs, floppy_poll), 2, PREFS_POLL_MIN, PREFS_POLL_MAX },
     { NULL, NULL, 0, 0, 0, 0 }

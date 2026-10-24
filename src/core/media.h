@@ -76,6 +76,11 @@ void optical_set_dic(const char *path);
 void optical_set_drive(const char *drive);
 /* folder where to look for the redump DATs (default: the program's) */
 void optical_set_datdir(const char *dir);
+/* the CD read speed given to DiscImageCreator (default 16x): a scratched CD
+ * reads better slower. -1 out of range */
+#define OPTICAL_SPEED_MIN 1
+#define OPTICAL_SPEED_MAX 48
+int  optical_set_cd_speed(int x);
 /* the drive's read offset in samples ("+6", "-472"), given to DiscImageCreator
  * when it asks for it; "" not set. -1 if it is not a number */
 int  optical_set_drive_offset(const char *samples);

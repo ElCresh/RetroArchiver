@@ -311,7 +311,10 @@ static void usage(void)
     say("               only if the disc has files of a known protection (default)\n");
     say("    --drive-offset=N\n");
     say("               the CD drive's read offset in samples, for a drive that\n");
-    say("               DiscImageCreator does not know (AccurateRip or redump list)\n\n");
+    say("               DiscImageCreator does not know (AccurateRip or redump list)\n");
+    say("    --cd-speed=N\n");
+    say("               CD read speed, 1 to 48 (default 16): 4 or 8 for a scratched\n");
+    say("               CD that DiscImageCreator stops on with C2 errors\n\n");
     say("  Pattern placeholders:\n");
     say("    {n} {nn} {nnn}   floppy number, with leading zeros\n");
     say("    {set}            the title\n");
@@ -366,6 +369,8 @@ int main(int argc, char **argv)
             cfg.copy_protection = argv[i] + 18;
         } else if (!strncmp(argv[i], "--drive-offset=", 15)) {
             if (optical_set_drive_offset(argv[i] + 15)) { usage(); return 2; }
+        } else if (!strncmp(argv[i], "--cd-speed=", 11)) {
+            if (optical_set_cd_speed(atoi(argv[i] + 11))) { usage(); return 2; }
         }
         else if (argv[i][0] != '-')                      tot = atoi(argv[i]);
     }

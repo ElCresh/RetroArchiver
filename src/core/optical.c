@@ -56,7 +56,7 @@
 #include "romhash.h"
 #include "sha256.h"
 
-#define CD_SPEED  "16"          /* slow enough for a reliable C2 check */
+#define CD_SPEED  "16"          /* slow enough for a reliable C2 check; a damaged CD wants less */
 #define DVD_SPEED "8"
 #define C2_REREAD "20"
 #define CONSOLE   "dic-console.txt"
@@ -79,6 +79,7 @@
 #define OFFSET_MARK "RetroArchiver: drive offset given: "
 /* "data 0-208949 (why)": read with the data command, not with cd */
 #define METHOD_MARK "RetroArchiver: read method: "
+#define SPEED_MARK  "RetroArchiver: read speed: "
 /* DIC asks for the offset of a drive it does not know */
 #define ASK_OFFSET  "This drive doesn't define in driveOffset.txt"
 #define INPUT_FILE  "dic-input.txt"
@@ -89,6 +90,7 @@ static char dic[512] = "DiscImageCreator";
 static char drive[2] = "D";
 static char datdir[512] = "";
 static char offset[16] = "";            /* "" = not set */
+static char cd_speed[8] = CD_SPEED;
 static char sigpath[512] = "", disc_root[512] = "";
 static int prot_mode = META_PROT_AUTO;  /* for the next read */
 static int prot_used = 0;               /* of the last read */
@@ -125,6 +127,13 @@ int optical_parse_offset(const char *s, char *out, size_t n)
     if (v < -99999 || v > 99999) return -1;
     if (v) snprintf(out, n, "%+ld", v);
     else str_copy(out, n, "0");
+    return 0;
+}
+
+int optical_set_cd_speed(int x)
+{
+    if (x < OPTICAL_SPEED_MIN || x > OPTICAL_SPEED_MAX) return -1;
+    snprintf(cd_speed, sizeof(cd_speed), "%d", x);
     return 0;
 }
 
@@ -272,6 +281,7 @@ typedef struct {
     int wrong;          /* "Wrong command. The disc isn't CD" */
     int denied;         /* "GetLastError: 5" */
     int firmware;       /* "This drive isn't latest firmware" */
+    int c2_left;        /* the last "Remains N c2 error" of the rereads */
     int ask_offset;     /* DIC asked for the drive's read offset */
     int sf;             /* the read looks for copy protections */
     int resets;         /* "UNIT_ATTENTION" (the drive was reset) and "GetLastError: 121" (timeout) */
@@ -292,12 +302,16 @@ static int boring(const char *line)
 
 static void tee_line(void *c, const char *line)
 {
-    tee *t = (tee *)c;
+    tee *t = (tee *)c; const char *r;
     if (strstr(line, "Wrong command")) t->wrong = 1;
     if (strstr(line, "GetLastError: 5,")) t->denied = 1;
     /* seen on the PC with the PLEXTOR PX-760A 1.06: DIC wants the last
      * firmware of a drive it knows (1.07) and stops before reading */
     if (strstr(line, "isn't latest firmware")) t->firmware = 1;
+    /* seen on the PC with a scratched CD (PLEXTOR PX-760A): "Remains 929 c2
+     * error. Rereading times: 20/ 20", "Done. See _c2Error.txt", and DIC
+     * ends there: no .img, no .cue, no EDC/ECC check */
+    if ((r = strstr(line, "Remains ")) != NULL && strstr(r, "c2 error")) t->c2_left = atoi(r + 8);
     if (strstr(line, ASK_OFFSET)) t->ask_offset = 1;
     /* seen on the PC (ASUS DRW-08D6MT): "This drive can't read the lead-in",
      * then a raw read of LBA -1 refused with ILLEGAL_REQUEST, and DIC stops
@@ -1062,7 +1076,7 @@ static void cd_input(const char *out_dir, char *input, size_t n, FILE *con)
 {
     FILE *f;
     input[0] = 0;
-    if (con) fprintf(con, OFFSET_MARK "%s\n", offset[0] ? offset : "not set");
+    if (con) fprintf(con, OFFSET_MARK "%s\n" SPEED_MARK "%sx\n", offset[0] ? offset : "not set", cd_speed);
     if (!offset[0]) return;
     u8_join(input, n, out_dir, INPUT_FILE);
     /* binary: DIC's C runtime reads the console's CRLF too */
@@ -1089,6 +1103,11 @@ static void fail_text(char *p, size_t n, int dvd, int code, const tee *t, const 
     else if (t->denied)
         snprintf(p, n, "DiscImageCreator cannot open drive %s: (access denied): run the program "
                        "as an administrator.", drive);
+    else if (t->c2_left > 0 && !dvd)
+        snprintf(p, n, "DiscImageCreator stopped with %d sectors still unreadable after %s rereads (C2 "
+                       "errors): the disc is scratched or dirty there. Wash it with water and a drop of "
+                       "soap, dry it from the centre outwards, and read it again at a lower speed (CD "
+                       "speed 4 or 8 in the settings; dskrun --cd-speed=4).", t->c2_left, C2_REREAD);
     else if (t->firmware)
         snprintf(p, n, "DiscImageCreator does not read with this drive until its firmware is the "
                        "latest one: update the drive's firmware (DiscImageCreator's log says where "
@@ -1234,7 +1253,7 @@ static int read_data(const char *out_dir, const char *base, const char *arg, int
                      const char *why, runner_line_fn on_line, void *ctx)
 {
     char end[16], input[1100], name[200], bin[1100], p[1600];
-    const char *argv[] = { dic, "data", drive, arg, CD_SPEED, "0", end, "/c2", C2_REREAD, "/sf", "/q", NULL };
+    const char *argv[] = { dic, "data", drive, arg, cd_speed, "0", end, "/c2", C2_REREAD, "/sf", "/q", NULL };
     tee t; int code = 0, rc, have; long long size;
 
     snprintf(end, sizeof(end), "%ld", g_toc.end);
@@ -1264,7 +1283,7 @@ static int read_data(const char *out_dir, const char *base, const char *arg, int
     if (have && code != 0 && con) fprintf(con, EXIT_MARK "%d\n", code);
     if (con) fclose(con);
     prot_used = t.resets ? (t.sf ? 2 : -1) : sf;
-    if (t.wrong || t.denied || t.firmware || (t.ask_offset && !offset[0])) prot_used = -1;
+    if (t.wrong || t.denied || t.firmware || t.c2_left || (t.ask_offset && !offset[0])) prot_used = -1;
     if (!have) {
         fail_text(p, sizeof(p), 0, code, &t, out_dir, base, name);
         say(on_line, ctx, p);
@@ -1281,7 +1300,7 @@ static int read_data(const char *out_dir, const char *base, const char *arg, int
 static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void *ctx)
 {
     char base[96], img[1100], cue[1100], dat[1100], con[1100], arg[1100], parent[1100], *sep;
-    const char *cd_argv[] = { dic, "cd", drive, arg, CD_SPEED, "/c2", C2_REREAD, "/sf", "/q", NULL };
+    const char *cd_argv[] = { dic, "cd", drive, arg, cd_speed, "/c2", C2_REREAD, "/sf", "/q", NULL };
     const char *dvd_argv[] = { dic, "dvd", drive, arg, DVD_SPEED, "/q", NULL };
     tee t; int code = 0, rc, have, sf = 0;
     char p[1600], input[1100] = "";
@@ -1367,7 +1386,7 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
         }
         return 0;
     }
-    if (t.wrong || t.denied || t.firmware || t.leadin || (t.ask_offset && !offset[0]))
+    if (t.wrong || t.denied || t.firmware || t.c2_left || t.leadin || (t.ask_offset && !offset[0]))
         prot_used = -1;    /* /sf would not help */
     if (t.leadin && !dvd && !t.stopped && !(t.ask_offset && !offset[0])) {
         /* the TOC DIC read before stopping is the full one (sessions too) */
@@ -1428,6 +1447,7 @@ typedef struct {
     char prot_files[600];           /* the signature files found, "" none */
     char offset_given[16];          /* the offset RetroArchiver gave DIC, "" none */
     char offset_dic[16];            /* the drive offset DIC used, from its log */
+    char speed[8];                  /* "16x", "" in the reads before 261024 */
     int data_read;                  /* read with the data command, not cd */
     char data_why[160];             /* why: "the drive cannot read the lead-in" */
 } dump;
@@ -1502,6 +1522,8 @@ static void how_read(const char *line, dump *d)
     } else if (!strncmp(line, OFFSET_MARK, strlen(OFFSET_MARK))) {
         q = line + strlen(OFFSET_MARK);
         str_copy(d->offset_given, sizeof(d->offset_given), strcmp(q, "not set") ? q : "");
+    } else if (!strncmp(line, SPEED_MARK, strlen(SPEED_MARK))) {
+        str_copy(d->speed, sizeof(d->speed), line + strlen(SPEED_MARK));
     } else if (!d->offset_dic[0] && (q = strstr(line, "Drive Offset(Byte)")) != NULL &&
                (q = strstr(q, "(Samples)")) != NULL) {
         int v = atoi(q + 9);
@@ -2041,6 +2063,7 @@ static void tech_cd_read(const dump *d, json_writer *w)
     /* what DIC says it used wins over what it was given */
     jw_str(w, "drive_offset", d->offset_dic[0] ? d->offset_dic : d->offset_given[0] ? d->offset_given : "unknown");
     jw_str(w, "read_method", d->data_read ? "dic-data" : "dic-cd");
+    if (d->speed[0]) jw_str(w, "read_speed", d->speed);
     if (d->data_read) {
         char note[300];
         snprintf(note, sizeof(note), "DiscImageCreator data command from sector 0 to the lead-out (%s): "

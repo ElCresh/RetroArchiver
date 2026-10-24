@@ -47,6 +47,8 @@ static const struct { int page, id, text; } texts[] = {
     { PAGE_FLOPPY,  IDC_FNAME_L,    T_SET_FILENAME },
     { PAGE_FLOPPY,  IDC_FNAME_H,    T_SET_FLOPPYNAME_H },
     { PAGE_OPTICAL, IDC_DRIVE_L,    T_SET_DRIVE },
+    { PAGE_OPTICAL, IDC_CDSPEED_L,  T_SET_CDSPEED },
+    { PAGE_OPTICAL, IDC_CDSPEED_U,  T_SET_CDSPEED_U },
     { PAGE_OPTICAL, IDC_CDNAME_L,   T_SET_CDNAME },
     { PAGE_OPTICAL, IDC_DVDNAME_L,  T_SET_DVDNAME },
     { PAGE_OPTICAL, IDC_DAT_L,      T_SET_DAT },
@@ -88,6 +90,7 @@ static const struct { int page, id; size_t off; int min, max, bad; } numbers[] =
     { PAGE_GENERAL, IDC_MAXREADS, offsetof(prefs, maxreads), PREFS_MAXREADS_MIN, META_MAXREAD, T_SET_BAD_MAXREADS },
     { PAGE_AUTO,    IDC_COUNT,    offsetof(prefs, countdown), PREFS_COUNTDOWN_MIN, PREFS_COUNTDOWN_MAX, T_SET_BAD_COUNTDOWN },
     { PAGE_AUTO,    IDC_POLL,     offsetof(prefs, floppy_poll), PREFS_POLL_MIN, PREFS_POLL_MAX, T_SET_BAD_POLL },
+    { PAGE_OPTICAL, IDC_CDSPEED,  offsetof(prefs, cd_speed), PREFS_CDSPEED_MIN, PREFS_CDSPEED_MAX, T_SET_BAD_CDSPEED },
     { -1, 0, 0, 0, 0, 0 }
 };
 

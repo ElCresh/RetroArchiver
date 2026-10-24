@@ -46,6 +46,7 @@
  * DRW-08D6MT A101; ...": learned by the reads, their data CDs are read
  * with DiscImageCreator data straight away */
 #define KEY_NOLEADIN   L"NoLeadInDrives"
+#define KEY_CDSPEED    L"CDSpeed"          /* Optical: CD read speed, 16 */
 #define KEY_DATDIR     L"DatFolder"        /* Optical: where the redump DATs are; "" = the program's folder */
 #define KEY_ENABLED    L"Enabled"          /* Automatic: the last choice of the box preparation */
 #define KEY_COUNTDOWN  L"CountdownSeconds" /* Automatic: seconds between the label and the read */
@@ -99,6 +100,8 @@ void set_default_archive(wchar_t *out, int n);
 #define PREFS_COUNTDOWN_MAX  60
 #define PREFS_POLL_MIN       1
 #define PREFS_POLL_MAX       30
+#define PREFS_CDSPEED_MIN    1         /* as OPTICAL_SPEED_MIN/MAX in media.h */
+#define PREFS_CDSPEED_MAX    48
 #define PREFS_LIST           2048        /* NoLeadInDrives */
 
 typedef struct {
@@ -111,6 +114,7 @@ typedef struct {
     /* Optical */
     wchar_t dic[MAX_PATH], drive[16], cd_name[64], dvd_name[64];
     wchar_t datdir[MAX_PATH], offset[16], noleadin[PREFS_LIST];
+    int     cd_speed;                    /* x, given to DiscImageCreator */
     /* Automatic */
     int     countdown, floppy_poll;      /* seconds */
 } prefs;
