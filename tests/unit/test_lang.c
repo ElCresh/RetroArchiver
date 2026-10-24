@@ -141,7 +141,7 @@ static void test_files(void)
     CHECK(wsame(tr(T_LANG_NAME), L"Italiano"));
     CHECK(wsame(tr(T_BTN_READ), L"Leggi"));
     CHECK(wsame(tr(T_SETUP_HINT), L"Per continuare un cofanetto lasciato a met\x00e0: Riprendi..., "
-                                  L"oppure lo stesso titolo esatto."));
+                                  L"oppure lo stesso titolo e la stessa versione."));
     lang_reset();
     CHECK(lang_peek_file(LANG_FILES "it.lng", "language.name", name, 64) == 1);
     CHECK(wsame(name, L"Italiano"));

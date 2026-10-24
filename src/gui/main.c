@@ -4153,6 +4153,7 @@ static void notice(const char *s)
         work_banner();
     } else if (starts(s, "The drive does not hold a ") || starts(s, "DiscImageCreator stopped") ||
                starts(s, "DiscImageCreator cannot open") || starts(s, "DiscImageCreator finished") ||
+               starts(s, "DiscImageCreator does not read with this drive") ||
                starts(s, "The drive's read offset is not set") || starts(s, "The drive was reset ")) {
         /* why a CD read failed (optical.c): it goes into the Riprova banner */
         to_w(s, g_why, 600);

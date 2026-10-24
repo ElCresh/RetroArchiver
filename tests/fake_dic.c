@@ -9,7 +9,8 @@
  *   FAKE_DIC_DIR      folder of the reads (default fixtures/dic)
  *   FAKE_DIC_SCRIPT   one line per read: the folder name
  *                     (cd_good, cd_noise, cd_c2, dvd_good), or FAIL
- *                     (error), WRONG (disc of the other type) or
+ *                     (error), WRONG (disc of the other type),
+ *                     FIRMWARE (a known drive without its last firmware) or
  *                     SLOW folder (5 seconds first) or EXITn folder
  *                     (complete read but exit code n), RESETSn folder (n
  *                     drive resets first, then the folder or FAIL), LEADIN
@@ -273,6 +274,11 @@ static int dump(int kind, const char *file, int sf)
     }
     if (!strcmp(what, "WRONG")) {
         printf("Wrong command. The disc isn't CD, CD-R, CD-RW, GD\n");
+        return 1;
+    }
+    if (!strcmp(what, "FIRMWARE")) {
+        printf("[ERROR] This drive isn't latest firmware. Please update\n"
+               " -> https://web.archive.org/web/20200128060702/http://www.skcj.co.jp/discon/download/index.html\n");
         return 1;
     }
     /* a drive that cannot read the lead-in, as the ASUS DRW-08D6MT on the PC;

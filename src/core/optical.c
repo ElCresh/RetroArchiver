@@ -271,6 +271,7 @@ typedef struct {
     FILE *f; runner_line_fn fn; void *ctx;
     int wrong;          /* "Wrong command. The disc isn't CD" */
     int denied;         /* "GetLastError: 5" */
+    int firmware;       /* "This drive isn't latest firmware" */
     int ask_offset;     /* DIC asked for the drive's read offset */
     int sf;             /* the read looks for copy protections */
     int resets;         /* "UNIT_ATTENTION" (the drive was reset) and "GetLastError: 121" (timeout) */
@@ -294,6 +295,9 @@ static void tee_line(void *c, const char *line)
     tee *t = (tee *)c;
     if (strstr(line, "Wrong command")) t->wrong = 1;
     if (strstr(line, "GetLastError: 5,")) t->denied = 1;
+    /* seen on the PC with the PLEXTOR PX-760A 1.06: DIC wants the last
+     * firmware of a drive it knows (1.07) and stops before reading */
+    if (strstr(line, "isn't latest firmware")) t->firmware = 1;
     if (strstr(line, ASK_OFFSET)) t->ask_offset = 1;
     /* seen on the PC (ASUS DRW-08D6MT): "This drive can't read the lead-in",
      * then a raw read of LBA -1 refused with ILLEGAL_REQUEST, and DIC stops
@@ -1085,6 +1089,10 @@ static void fail_text(char *p, size_t n, int dvd, int code, const tee *t, const 
     else if (t->denied)
         snprintf(p, n, "DiscImageCreator cannot open drive %s: (access denied): run the program "
                        "as an administrator.", drive);
+    else if (t->firmware)
+        snprintf(p, n, "DiscImageCreator does not read with this drive until its firmware is the "
+                       "latest one: update the drive's firmware (DiscImageCreator's log says where "
+                       "to find it), restart the PC and read the %s again.", dvd ? "DVD" : "CD");
     else if (code != 0)
         stop_message(p, n, code, t, out_dir);
     else
@@ -1256,7 +1264,7 @@ static int read_data(const char *out_dir, const char *base, const char *arg, int
     if (have && code != 0 && con) fprintf(con, EXIT_MARK "%d\n", code);
     if (con) fclose(con);
     prot_used = t.resets ? (t.sf ? 2 : -1) : sf;
-    if (t.wrong || t.denied || (t.ask_offset && !offset[0])) prot_used = -1;
+    if (t.wrong || t.denied || t.firmware || (t.ask_offset && !offset[0])) prot_used = -1;
     if (!have) {
         fail_text(p, sizeof(p), 0, code, &t, out_dir, base, name);
         say(on_line, ctx, p);
@@ -1359,7 +1367,8 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
         }
         return 0;
     }
-    if (t.wrong || t.denied || t.leadin || (t.ask_offset && !offset[0])) prot_used = -1;    /* /sf would not help */
+    if (t.wrong || t.denied || t.firmware || t.leadin || (t.ask_offset && !offset[0]))
+        prot_used = -1;    /* /sf would not help */
     if (t.leadin && !dvd && !t.stopped && !(t.ask_offset && !offset[0])) {
         /* the TOC DIC read before stopping is the full one (sessions too) */
         optical_toc toc; char why2[300], tocp[1100];

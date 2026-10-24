@@ -887,6 +887,15 @@ ok("safety net: the disc keeps the scan on, the read says how it was made",
    cd["status"] == "clean" and cd.get("copy_protection_scan") == "on"
    and cd["disc"]["copy_protection_scan"]["used"] == 1 and cd["disc"]["copy_protection_scan"]["choice"] == "on",
    json.dumps(cd))
+# an old firmware (PLEXTOR PX-760A 1.06 on the PC): DIC refuses before reading;
+# the log says to update it, and the next read does not turn the scan on
+rc, out = run("Firmware vecchio", 0, [], ["", ""], ["-C", "1", "-r"], tpl=None,
+              dic=["FIRMWARE", "cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
+cd = meta(bag("Firmware vecchio"))["media"][0]
+ok("old firmware: the log says to update it, no copy protection scan after it",
+   rc == 0 and "update the drive's firmware" in out
+   and dic_log() == ["cd nosf offset none"] * 3 and cd["status"] == "clean", out)
+
 # reads with errors: proposed again, Skip keeps what there is
 rc, out = run("Protezione errori", 0, [], ["", "S"], ["-C", "1", "-r"], tpl=None,
               dic=["cd_c2", "cd_c2"], env_extra=disc_env(DISC_PLAIN))
