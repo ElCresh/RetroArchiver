@@ -200,6 +200,8 @@ static void usage(void)
     say("    -C N       the CDs in the box          (default 0)\n");
     say("    -D N       the DVDs in the box         (default 0)\n");
     say("    -t TITLE   title of the box: it becomes the package folder\n");
+    say("    -e TEXT    edition or version: two boxes with the same title and\n");
+    say("               different editions get two folders, TITLE (EDITION)\n");
     say("    -P NAME    platform (MS-DOS, Amiga, ...)\n");
     say("    -p PATTERN floppy file names, with placeholders (default FLOPPY{nn})\n");
     say("    -o DIR     archive folder (default the current one)\n");
@@ -226,8 +228,8 @@ static void usage(void)
     say("  Examples:\n");
     say("    dskrun 4 -t \"Monkey Island\" -P MS-DOS -o D:\\Archive\n");
     say("    dskrun 3 -C 1 -t \"Windows NT Workstation 4.0\" -P \"Windows NT\"\n\n");
-    say("  Each box becomes a BagIt package in DIR\\TITLE, with the\n");
-    say("  images, the scans and metadata.json. If you stop it (Q), run\n");
+    say("  Each box becomes a BagIt package in DIR\\TITLE (EDITION), with\n");
+    say("  the images, the scans and metadata.json. If you stop it (Q), run\n");
     say("  the same command again to resume from the missing disk.\n");
     say("  CDs and DVDs are asked for after the floppies and read with\n");
     say("  DiscImageCreator, each into its own folder (data\\CD01\\...):\n");
@@ -239,7 +241,7 @@ static void usage(void)
 int main(int argc, char **argv)
 {
     session_cfg cfg; session_host host; meta_box *box;
-    char title[256] = "", platform[64] = "unspecified", tpl[256] = "FLOPPY{nn}", outdir[512] = ".";
+    char title[256] = "", edition[128] = "", platform[64] = "unspecified", tpl[256] = "FLOPPY{nn}", outdir[512] = ".";
     char samdisk[512] = "", source[512] = "", comp[80], dic[512] = "", drive[16] = "", dats[512] = "";
     int i, rc, tot = 0, ncd = 0, ndvd = 0;
 
@@ -252,6 +254,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) to_utf8(argv[++i], outdir, sizeof(outdir), ARG_CP);
         else if (!strcmp(argv[i], "-t") && i + 1 < argc) to_utf8(argv[++i], title, sizeof(title), ARG_CP);
         else if (!strcmp(argv[i], "-P") && i + 1 < argc) to_utf8(argv[++i], platform, sizeof(platform), ARG_CP);
+        else if (!strcmp(argv[i], "-e") && i + 1 < argc) to_utf8(argv[++i], edition, sizeof(edition), ARG_CP);
         else if (!strcmp(argv[i], "-s") && i + 1 < argc) cfg.start = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-m") && i + 1 < argc) cfg.maxread = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-c") && i + 1 < argc) cfg.forced_cyl = atoi(argv[++i]);
@@ -282,6 +285,7 @@ int main(int argc, char **argv)
     if (!box) { say("  ERROR: out of memory\n"); return 2; }
     str_copy(box->title, sizeof(box->title), title);
     str_copy(box->platform, sizeof(box->platform), platform);
+    str_copy(box->edition, sizeof(box->edition), edition);
     meta_set_counts(box, tot, ncd, ndvd);
     g_box = box;
     if (samdisk[0]) floppy_set_samdisk(samdisk);

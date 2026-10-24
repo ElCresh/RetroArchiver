@@ -51,11 +51,33 @@ void session_expand(char *out, size_t n, const char *tpl, int disk, const char *
     sb_free(&b);
 }
 
-void session_bagdir(char *out, size_t n, const char *outroot, const char *title)
+/* 1 if the bag in bagdir was opened with this edition */
+static int bag_has_edition(const char *bagdir, const char *edition)
 {
-    char name[96];
+    char data[1040]; meta_box *m = meta_new(); strbuf err; int same = 0;
+    if (!m) return 0;
+    sb_init(&err);
+    u8_join(data, sizeof(data), bagdir, "data");
+    if (meta_load(m, data, &err) == 0) same = !strcmp(m->edition, edition);
+    meta_delete(m);
+    sb_free(&err);
+    return same;
+}
+
+/* Two editions of the same title are two boxes: "Microsoft Office (97)"
+ * and "Microsoft Office (2000)". Up to 261017 the folder was the title
+ * alone: a box made that way keeps its folder if it has the same edition. */
+void session_bagdir(char *out, size_t n, const char *outroot, const char *title, const char *edition)
+{
+    char name[96], ed[48], both[150];
     bag_dirname(title, name, 81);
     u8_join(out, n, outroot, name);
+    if (!edition || !edition[0] || (u8_exists(out) && bag_has_edition(out, edition))) return;
+    /* the edition is never cut away by a long title: it is what tells them apart */
+    bag_dirname(edition, ed, 41);
+    bag_dirname(title, name, 81 - strlen(ed) - 3);
+    snprintf(both, sizeof(both), "%s (%s)", name, ed);
+    u8_join(out, n, outroot, both);
 }
 
 static const char *const default_names[MEDIA_KINDS] = { "FLOPPY{nn}", "CD{nn}", "DVD{nn}" };
@@ -623,16 +645,23 @@ static void mark_missing(meta_box *b)
     }
 }
 
+/* "Title" or "Title" (edition), for the messages */
+static void box_name(const char *title, const char *edition, char *out, size_t n)
+{
+    if (edition[0]) snprintf(out, n, "\"%s\" (%s)", title, edition);
+    else snprintf(out, n, "\"%s\"", title);
+}
+
 /* new or resumed bag; -1 if it cannot go on */
 static int open_bag(run_ctx *r)
 {
     meta_box *box = r->cfg->box;
-    char want[sizeof(box->title)], mp[1040], was[80], now[80];
+    char want[sizeof(box->title)], want_ed[sizeof(box->edition)], mp[1040], was[80], now[80];
     int nwant = box->media_expected;
     if (u8_exists(r->bagdir)) {
         if (!bag_is_open(r->bagdir)) {
-            ev(r, EV_ERROR, 0, "The box \"%s\" is already closed in %s: choose another title.",
-               box->title, r->bagdir);
+            ev(r, EV_ERROR, 0, "The box \"%s\" is already closed in %s: choose another title, "
+                               "or tell it apart with the edition.", box->title, r->bagdir);
             return -1;
         }
         u8_join(mp, sizeof(mp), r->datadir, "metadata.json");
@@ -648,16 +677,21 @@ static int open_bag(run_ctx *r)
             return save(r);
         }
         CP(want, box->title);               /* meta_load rewrites the box */
+        CP(want_ed, box->edition);
         meta_composition(box, now, sizeof(now));
         if (meta_load(box, r->datadir, &r->msg)) {
             ev(r, EV_ERROR, 0, "%s", r->msg.s);
             return -1;
         }
-        /* different titles can give the same folder ("A: B" and "A_ B") */
-        if (strcmp(box->title, want)) {
-            ev(r, EV_ERROR, 0, "The folder %s holds the box \"%s\", not \"%s\": choose a "
-                               "different title, or resume that box with its exact title.",
-               r->bagdir, box->title, want);
+        /* different titles can give the same folder ("A: B" and "A_ B"),
+         * and so can an edition typed in the title ("A (2)" and "A", 2) */
+        if (strcmp(box->title, want) || strcmp(box->edition, want_ed)) {
+            char had[400], asked[400];
+            box_name(box->title, box->edition, had, sizeof(had));
+            box_name(want, want_ed, asked, sizeof(asked));
+            ev(r, EV_ERROR, 0, "The folder %s holds the box %s, not %s: choose a different "
+                               "title, or resume that box with its exact title and edition.",
+               r->bagdir, had, asked);
             return -1;
         }
         meta_composition(box, was, sizeof(was));
@@ -911,7 +945,7 @@ int session_run(const session_cfg *cfg, const session_host *host)
         ev(&r, EV_ERROR, 0, "Cannot create the folder %s: check the path.", cfg->outroot);
         goto out;
     }
-    session_bagdir(r.bagdir, sizeof(r.bagdir), cfg->outroot, box->title);
+    session_bagdir(r.bagdir, sizeof(r.bagdir), cfg->outroot, box->title, box->edition);
     u8_join(r.datadir, sizeof(r.datadir), r.bagdir, "data");
     if (names_collide(&r)) goto out;
     cp = cfg->copy_protection ? meta_prot_parse(cfg->copy_protection) : -1;

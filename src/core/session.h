@@ -91,8 +91,9 @@ const char *session_aside_dir(const char *bagdir);
 int  session_aside_list(const char *bagdir, strbuf *out);
 /* {n} {nn} {nnn} {set} {date} ({data} as in 261017); the result is truncated to n bytes */
 void session_expand(char *out, size_t n, const char *tpl, int disk, const char *title);
-/* bag folder: outroot + cleaned-up title */
-void session_bagdir(char *out, size_t n, const char *outroot, const char *title);
+/* bag folder: outroot + cleaned-up "Title (Edition)"; the title alone
+ * without an edition, or for a box made that way with this edition */
+void session_bagdir(char *out, size_t n, const char *outroot, const char *title, const char *edition);
 
 /* the naming scheme of a kind: the one fixed in the box, otherwise the
  * one in names (may be NULL), otherwise FLOPPY{nn} CD{nn} DVD{nn} */

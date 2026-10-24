@@ -3181,12 +3181,13 @@ static void files_text(const char *title, wchar_t *out, int len)
 /* the grey line below the fields: where the bag will go, and the file names */
 static void bagpath_update(void)
 {
-    char dir[512], title[256], bag[800]; wchar_t wb[800], w[900], f[300];
+    char dir[512], title[256], edition[128], bag[800]; wchar_t wb[800], w[900], f[300];
     get_u8_trim(ID_TITLE, title, sizeof(title));
+    get_u8_trim(ID_EDITION, edition, sizeof(edition));
     get_u8(ID_DIR, dir, sizeof(dir));
     files_text(title, f, 300);
     if (title[0]) {
-        session_bagdir(bag, sizeof(bag), dir, title);
+        session_bagdir(bag, sizeof(bag), dir, title, edition);
         to_w(bag, wb, 800);
         _snwprintf(w, 900, tr(T_BAGPATH), wb, f);
     } else {
@@ -3289,7 +3290,7 @@ static void start(void)
     get_u8(ID_PUBLISHER, g_box->publisher, sizeof(g_box->publisher));
     get_u8(ID_YEAR, g_box->year, sizeof(g_box->year));
     get_u8(ID_LANGUAGE, g_box->language, sizeof(g_box->language));
-    get_u8(ID_EDITION, g_box->edition, sizeof(g_box->edition));
+    get_u8_trim(ID_EDITION, g_box->edition, sizeof(g_box->edition));
     get_u8(ID_NOTES, g_box->notes, sizeof(g_box->notes));
     if ((why = missing(bad)) != NULL) {
         MessageBoxW(g_wnd, why, L"RetroArchiver", MB_ICONINFORMATION);
@@ -3352,7 +3353,7 @@ static void start(void)
     g_cfg.copy_protection = meta_prot_key(g_prot);
     /* copies for the window: while the session runs g_box belongs to the worker thread */
     str_copy(g_title, sizeof(g_title), g_box->title);
-    session_bagdir(g_bagdir, sizeof(g_bagdir), g_outdir, g_box->title);
+    session_bagdir(g_bagdir, sizeof(g_bagdir), g_outdir, g_box->title, g_box->edition);
 
     reset_state();
     g_t_sess = GetTickCount();
@@ -4822,7 +4823,8 @@ static int on_command(HWND h, WPARAM wp)
         return 1;
     }
     if (HIWORD(wp) == EN_CHANGE) {
-        if (id == ID_TITLE || id == ID_DIR || id == ID_COUNT || id == ID_CD || id == ID_DVD) bagpath_update();
+        if (id == ID_TITLE || id == ID_EDITION || id == ID_DIR || id == ID_COUNT || id == ID_CD || id == ID_DVD)
+            bagpath_update();
         if (id == ID_ADIR) SetTimer(h, TIMER_ADIR, 600, NULL);     /* re-read once typing stops */
         if (id == ID_ASEARCH) archive_fill(pick_dir());
         if (id == ID_COUNT && g_view == V_SETUP && !g_running) {   /* a drive to check, or not */

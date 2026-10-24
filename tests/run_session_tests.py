@@ -1027,6 +1027,34 @@ ok("remembered drive: the second CD skips cd",
    and "the drive is known not to read the lead-in" in out
    and [d["status"] for d in m["media"]] == ["clean", "clean"], out)
 
+# 33. two editions of the same title are two boxes, each in TITLE (EDITION)
+rc1, out1 = run("Office", 1, ["ident_a", "ident_b"], [""], ["-e", "97"])
+rc2, out2 = run("Office", 1, ["ident_a", "ident_b"], [""], ["-e", "2000"])
+ok("two editions: two closed boxes, one folder each",
+   rc1 == 0 and rc2 == 0 and info(bag("Office (97)")).get("Edition") == "97"
+   and info(bag("Office (2000)")).get("Edition") == "2000"
+   and check_bag.check(bag("Office (2000)"), PROFILE) == [], out1 + out2)
+rc, out = run("Office", 1, ["ident_a", "ident_b"], [""], ["-e", "97"])
+ok("two editions: the same edition again is the closed box", rc == 2 and "is already closed" in out, out)
+# a box of 261017 is in the folder of its title alone, edition or not
+rc, out = run("Antico", 2, ["ident_a", "ident_b"], ["", "Q"], ["-e", "1.0"])
+os.rename(bag("Antico (1.0)"), bag("Antico"))
+before = open(os.path.join(bag("Antico"), "data", "metadata.json"), "rb").read()
+rc, out = run("Antico", 1, ["fat_144", "fat_144"], [""], ["-e", "2.0"])
+ok("old folder, other edition: a new box, the old one untouched",
+   rc == 0 and os.path.isdir(bag("Antico (2.0)"))
+   and open(os.path.join(bag("Antico"), "data", "metadata.json"), "rb").read() == before
+   and os.path.exists(os.path.join(bag("Antico"), ".in-progress")), out)
+rc, out = run("Antico", 2, ["fat_144", "fat_144"], [""], ["-e", "1.0"])
+ok("old folder, same edition: resumed and closed there",
+   rc == 0 and "Resuming" in out and not os.path.exists(bag("Antico (1.0)"))
+   and check_bag.check(bag("Antico"), PROFILE) == [], out)
+# the edition typed in the title gives the same folder: not mixed up
+rc, out = run("Word (6)", 2, ["ident_a", "ident_b"], ["", "Q"])
+rc, out = run("Word", 2, ["ident_a", "ident_b"], [""], ["-e", "6"])
+ok("edition in the title, same folder: clear error",
+   rc == 2 and "holds the box" in out and meta(bag("Word (6)"))["box"]["title"] == "Word (6)", out)
+
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))
 sys.exit(1 if fails else 0)
