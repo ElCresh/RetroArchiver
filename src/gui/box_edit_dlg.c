@@ -433,3 +433,31 @@ int choose_dialog(HWND owner, const edit_choice *c)
     return DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_CHOOSE), owner, choose_proc,
                            (LPARAM)c) == IDOK;
 }
+
+/* ---- the boxes of 261017 ---- */
+
+static INT_PTR CALLBACK convert_proc(HWND dlg, UINT m, WPARAM wp, LPARAM lp)
+{
+    wchar_t w[1200];
+    switch (m) {
+    case WM_INITDIALOG:
+        SetWindowTextW(dlg, tr(T_CONV_TITLE));
+        _snwprintf(w, 1200, tr(T_CONV_TEXT), (int)lp); w[1199] = 0;
+        SetDlgItemTextW(dlg, IDC_CV_TEXT, w);
+        SetDlgItemTextW(dlg, IDOK, tr(T_CONV_GO));
+        SetDlgItemTextW(dlg, IDCANCEL, tr(T_CONV_LATER));
+        SetDlgItemTextW(dlg, IDC_CV_NEVER, tr(T_CONV_NEVER));
+        return TRUE;
+    case WM_COMMAND:
+        if (LOWORD(wp) == IDOK) EndDialog(dlg, CONVERT_GO);
+        else if (LOWORD(wp) == IDCANCEL) EndDialog(dlg, CONVERT_LATER);
+        else if (LOWORD(wp) == IDC_CV_NEVER) EndDialog(dlg, CONVERT_NEVER);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+int convert_dialog(HWND owner, int n)
+{
+    return (int)DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_CONVERT), owner, convert_proc, (LPARAM)n);
+}

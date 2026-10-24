@@ -131,4 +131,9 @@
 #define IDC_CH_TEXT      1650
 #define IDC_CH_LIST      1651
 
+/* the boxes of 261017: Convert / Later / Don't ask again */
+#define IDD_CONVERT      126
+#define IDC_CV_TEXT      1660
+#define IDC_CV_NEVER     1661
+
 #endif

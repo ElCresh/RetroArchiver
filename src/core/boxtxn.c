@@ -447,6 +447,8 @@ int boxtxn_commit(const char *bagdir, const txn_moves *m, const meta_box *box, m
                   void *ctx, const bag_digests *known, const char *newdir, strbuf *err)
 {
     bag_digests trusted; int rc, done = 0;
+    /* tests only: RETROARCHIVER_TXN_CRASH=N stops a program (dskrun) at step N */
+    if (!g_crash && getenv("RETROARCHIVER_TXN_CRASH")) g_crash = atoi(getenv("RETROARCHIVER_TXN_CRASH"));
     CRASH(1);
     if (precheck(bagdir, m, newdir, err)) return -1;
     CRASH(2);

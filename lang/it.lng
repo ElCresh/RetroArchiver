@@ -521,3 +521,26 @@ choose.row.date=Data
 choose.keep.new=Tieni la nuova
 choose.keep.old=Tieni quella di prima
 edit.wait=Aspetta: si sta salvando il cofanetto. Chiudendo adesso, la modifica andrebbe rimessa in ordine la prossima volta.
+
+# conversione dei cofanetti della 261017
+menu.convert=&Converti i cofanetti della 261017...
+convert.title=Cofanetti della 261017
+convert.text=%d cofanetti di questo archivio sono stati fatti con RetroArchiver 261017. Si leggono come sono; per modificarli vanno convertiti al formato di oggi.\n\nOgni pacchetto si controlla prima: uno danneggiato non si tocca. Il metadata.json vecchio resta in set-aside, in data/ non cambia niente. Non è mai obbligatorio.
+convert.go=Converti
+convert.later=Più tardi
+convert.never=Non chiedere più
+convert.progress=Conversione %d di %d: “%ls”...
+convert.done=Cofanetti convertiti: %d. Non convertiti: %d.%ls
+convert.line=\n• %ls: %ls
+convert.hint=\n\nUn cofanetto non convertito è com'era. Per uno danneggiato, Ricontrolla impronte dice quale file non torna.
+convert.before.edit=“%ls” è stato fatto con RetroArchiver 261017: per modificarlo va prima convertito. Il pacchetto si controlla prima e in data/ non cambia niente.\n\nConvertirlo adesso?
+convert.none=In questo archivio non ci sono cofanetti della 261017.
+
+# perché un cofanetto della 261017 non è stato convertito
+convert.why.notbox=non è più un cofanetto
+convert.why.open=è ancora aperto: riprendilo, e chiudendolo si converte
+convert.why.broken=il suo metadata.json o i suoi manifest non si leggono
+convert.why.damaged=%ls non corrisponde alla sua impronta, quindi il cofanetto non si tocca
+convert.why.unfinished=una modifica interrotta non si è ancora potuta rimettere in ordine: riprova più tardi
+convert.why.failed=il pacchetto non si è potuto modificare ed è com'era: chiudi i programmi che possono tenerne aperti i file e riprova
+convert.wait=Aspetta: si stanno convertendo i cofanetti della 261017, uno alla volta. Ognuno richiede un po' di tempo; la finestra si può riusare quando compare il riepilogo.

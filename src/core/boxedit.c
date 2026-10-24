@@ -101,7 +101,9 @@ static void kept_tech(void *c, const meta_disk *d, const char *img, json_writer 
         media = json_get(k->old, "media");
         for (e = media ? media->child : NULL; e; e = e->next) {
             const char *t = json_str(e, "type");
-            if (!t || strcmp(t, meta_kind_key(d->kind)) || json_int(e, "number", 0) != d->num) continue;
+            /* retroarchiver-floppy-1 has neither type nor number: all floppies, by position */
+            if (t ? strcmp(t, meta_kind_key(d->kind)) || json_int(e, "number", 0) != d->num
+                  : d->kind != MEDIA_FLOPPY || json_int(e, "n", 0) != d->n) continue;
             for (f = e->child; f; f = f->next) if (!model_key(f->key)) json_write_val(w, f->key, f);
             return;
         }
@@ -581,6 +583,150 @@ int boxedit_commit_disk(const char *bagdir, meta_box *box, const edit_disk *e, b
     bag_digests_free(&trust);
     jw_free(&w);
     txn_free(&m);
+    meta_delete(nb);
+    return rc;
+}
+
+/* ---- the boxes of 261017 ---- */
+
+int boxedit_is_old(const char *bagdir)
+{
+    arc_box *a = (arc_box *)calloc(1, sizeof(arc_box)); int old;
+    if (!a) return 0;
+    old = arc_load(bagdir, a) && a->old_format && (a->state == ARC_COMPLETE || a->state == ARC_INCOMPLETE);
+    free(a);
+    return old;
+}
+
+typedef struct { char (*name)[300]; int n, cap; } conv_list;
+
+static void conv_name(void *c, const char *name, int isdir)
+{
+    conv_list *l = (conv_list *)c;
+    (void)isdir;
+    if (l->n == l->cap) {
+        l->cap = l->cap ? l->cap * 2 : 16;
+        l->name = (char (*)[300])realloc(l->name, (size_t)l->cap * sizeof(*l->name));
+    }
+    CP(l->name[l->n], name);
+    l->n++;
+}
+
+/* every entry of messi-da-parte/ into set-aside/ with its new name, free
+ * there and among the moves already planned; listed in w */
+static void aside_moves(const char *bagdir, txn_moves *m, json_writer *w)
+{
+    char dir[1024], nn[300], from[400], to[400], p[1100]; conv_list l; int i, j, k;
+    u8_join(dir, sizeof(dir), bagdir, SESSION_ASIDE_DIR_OLD);
+    memset(&l, 0, sizeof(l));
+    u8_listdir(dir, conv_name, &l);
+    for (i = 0; i < l.n; i++) {
+        session_aside_rename(l.name[i], nn, sizeof(nn));
+        snprintf(from, sizeof(from), SESSION_ASIDE_DIR_OLD "/%s", l.name[i]);
+        snprintf(to, sizeof(to), SESSION_ASIDE_DIR "/%s", nn);
+        for (j = 2; j < 1000; j++) {
+            int taken = 0;
+            rel_path(bagdir, to, p, sizeof(p));
+            for (k = 0; k < m->n && !taken; k++) taken = !strcmp(m->to[k], to);
+            if (!taken && !u8_exists(p)) break;
+            snprintf(to, sizeof(to), SESSION_ASIDE_DIR "/%s%d", nn, j);
+        }
+        txn_add(m, from, to);
+        jw_begin_obj(w, NULL);
+        jw_str(w, "from", from);
+        jw_str(w, "to", to);
+        jw_end_obj(w);
+    }
+    free(l.name);
+}
+
+#define WHY(c) (why->code = (c))
+
+int boxedit_convert(const char *bagdir, conv_why *whyp, strbuf *err)
+{
+    char dir[1024], fin[1040], data[1040], p[1100]; strbuf log; arc_box *a; meta_box *old = NULL, *nb = NULL;
+    json_writer w; txn_moves m; bag_digests ok; keep_tech kt; arc_check ck; conv_why spare; int rc = -1;
+    conv_why *why = whyp ? whyp : &spare;
+
+    memset(why, 0, sizeof(*why));
+    WHY(CONV_FAILED);
+    memset(&m, 0, sizeof(m)); memset(&ok, 0, sizeof(ok));
+    jw_init(&w);
+    str_copy(dir, sizeof(dir), bagdir);
+    /* an edit left halfway first: finished or undone */
+    sb_init(&log);
+    if (boxtxn_recover(dir, boxedit_tech, NULL, fin, sizeof(fin), &log) < 0) {
+        sb_printf(err, "an interrupted change could not be put in order: %s", log.s ? log.s : "");
+        WHY(CONV_UNFINISHED);
+        sb_free(&log);
+        goto out;
+    }
+    sb_free(&log);
+    str_copy(dir, sizeof(dir), fin);
+    if (!(a = (arc_box *)calloc(1, sizeof(arc_box)))) { sb_puts(err, "out of memory"); goto out; }
+    if (!arc_load(dir, a)) { sb_printf(err, "%s is not a box", dir); WHY(CONV_NOT_A_BOX); }
+    else if (a->state == ARC_OPEN) { sb_puts(err, "the box is still open: resume it, closing it converts it"); WHY(CONV_OPEN); }
+    else if (a->state == ARC_BROKEN) { sb_printf(err, "the box cannot be read: %s", a->error); WHY(CONV_BROKEN); }
+    else if (!a->old_format) { rc = 1; WHY(CONV_CURRENT); }
+    else rc = 0;
+    free(a);
+    if (rc != 0) goto out;
+    rc = -1;
+    u8_join(data, sizeof(data), dir, "data");
+    if (!(old = meta_new()) || !(nb = meta_new())) { sb_puts(err, "out of memory"); goto out; }
+    if (meta_load(old, data, err)) { WHY(CONV_BROKEN); goto out; }
+    /* already schema 3, an empty messi-da-parte/ left (a conversion finished
+     * by a recovery): only the folder goes, no second entry in the history */
+    if (!strcmp(old->schema, META_SCHEMA)) {
+        conv_list left;
+        memset(&left, 0, sizeof(left));
+        rel_path(dir, SESSION_ASIDE_DIR_OLD, p, sizeof(p));
+        u8_listdir(p, conv_name, &left);
+        if (!left.n) {
+            if (u8_isdir(p)) u8_rmtree(p);
+            free(left.name);
+            WHY(CONV_CURRENT);
+            rc = 1;
+            goto out;
+        }
+        free(left.name);
+    }
+    if (arc_verify_digests(dir, &ck, &ok, err)) { WHY(CONV_BROKEN); goto out; }
+    if (ck.changed || ck.lost || ck.extra) {
+        sb_printf(err, "%s does not match the manifest: the box is not touched", ck.first);
+        WHY(CONV_DAMAGED);
+        str_copy(why->file, sizeof(why->file), ck.first);
+        goto out;
+    }
+    *nb = *old;
+    entry_head(&w, "convert", NULL);
+    jw_str(&w, "from", old->schema[0] ? old->schema : "unknown");
+    jw_begin_arr(&w, "set_aside");
+    aside_moves(dir, &m, &w);
+    jw_end_arr(&w);
+    jw_end_obj(&w);
+    if (meta_history_add(nb, w.out.s)) { sb_puts(err, "the history of the box is full"); goto out; }
+    /* set-aside/ before the transaction: the old tag files go there, not
+     * into messi-da-parte/ */
+    rel_path(dir, SESSION_ASIDE_DIR, p, sizeof(p));
+    if (u8_mkdir(p)) { sb_printf(err, "cannot create %s", p); goto out; }
+    keep_tech_open(&kt, dir, -1, 0, boxedit_tech, NULL);
+    rc = boxtxn_commit(dir, &m, nb, kept_tech, &kt, &ok, NULL, err) ? -1 : 0;
+    keep_tech_close(&kt);
+    if (rc == 0) {
+        conv_list left;
+        WHY(CONV_DONE);
+        memset(&left, 0, sizeof(left));
+        rel_path(dir, SESSION_ASIDE_DIR_OLD, p, sizeof(p));
+        u8_listdir(p, conv_name, &left);
+        if (u8_isdir(p) && !left.n) u8_rmtree(p);  /* only an empty folder goes */
+        free(left.name);
+    }
+out:
+    jw_free(&w);
+    txn_free(&m);
+    bag_digests_free(&ok);
+    meta_delete(old);
     meta_delete(nb);
     return rc;
 }

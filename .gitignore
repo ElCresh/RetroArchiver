@@ -7,6 +7,7 @@ tests/fixtures/
 archivio.csv
 tests/tmp_unit/
 tests/tmp_session/
+tests/tmp_*/
 tests/__pycache__/
 tests/xp/dll/
 dist/

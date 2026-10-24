@@ -749,10 +749,11 @@ ok("261017 open box: outcomes in English, new schema, markers gone",
    [d["status"] for d in m["media"]] == ["clean", "clean", "clean"] and m["schema"] == "retroarchiver-3"
    and not os.path.exists(os.path.join(b, ".in-corso")) and not os.path.exists(os.path.join(b, ".in-progress"))
    and info(b).get("Box-Status") == "complete", json.dumps(m["media"]))
-ok("261017 open box: its messi-da-parte folder is kept and used",
-   os.path.exists(os.path.join(b, "messi-da-parte", "disco01_b.dsk.danneggiato"))
-   and os.path.exists(os.path.join(b, "messi-da-parte", "disco02_c.dsk.danneggiato"))
-   and not os.path.exists(os.path.join(b, "set-aside")), str(os.listdir(b)))
+# closing converts it: messi-da-parte/ becomes set-aside/ with the English suffixes
+ok("261017 open box: closing moves messi-da-parte to set-aside",
+   os.path.exists(os.path.join(b, "set-aside", "disco01_b.dsk.damaged"))
+   and os.path.exists(os.path.join(b, "set-aside", "disco02_c.dsk.damaged"))
+   and not os.path.exists(os.path.join(b, "messi-da-parte")), str(os.listdir(b)))
 
 # 28c. a box closed by 261017 (profile 2, Box-Status in Italian) still checks out
 b = bag("Sano")
@@ -1176,6 +1177,97 @@ with open(mj, "w", encoding="utf-8") as f:
     json.dump(old_m, f)
 rc, out = run("Antico", 0, [], [""], ["--reread", "floppy1", "-e", "1.0"])
 ok("reread: a box of 261017 is refused", rc == 2 and "convert it first" in out, out)
+
+print("\nconversion of the boxes of 261017 (--convert)")
+CONV = os.path.join(WORK, "conv")
+
+
+def rehash(b):
+    """the manifests again, after changing the files by hand"""
+    lines = []
+    for root, _, files in os.walk(os.path.join(b, "data")):
+        for name in files:
+            p = os.path.join(root, name)
+            rel = os.path.relpath(p, b).replace(os.sep, "/")
+            lines.append("%s  %s\n" % (sha(p), rel))
+    with open(os.path.join(b, "manifest-sha256.txt"), "w", newline="") as f:
+        f.write("".join(sorted(lines, key=lambda l: l.split("  ", 1)[1].encode())))
+    with open(os.path.join(b, "tagmanifest-sha256.txt"), "w", newline="") as f:
+        for t in ("bagit.txt", "bag-info.txt", "manifest-sha256.txt"):
+            f.write("%s  %s\n" % (sha(os.path.join(b, t)), t))
+
+
+def make_old(b):
+    """a closed box as 261017 left it"""
+    mp = os.path.join(b, "data", "metadata.json")
+    with open(mp, encoding="utf-8") as f:
+        m = json.load(f)
+    m["schema"] = "retroarchiver-2"
+    for d in m["media"]:
+        if d["status"] == "clean":
+            d["status"] = "pulito"
+    with open(mp, "w", encoding="utf-8") as f:
+        json.dump(m, f, indent=2)
+    bi = os.path.join(b, "bag-info.txt")
+    with open(bi, encoding="utf-8") as f:
+        t = f.read()
+    with open(bi, "w", encoding="utf-8", newline="") as f:
+        f.write(t.replace("Box-Status: complete", "Box-Status: completo").replace("bagit-profile:3", "bagit-profile:2"))
+    os.makedirs(os.path.join(b, "messi-da-parte"))
+    with open(os.path.join(b, "messi-da-parte", "disco01_b.dsk.danneggiato"), "w") as f:
+        f.write("old")
+    rehash(b)
+
+
+os.makedirs(CONV)
+for t in ("Vecchio buono", "Vecchio rotto", "Nuovo"):
+    run(t, 1, ["ident_a", "ident_b"], [""], arch=CONV)
+make_old(os.path.join(CONV, "Vecchio buono"))
+make_old(os.path.join(CONV, "Vecchio rotto"))
+with open(os.path.join(CONV, "Vecchio rotto", "data", "disco01.dsk"), "ab") as f:
+    f.write(b"rot")
+
+
+def convert_in(folder, *args):
+    p = subprocess.run([DSKRUN, "--convert", "-o", folder] + list(args), stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT)
+    return p.returncode, p.stdout.decode("utf-8", "replace")
+
+
+def convert(*args):
+    return convert_in(CONV, *args)
+
+
+rc, out = convert()
+good = os.path.join(CONV, "Vecchio buono")
+ok("convert: one converted, one not, exit 1", rc == 1 and "Converted: Vecchio buono" in out
+   and "Not converted: Vecchio rotto" in out and "disco01.dsk" in out, out)
+ok("convert: the converted box is valid with profile 3", check_bag.check(good, PROFILE) == []
+   and meta(good)["schema"] == "retroarchiver-3" and meta(good)["media"][0]["status"] == "clean"
+   and os.path.exists(os.path.join(good, "set-aside", "disco01_b.dsk.damaged"))
+   and not os.path.exists(os.path.join(good, "messi-da-parte"))
+   and (meta(good).get("history") or [{}])[-1].get("action") == "convert", str(os.listdir(good)))
+ok("convert: the damaged box is not touched", os.path.exists(os.path.join(CONV, "Vecchio rotto", "messi-da-parte"))
+   and meta(os.path.join(CONV, "Vecchio rotto"))["schema"] == "retroarchiver-2", out)
+ok("convert: the box already in the current format is not listed", "Nuovo" not in out, out)
+rc, out = convert("-t", "Vecchio rotto")
+ok("convert -t: the damaged one alone, exit 1", rc == 1 and "Not converted: Vecchio rotto" in out, out)
+rc, out = convert("-t", "Vecchio buono")
+ok("convert -t: already converted, exit 0", rc == 0 and "Already in the current format: Vecchio buono" in out, out)
+
+# a power cut in the middle of --convert: running the same command again finishes it
+CONV2 = os.path.join(WORK, "conv2")
+os.makedirs(CONV2)
+run("Tagliato", 1, ["ident_a", "ident_b"], [""], arch=CONV2)
+cut = os.path.join(CONV2, "Tagliato")
+make_old(cut)
+p = subprocess.run([DSKRUN, "--convert", "-o", CONV2], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                   env=dict(os.environ, RETROARCHIVER_TXN_CRASH="5"))
+ok("convert cut: the box is left halfway", os.path.isdir(os.path.join(cut, "editing")), p.stdout.decode())
+rc, out = convert_in(CONV2)
+ok("convert cut: the same command again finishes it", rc == 0 and check_bag.check(cut, PROFILE) == []
+   and not os.path.exists(os.path.join(cut, "editing")) and not os.path.exists(os.path.join(cut, "messi-da-parte"))
+   and meta(cut)["schema"] == "retroarchiver-3", out + str(os.listdir(cut)))
 
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))

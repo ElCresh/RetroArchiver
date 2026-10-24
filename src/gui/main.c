@@ -52,6 +52,8 @@
 #define WM_APP_DISKIN (WM_APP + 12) /* wParam: generation, lParam: FP_... from the floppy watcher */
 #define WM_APP_NOLEADIN (WM_APP + 13) /* lParam: malloc'd model of a drive that cannot read the lead-in */
 #define WM_APP_EDITSAVED (WM_APP + 14) /* lParam: es_result* of the edit's save */
+#define WM_APP_CONVPROG (WM_APP + 16) /* lParam: cv_prog*, a box of 261017 being converted */
+#define WM_APP_CONVERTED (WM_APP + 17) /* lParam: cv_result*, the conversion ended */
 #define WM_APP_CHOOSE (WM_APP + 15)  /* sent by the worker: lParam edit_choice*, returns 1 keep the new read */
 #define OPT_MAX   1000              /* disk bar for CDs and DVDs: thousandths */
 
@@ -83,7 +85,7 @@ enum {
     ID_ADIR = 300, ID_ABROWSE, ID_ASEARCH, ID_APLAT, ID_ASUM, ID_ALIST, ID_ADETAIL,
     ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW,
     /* the menu bar */
-    IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE
+    IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE, IDM_CONVERT
 };
 
 /* what the window knows about a disk: copied by the worker thread, which
@@ -667,7 +669,11 @@ static arc_list g_arc;                  /* the last read of the folder */
 static int     *g_rows, g_nrows;        /* list rows: indexes into g_arc after the filter */
 static int      g_pick = -1;            /* the chosen box, index into g_arc */
 static int      g_arc_loaded, g_arc_empty, g_arc_missing, g_verifying;
-static int      g_saving;               /* an edit of the box's data is being saved */
+static int      g_saving;               /* an edit of the box's data, or a conversion, is being saved */
+static int      g_converting;           /* g_saving is a conversion of the boxes of 261017 */
+static int      g_convert_asked;        /* the question about the boxes of 261017: once per start */
+static char     g_conv_then_edit[600];  /* converted for Modifica: edited when the archive is read again */
+static char     g_edit_after[600];
 static volatile LONG g_arc_gen;
 static char     g_arc_root[512];        /* the folder that was read */
 static char     g_want_dir[600];        /* after the re-read this box gets selected */
@@ -1387,8 +1393,8 @@ static int pick_closed(void)
 /* Modifica: a closed box of this version, nothing else running on it */
 static int pick_editable(void)
 {
-    return pick_closed() && !g_arc.box[g_pick].old_format && !g_arc.box[g_pick].editing
-        && !g_verifying && !g_saving && !g_running;
+    /* a box of 261017 too: Modifica converts it first, asking */
+    return pick_closed() && !g_arc.box[g_pick].editing && !g_verifying && !g_saving && !g_running;
 }
 
 /* Elimina: any box of the list, even a broken one, with nothing running */
@@ -3328,6 +3334,11 @@ static void start(void)
 {
     char buf[512];
     int c[MEDIA_KINDS], bad = setup_counts(c), k;
+    /* a save or a conversion in progress: its end goes back to the archive */
+    if (g_saving) {
+        MessageBoxW(g_wnd, tr(g_converting ? T_CONV_WAIT : T_EDIT_WAIT), L"RetroArchiver", MB_ICONINFORMATION);
+        return;
+    }
     const wchar_t *why;
     DWORD tid;
     HANDLE th;
@@ -3683,6 +3694,9 @@ static const char *pick_dir(void)
     return g_pick >= 0 && g_pick < g_arc.n ? g_arc.box[g_pick].dir : "";
 }
 
+static void edit_pick(void);
+static void convert_ask(void);
+
 static void on_archive(WPARAM gen, arc_result *r)
 {
     char want[600];
@@ -3709,6 +3723,13 @@ static void on_archive(WPARAM gen, arc_result *r)
         _snwprintf(w, 300, tr(T_EDIT_RECOVERED), recovered); w[299] = 0;
         MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONINFORMATION);
     }
+    /* a box just converted for Modifica: now the edit */
+    if (g_edit_after[0]) {
+        int go = !strcmp(pick_dir(), g_edit_after);
+        g_edit_after[0] = 0;
+        if (go) { edit_pick(); return; }
+    }
+    convert_ask();
 }
 
 /* ---- archive: summary and chosen box ---- */
@@ -4018,7 +4039,8 @@ static void verify_pick(void)
 {
     vf_job *job;
     HANDLE th;
-    if (g_pick < 0 || g_verifying || !(job = (vf_job *)calloc(1, sizeof(vf_job)))) return;
+    /* not while a box is being saved or converted: it would read files being rewritten */
+    if (g_pick < 0 || g_verifying || g_saving || !(job = (vf_job *)calloc(1, sizeof(vf_job)))) return;
     str_copy(job->dir, sizeof(job->dir), g_arc.box[g_pick].dir);
     g_verifying = 1;
     th = CreateThread(NULL, 0, verify_worker, job, 0, NULL);
@@ -4071,6 +4093,145 @@ static void on_verify(vf_result *r)
 }
 
 /* ---- running session ---- */
+
+/* ---- archive: the boxes of 261017 ---- */
+
+#define CONV_MAX META_MAXDISK            /* boxes listed one by one in the summary */
+typedef struct { int n; char dir[CONV_MAX * 4][600], title[CONV_MAX * 4][256]; } cv_job;
+typedef struct { int i, n; char title[256]; } cv_prog;
+typedef struct { int done, failed, nlist; char title[CONV_MAX][256]; conv_why why[CONV_MAX]; } cv_result;
+
+static int old_boxes(void)
+{
+    int i, n = 0;
+    for (i = 0; i < g_arc.n; i++)
+        if (g_arc.box[i].old_format && (g_arc.box[i].state == ARC_COMPLETE || g_arc.box[i].state == ARC_INCOMPLETE))
+            n++;
+    return n;
+}
+
+static DWORD WINAPI convert_worker(LPVOID p)
+{
+    cv_job *job = (cv_job *)p;
+    cv_result *r = (cv_result *)calloc(1, sizeof(cv_result));
+    strbuf err; conv_why why; int i, rc;
+    for (i = 0; r && i < job->n; i++) {
+        cv_prog *pg = (cv_prog *)calloc(1, sizeof(cv_prog));
+        if (pg) {
+            pg->i = i + 1; pg->n = job->n;
+            str_copy(pg->title, sizeof(pg->title), job->title[i]);
+            if (!PostMessageW(g_wnd, WM_APP_CONVPROG, 0, (LPARAM)pg)) free(pg);
+        }
+        sb_init(&err);
+        rc = boxedit_convert(job->dir[i], &why, &err);
+        if (rc == 0) r->done++;
+        else if (rc < 0) {
+            r->failed++;
+            if (r->nlist < CONV_MAX) {
+                str_copy(r->title[r->nlist], sizeof(r->title[0]), job->title[i]);
+                r->why[r->nlist] = why;
+                r->nlist++;
+            }
+        }
+        sb_free(&err);
+    }
+    if (r && !PostMessageW(g_wnd, WM_APP_CONVERTED, 0, (LPARAM)r)) free(r);
+    free(job);
+    return 0;
+}
+
+/* all the closed boxes of 261017 of the archive, or only the one in only */
+static void convert_start(const char *only)
+{
+    cv_job *job; HANDLE th; int i;
+    if (g_running || g_saving || g_verifying) { g_conv_then_edit[0] = 0; return; }
+    if (!(job = (cv_job *)calloc(1, sizeof(cv_job)))) { g_conv_then_edit[0] = 0; return; }
+    for (i = 0; i < g_arc.n && job->n < CONV_MAX * 4; i++) {
+        const arc_box *b = &g_arc.box[i];
+        if (!b->old_format || (b->state != ARC_COMPLETE && b->state != ARC_INCOMPLETE)) continue;
+        if (only && strcmp(only, b->dir)) continue;
+        str_copy(job->dir[job->n], sizeof(job->dir[0]), b->dir);
+        str_copy(job->title[job->n], sizeof(job->title[0]), b->title);
+        job->n++;
+    }
+    if (!job->n) {
+        free(job);
+        MessageBoxW(g_wnd, tr(T_CONV_NONE), L"RetroArchiver", MB_ICONINFORMATION);
+        return;
+    }
+    g_saving = g_converting = 1;        /* no archive scan, no closing, as for an edit's save */
+    archive_buttons();
+    th = CreateThread(NULL, 0, convert_worker, job, 0, NULL);
+    if (th) CloseHandle(th);
+    else { free(job); g_saving = g_converting = 0; g_conv_then_edit[0] = 0; archive_buttons(); }
+}
+
+static void on_convert_progress(cv_prog *p)
+{
+    wchar_t w[400], t[300];
+    to_w(p->title, t, 300);
+    _snwprintf(w, 400, tr(T_CONV_PROGRESS), p->i, p->n, t); w[399] = 0;
+    sbar_text(0, w);
+    free(p);
+}
+
+/* why a box was not converted, in the window's language */
+static void why_text(const conv_why *w, wchar_t *out, int n)
+{
+    wchar_t f[300];
+    switch (w->code) {
+    case CONV_NOT_A_BOX:  wcsncpy(out, tr(T_CONV_WHY_NOTBOX), n); break;
+    case CONV_OPEN:       wcsncpy(out, tr(T_CONV_WHY_OPEN), n); break;
+    case CONV_BROKEN:     wcsncpy(out, tr(T_CONV_WHY_BROKEN), n); break;
+    case CONV_UNFINISHED: wcsncpy(out, tr(T_CONV_WHY_UNFINISHED), n); break;
+    case CONV_DAMAGED:
+        to_w(w->file, f, 300);
+        _snwprintf(out, n, tr(T_CONV_WHY_DAMAGED), f);
+        break;
+    default:              wcsncpy(out, tr(T_CONV_WHY_FAILED), n);
+    }
+    out[n - 1] = 0;
+}
+
+static void on_converted(cv_result *r)
+{
+    wchar_t list[6000], line[700], t[300], why[320], all[7000];
+    int i;
+    g_saving = g_converting = 0;
+    list[0] = 0;
+    for (i = 0; i < r->nlist; i++) {
+        to_w(r->title[i], t, 300);
+        why_text(&r->why[i], why, 320);
+        _snwprintf(line, 700, tr(T_CONV_LINE), t, why); line[699] = 0;
+        if (wcslen(list) + wcslen(line) + 1 < 6000) wcscat(list, line);
+    }
+    if (r->failed && wcslen(list) + wcslen(tr(T_CONV_HINT)) + 1 < 6000) wcscat(list, tr(T_CONV_HINT));
+    _snwprintf(all, 7000, tr(T_CONV_DONE), r->done, r->failed, list); all[6999] = 0;
+    /* converted for Modifica: straight to the edit, without the summary */
+    if (g_conv_then_edit[0] && r->done == 1 && !r->failed) {
+        str_copy(g_edit_after, sizeof(g_edit_after), g_conv_then_edit);
+        g_conv_then_edit[0] = 0;
+        archive_show(g_edit_after);
+    } else {
+        g_conv_then_edit[0] = 0;
+        MessageBoxW(g_wnd, all, L"RetroArchiver", r->failed ? MB_ICONEXCLAMATION : MB_ICONINFORMATION);
+        if (g_view == V_ARCHIVE) archive_show(pick_dir());
+        else archive_scan();            /* the list is read again where the user is */
+    }
+    free(r);
+}
+
+/* once per start, after the first read of the archive */
+static void convert_ask(void)
+{
+    int n = old_boxes(), k;
+    if (g_convert_asked || !n || g_running || g_saving || g_view != V_ARCHIVE) return;
+    g_convert_asked = 1;
+    if (!set_int(&g_set, SEC_GENERAL, KEY_CONVERTASK, 1)) return;
+    k = convert_dialog(g_wnd, n);
+    if (k == CONVERT_GO) convert_start(NULL);
+    else if (k == CONVERT_NEVER) set_put_int(&g_set, SEC_GENERAL, KEY_CONVERTASK, 0);
+}
 
 /* ---- archive: Modifica, a closed box ---- */
 
@@ -4242,6 +4403,15 @@ static void edit_pick(void)
     box_edit_result r; edit_change ch[META_MAXDISK + 16]; int rc, n;
     if (!pick_closed() || g_running || g_saving) return;
     str_copy(dir, sizeof(dir), g_arc.box[g_pick].dir);
+    if (g_arc.box[g_pick].old_format) {        /* 261017: converted first, then edited */
+        wchar_t t[300];
+        to_w(g_arc.box[g_pick].title, t, 300);
+        _snwprintf(w, 900, tr(T_CONV_BEFORE_EDIT), t); w[899] = 0;
+        if (MessageBoxW(g_wnd, w, L"RetroArchiver", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+        str_copy(g_conv_then_edit, sizeof(g_conv_then_edit), dir);
+        convert_start(dir);
+        return;
+    }
     sb_init(&err);
     if (!boxedit_editable(dir, &err)) {
         if (g_arc.box[g_pick].old_format) wcsncpy(e, tr(T_EDIT_OLD_FORMAT), 600);
@@ -5034,6 +5204,7 @@ static HMENU menu_build(void)
     AppendMenuW(arc, MF_SEPARATOR, 0, NULL);
     AppendMenuW(arc, MF_STRING, IDM_EXIT, tr(T_MENU_EXIT));
     AppendMenuW(tools, MF_STRING, IDM_SETTINGS, tr(T_MENU_SETTINGS));
+    AppendMenuW(tools, MF_STRING, IDM_CONVERT, tr(T_MENU_CONVERT));
     AppendMenuW(help, MF_STRING, IDM_GUIDE, tr(T_MENU_GUIDE));
     AppendMenuW(help, MF_SEPARATOR, 0, NULL);
     AppendMenuW(help, MF_STRING, IDM_ABOUT, tr(T_MENU_ABOUT));
@@ -5057,6 +5228,8 @@ static void menu_states(HMENU m)
     EnableMenuItem(m, IDM_NEW, MF_BYCOMMAND | busy);
     EnableMenuItem(m, IDM_SETTINGS, MF_BYCOMMAND | busy);
     EnableMenuItem(m, IDM_EDIT, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_editable() ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(m, IDM_CONVERT, MF_BYCOMMAND | (g_view == V_ARCHIVE && old_boxes() && !g_running && !g_saving
+                                                   && !g_verifying ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(m, IDM_DELETE, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_deletable() ? MF_ENABLED : MF_GRAYED));
 }
 
@@ -5223,6 +5396,7 @@ static int on_command(HWND h, WPARAM wp)
     case IDM_GUIDE:   menu_guide(); return 1;
     case IDM_ABOUT:   about_open(); return 1;
     case IDM_EDIT:    edit_pick(); return 1;
+    case IDM_CONVERT: convert_start(NULL); return 1;
     case IDM_DELETE:  delete_pick(); return 1;
     case ID_READ:   answer(CMD_READ); return 1;
     case ID_SKIP:   answer(CMD_SKIP); return 1;
@@ -5278,6 +5452,12 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         return 0;
     case WM_APP_EDITSAVED:
         on_edit_saved((es_result *)lp);
+        return 0;
+    case WM_APP_CONVPROG:
+        on_convert_progress((cv_prog *)lp);
+        return 0;
+    case WM_APP_CONVERTED:
+        on_converted((cv_result *)lp);
         return 0;
     case WM_APP_CHOOSE:
         return choose_dialog(h, (const edit_choice *)lp);
@@ -5342,7 +5522,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         break;
     case WM_CLOSE:
         if (g_saving) {             /* a few seconds: the save is not cut in half */
-            MessageBoxW(h, tr(T_EDIT_WAIT), L"RetroArchiver", MB_ICONINFORMATION);
+            MessageBoxW(h, tr(g_converting ? T_CONV_WAIT : T_EDIT_WAIT), L"RetroArchiver", MB_ICONINFORMATION);
             return 0;
         }
         if (g_running) {

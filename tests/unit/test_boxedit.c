@@ -2,6 +2,7 @@
 #include "unit.h"
 #include "core/archive.h"
 #include "core/boxedit.h"
+#include "core/boxtxn.h"
 #include "core/fsu8.h"
 #include "core/session.h"
 #include "core/sha256.h"
@@ -233,6 +234,222 @@ static void edit_nothing(void)
     meta_delete(b); sb_free(&err);
 }
 
+/* ---- conversion of the boxes of 261017 ---- */
+
+static char *slurp_all(const char *path)
+{
+    FILE *f = u8_fopen(path, "rb"); long n; char *s;
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET);
+    s = (char *)malloc((size_t)n + 1);
+    if (s && fread(s, 1, (size_t)n, f) != (size_t)n) { free(s); s = NULL; }
+    if (s) s[n] = 0;
+    fclose(f);
+    return s;
+}
+
+/* text with every from replaced by to, written back */
+static void patch(const char *path, const char *from, const char *to)
+{
+    char *s = slurp_all(path), *p, *out; size_t lf = strlen(from), lt = strlen(to), k = 0;
+    if (!s) return;
+    out = (char *)malloc(strlen(s) * 2 + 64);
+    for (p = s; *p; ) {
+        if (!strncmp(p, from, lf)) { memcpy(out + k, to, lt); k += lt; p += lf; }
+        else out[k++] = *p++;
+    }
+    out[k] = 0;
+    put(path, out);
+    free(s); free(out);
+}
+
+typedef struct { const char *bag; strbuf *man; } man_ctx;
+static void man_line(void *c, const char *rel)
+{
+    man_ctx *x = (man_ctx *)c; char p[600], hex[65];
+    snprintf(p, sizeof(p), "%s/data/%s", x->bag, rel);
+    if (sha256_file(p, hex, NULL) == 0) sb_printf(x->man, "%s  data/%s\n", hex, rel);
+}
+
+/* the manifests again, after the files were changed by hand */
+static void rehash(const char *bag)
+{
+    static const char *const tags[] = { "bagit.txt", "bag-info.txt", "manifest-sha256.txt" };
+    strbuf man, tag; man_ctx x; char p[600], hex[65]; int i;
+    sb_init(&man); sb_init(&tag);
+    x.bag = bag; x.man = &man;
+    snprintf(p, sizeof(p), "%s/data", bag);
+    u8_walk(p, man_line, &x);
+    snprintf(p, sizeof(p), "%s/manifest-sha256.txt", bag);
+    put(p, man.s ? man.s : "");
+    for (i = 0; i < 3; i++) {
+        snprintf(p, sizeof(p), "%s/%s", bag, tags[i]);
+        sha256_file(p, hex, NULL);
+        sb_printf(&tag, "%s  %s\n", hex, tags[i]);
+    }
+    snprintf(p, sizeof(p), "%s/tagmanifest-sha256.txt", bag);
+    put(p, tag.s);
+    sb_free(&man); sb_free(&tag);
+}
+
+/* a closed box as 261017 left it: schema 2, outcomes and Box-Status in
+ * Italian, profile 2, a damaged read in messi-da-parte/ */
+static void make_old(const char *folder, const char *schema)
+{
+    char bag[300], p[600];
+    meta_box *b = make_box(folder, folder, "", 1, 0);
+    meta_delete(b);
+    snprintf(bag, sizeof(bag), EROOT "/%s", folder);
+    snprintf(p, sizeof(p), "%s/data/metadata.json", bag);
+    patch(p, "retroarchiver-3", schema);
+    patch(p, "\"clean\"", "\"pulito\"");
+    snprintf(p, sizeof(p), "%s/bag-info.txt", bag);
+    patch(p, "Box-Status: complete", "Box-Status: completo");
+    patch(p, "bagit-profile:3", "bagit-profile:2");
+    snprintf(p, sizeof(p), "%s/messi-da-parte", bag);
+    u8_mkdir(p);
+    snprintf(p, sizeof(p), "%s/messi-da-parte/FLOPPY01_b.dsk.danneggiato", bag);
+    put(p, "damaged read");
+    rehash(bag);
+}
+
+static void convert_old_box(void)
+{
+    strbuf err; char *m;
+    sb_init(&err);
+    make_old("Vecchio", "retroarchiver-2");
+    CHECK(boxedit_is_old(EROOT "/Vecchio") == 1);
+    CHECK(boxedit_editable(EROOT "/Vecchio", &err) == 0);
+    sb_clear(&err);
+    CHECK(boxedit_convert(EROOT "/Vecchio", NULL, &err) == 0);
+    if (err.len) printf("  convert: %s\n", err.s);
+    CHECK(verified(EROOT "/Vecchio"));
+    CHECK(!u8_exists(EROOT "/Vecchio/messi-da-parte"));
+    CHECK(u8_exists(EROOT "/Vecchio/set-aside/FLOPPY01_b.dsk.damaged"));
+    CHECK(contains(EROOT "/Vecchio/bag-info.txt", "Box-Status: complete\n"));
+    CHECK(contains(EROOT "/Vecchio/bag-info.txt", "bagit-profile:3\n"));
+    m = slurp_all(EROOT "/Vecchio/data/metadata.json");
+    CHECK(m && strstr(m, "\"schema\": \"retroarchiver-3\"") && strstr(m, "\"status\": \"clean\"")
+          && strstr(m, "\"action\": \"convert\"") && strstr(m, "\"from\": \"retroarchiver-2\""));
+    free(m);
+    CHECK(boxedit_is_old(EROOT "/Vecchio") == 0);
+    sb_clear(&err);
+    CHECK(boxedit_editable(EROOT "/Vecchio", &err) == 1);
+#ifndef _WIN32
+    CHECK(system("python3 -I check_bag.py \"" EROOT "/Vecchio\" > /dev/null") == 0);
+#endif
+    sb_clear(&err);
+    {
+        conv_why why;
+        CHECK(boxedit_convert(EROOT "/Vecchio", &why, &err) == 1);   /* already done */
+        CHECK(why.code == CONV_CURRENT);
+        CHECK(boxedit_convert(EROOT "/non esiste", &why, &err) == -1 && why.code == CONV_NOT_A_BOX);
+    }
+    sb_free(&err);
+}
+
+static void convert_damaged_untouched(void)
+{
+    strbuf err; char *before, *after;
+    sb_init(&err);
+    make_old("VecchioRotto", "retroarchiver-2");
+    put(EROOT "/VecchioRotto/data/FLOPPY01.dsk", "changed after closing");
+    before = slurp_all(EROOT "/VecchioRotto/manifest-sha256.txt");
+    {
+        /* the window says why in its own language: a code and the file, not the core's text */
+        conv_why why;
+        CHECK(boxedit_convert(EROOT "/VecchioRotto", &why, &err) == -1);
+        CHECK(why.code == CONV_DAMAGED);
+        CHECK_STR(why.file, "data/FLOPPY01.dsk");
+    }
+    CHECK(strstr(err.s ? err.s : "", "FLOPPY01.dsk") != NULL);
+    after = slurp_all(EROOT "/VecchioRotto/manifest-sha256.txt");
+    CHECK(before && after && !strcmp(before, after));
+    CHECK(u8_exists(EROOT "/VecchioRotto/messi-da-parte"));
+    free(before); free(after); sb_free(&err);
+}
+
+static void convert_both_aside(void)
+{
+    strbuf err;
+    sb_init(&err);
+    make_old("Doppio", "retroarchiver-2");
+    u8_mkdir(EROOT "/Doppio/set-aside");
+    put(EROOT "/Doppio/set-aside/FLOPPY01_b.dsk.damaged", "already there");
+    CHECK(boxedit_convert(EROOT "/Doppio", NULL, &err) == 0);
+    CHECK(u8_exists(EROOT "/Doppio/set-aside/FLOPPY01_b.dsk.damaged"));
+    CHECK(u8_exists(EROOT "/Doppio/set-aside/FLOPPY01_b.dsk.damaged2"));
+    CHECK(verified(EROOT "/Doppio"));
+    sb_free(&err);
+}
+
+static void convert_floppy1(void)
+{
+    strbuf err;
+    sb_init(&err);
+    make_old("Floppy1", "retroarchiver-floppy-1");
+    CHECK(boxedit_convert(EROOT "/Floppy1", NULL, &err) == 0);
+    CHECK(verified(EROOT "/Floppy1"));
+    CHECK(contains(EROOT "/Floppy1/data/metadata.json", "\"master\": \"FLOPPY01.dsk\""));
+    CHECK(contains(EROOT "/Floppy1/data/metadata.json", "\"from\": \"retroarchiver-floppy-1\""));
+    sb_free(&err);
+}
+
+static void convert_after_recover(void)
+{
+    strbuf err;
+    sb_init(&err);
+    make_old("Interrotto", "retroarchiver-2");
+    u8_mkdirs(EROOT "/Interrotto/editing/data");
+    CHECK(boxedit_convert(EROOT "/Interrotto", NULL, &err) == 0);
+    CHECK(!u8_exists(EROOT "/Interrotto/editing"));
+    CHECK(verified(EROOT "/Interrotto"));
+    sb_free(&err);
+}
+
+/* a conversion cut by a power failure: the recovery finishes it, an empty
+ * messi-da-parte/ stays; converting again only removes it, no second entry */
+static void convert_crash_then_again(void)
+{
+    strbuf err; conv_why why; char *m;
+    sb_init(&err);
+    make_old("Tagliato", "retroarchiver-2");
+    boxtxn_test_crash(5);
+    CHECK(boxedit_convert(EROOT "/Tagliato", &why, &err) == -1);
+    boxtxn_test_crash(0);
+    CHECK(boxedit_is_old(EROOT "/Tagliato") == 0);       /* open for now: the journal is there */
+    sb_clear(&err);
+    CHECK(boxedit_convert(EROOT "/Tagliato", &why, &err) == 1);
+    CHECK(!u8_exists(EROOT "/Tagliato/messi-da-parte"));
+    CHECK(verified(EROOT "/Tagliato"));
+    m = slurp_all(EROOT "/Tagliato/data/metadata.json");
+    {
+        int n = 0; const char *p = m;
+        while (p && (p = strstr(p, "\"action\": \"convert\"")) != NULL) { n++; p++; }
+        CHECK(n == 1);
+    }
+    free(m);
+    sb_free(&err);
+}
+
+/* a real retroarchiver-floppy-1 file: media without "type" and "number";
+ * their technical data still comes from the old file, not computed again */
+static void convert_floppy1_tech(void)
+{
+    meta_box *b = make_box("F1tech", "F1tech", "", 1, 0); strbuf err; int bad;
+    sb_init(&err);
+    CHECK(meta_save(b, EROOT "/F1tech/data", probe_tech, NULL, &err) == 0);
+    CHECK(bag_close(EROOT "/F1tech", b, NULL, &err, &bad) == 0);
+    patch(EROOT "/F1tech/data/metadata.json", "retroarchiver-3", "retroarchiver-floppy-1");
+    patch(EROOT "/F1tech/data/metadata.json", "\"type\": \"floppy\",", "");
+    patch(EROOT "/F1tech/data/metadata.json", "\"number\": 1,", "");
+    rehash(EROOT "/F1tech");
+    CHECK(boxedit_convert(EROOT "/F1tech", NULL, &err) == 0);
+    CHECK(contains(EROOT "/F1tech/data/metadata.json", "\"probe\": \"as read\""));
+    CHECK(!contains(EROOT "/F1tech/data/metadata.json", "filesystem_note"));
+    meta_delete(b); sb_free(&err);
+}
+
 static void editable_rules(void)
 {
     meta_box *b = make_box("Ed", "Ed", "", 1, 0); strbuf why;
@@ -262,5 +479,12 @@ void test_boxedit(void)
     edit_set_frozen();
     edit_nothing();
     edit_keeps_tech();
+    convert_old_box();
+    convert_damaged_untouched();
+    convert_both_aside();
+    convert_floppy1();
+    convert_after_recover();
+    convert_crash_then_again();
+    convert_floppy1_tech();
     editable_rules();
 }

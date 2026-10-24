@@ -54,6 +54,7 @@
 #define KEY_PLATFORM   L"Platform"         /* Box */
 #define KEY_LANGUAGE   L"Language"         /* Box: the box's language, not the program's */
 #define KEY_COPYPROT   L"CopyProtection"   /* Box: the CD copy protection scan, auto on off */
+#define KEY_CONVERTASK L"ConvertAsk"       /* General: 0 = never ask again to convert the boxes of 261017 */
 
 #define SET_FILE        L"RetroArchiver.ini"
 #define SET_USER_DIR    L"RetroArchiver"     /* inside Application Data */

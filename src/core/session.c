@@ -535,6 +535,64 @@ const char *session_aside_dir(const char *bagdir)
     return u8_isdir(p) ? SESSION_ASIDE_DIR_OLD : SESSION_ASIDE_DIR;
 }
 
+void session_aside_rename(const char *old, char *out, size_t n)
+{
+    static const char *const map[][2] = {
+        { SESSION_DAMAGED_OLD, SESSION_DAMAGED }, { ".duplicato", SESSION_DUPLICATE }
+    };
+    const char *s = NULL; size_t i;
+    for (i = 0; i < sizeof(map) / sizeof(map[0]) && !s; i++) {
+        const char *p = old, *q;
+        while ((q = strstr(p, map[i][0])) != NULL) { s = q; p = q + 1; }
+        if (s) {
+            snprintf(out, n, "%.*s%s%s", (int)(s - old), old, map[i][1], s + strlen(map[i][0]));
+            return;
+        }
+    }
+    str_copy(out, n, old);
+}
+
+typedef struct { char (*name)[300]; int n, cap; } name_list;
+
+static void list_name(void *c, const char *name, int isdir)
+{
+    name_list *l = (name_list *)c;
+    (void)isdir;
+    if (l->n == l->cap) {
+        l->cap = l->cap ? l->cap * 2 : 16;
+        l->name = (char (*)[300])realloc(l->name, (size_t)l->cap * sizeof(*l->name));
+    }
+    str_copy(l->name[l->n++], sizeof(l->name[0]), name);
+}
+
+int session_convert_aside(const char *bagdir)
+{
+    char old[1024], dir[1024], from[1400], to[1400], nn[300]; name_list l; int i, j, rc = 0;
+    u8_join(old, sizeof(old), bagdir, SESSION_ASIDE_DIR_OLD);
+    if (!u8_isdir(old)) return 0;
+    u8_join(dir, sizeof(dir), bagdir, SESSION_ASIDE_DIR);
+    if (u8_mkdir(dir)) return -1;
+    memset(&l, 0, sizeof(l));
+    u8_listdir(old, list_name, &l);
+    for (i = 0; i < l.n; i++) {
+        session_aside_rename(l.name[i], nn, sizeof(nn));
+        u8_join(from, sizeof(from), old, l.name[i]);
+        u8_join(to, sizeof(to), dir, nn);
+        for (j = 2; u8_exists(to) && j < 1000; j++) {
+            char alt[320];
+            snprintf(alt, sizeof(alt), "%s%d", nn, j);
+            u8_join(to, sizeof(to), dir, alt);
+        }
+        if (u8_exists(to) || u8_rename_replace(from, to)) rc = -1;
+    }
+    free(l.name);
+    memset(&l, 0, sizeof(l));
+    u8_listdir(old, list_name, &l);
+    if (rc == 0 && !l.n) u8_rmtree(old);        /* only an empty folder goes */
+    free(l.name);
+    return rc;
+}
+
 static int move_aside(run_ctx *r, const char *name, const char *suffix, char *rel, size_t n)
 {
     char from[1024], dir[1024], to[1200], file[300]; int j;
@@ -1295,6 +1353,10 @@ int session_run(const session_cfg *cfg, const session_host *host)
         rc = SESSION_OPEN;
         goto out;
     }
+    /* a box of 261017 closes in the current format: its messi-da-parte/ too */
+    if (session_convert_aside(r.bagdir))
+        ev(&r, EV_LINE, 0, "WARNING: some files of %s" U8_SEP SESSION_ASIDE_DIR_OLD " could not be moved to "
+                           SESSION_ASIDE_DIR ": they stay there.", r.bagdir);
     meta_now(box->closed);
     sb_clear(&r.msg);
     if (save(&r) == 0 && bag_close(r.bagdir, box, NULL, &r.msg, &bad) == 0) {

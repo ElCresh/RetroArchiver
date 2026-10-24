@@ -62,6 +62,26 @@ typedef struct {
 int  boxedit_commit_disk(const char *bagdir, meta_box *box, const edit_disk *e, bag_digests *known,
                          const bag_digests *bad, meta_tech_fn tech, void *ctx, strbuf *err);
 
+/* 1 if the box is closed and was written by 261017 (schema 2 or older,
+ * messi-da-parte/, Italian outcomes): it can be converted */
+int  boxedit_is_old(const char *bagdir);
+/* the box of 261017 in the current format, in one transaction: metadata.json
+ * schema 3 with a "convert" entry in its history, bag-info and manifests
+ * again, messi-da-parte/ into set-aside/ with the English suffixes; data/
+ * does not change. 0 converted, 1 already in the current format, -1 not
+ * touched, with the reason (open, damaged, unreadable) */
+enum {
+    CONV_DONE, CONV_CURRENT,    /* converted; already in the current format */
+    CONV_NOT_A_BOX, CONV_OPEN, CONV_BROKEN,
+    CONV_DAMAGED,               /* a file does not match the manifest: file says which */
+    CONV_UNFINISHED,            /* an interrupted change could not be put in order */
+    CONV_FAILED                 /* the transaction did not go through: the box is as it was */
+};
+/* why, for the window, which writes it in its own language; err keeps the
+ * English text for the console */
+typedef struct { int code; char file[300]; } conv_why;
+int  boxedit_convert(const char *bagdir, conv_why *why, strbuf *err);
+
 /* the technical data of a medium, by its kind */
 void boxedit_tech(void *ctx, const meta_disk *d, const char *img, json_writer *w);
 

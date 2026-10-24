@@ -18,6 +18,7 @@
 #include "core/session.h"
 #include "core/boxedit.h"
 #include "core/boxtxn.h"
+#include "core/archive.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -255,6 +256,67 @@ static int parse_reread(const char *list, const meta_box *b, char reread[META_MA
     return 0;
 }
 
+/* --convert: one box; 0 converted, 1 already current, -1 not converted */
+static int convert_one(const char *bag)
+{
+    arc_box *a = (arc_box *)calloc(1, sizeof(arc_box)); strbuf err; int rc;
+    const char *name = bag + strlen(bag);
+    while (name > bag && name[-1] != '/' && name[-1] != '\\') name--;
+    if (a && arc_load(bag, a)) name = a->title;
+    sb_init(&err);
+    rc = boxedit_convert(bag, NULL, &err);
+    if (rc == 0) say("  Converted: %s\n", name);
+    else if (rc == 1) say("  Already in the current format: %s\n", name);
+    else say("  Not converted: %s: %s.\n", name, err.s ? err.s : "");
+    sb_free(&err);
+    free(a);
+    return rc;
+}
+
+typedef struct { const char *root; int done, failed; } convert_ctx;
+
+static void convert_entry(void *c, const char *name, int isdir)
+{
+    convert_ctx *x = (convert_ctx *)c; char bag[1024];
+    char ed[1100], fin[1040]; strbuf log;
+    if (!isdir) return;
+    u8_join(bag, sizeof(bag), x->root, name);
+    /* a conversion cut by a power failure looks open: put it in order first */
+    u8_join(ed, sizeof(ed), bag, BOXTXN_DIR);
+    if (u8_isdir(ed)) {
+        sb_init(&log);
+        if (boxtxn_recover(bag, boxedit_tech, NULL, fin, sizeof(fin), &log) > 0 && log.s) say("  %s", log.s);
+        sb_free(&log);
+        str_copy(bag, sizeof(bag), fin);
+    }
+    if (!boxedit_is_old(bag)) return;
+    if (convert_one(bag) >= 0) x->done++; else x->failed++;   /* 1: finished by the recovery */
+}
+
+/* the boxes of 261017 in the current format: all those of outdir, or one */
+static int run_convert(const char *outdir, const char *title, const char *edition)
+{
+    convert_ctx x; char bag[1024]; int rc;
+    if (title[0]) {
+        session_bagdir(bag, sizeof(bag), outdir, title, edition);
+        if (!u8_isdir(bag)) {
+            say("  ERROR: there is no box \"%s\" in %s: check the title, the edition and -o.\n", title, outdir);
+            return 2;
+        }
+        rc = convert_one(bag);
+        return rc < 0 ? 1 : 0;
+    }
+    x.root = outdir; x.done = x.failed = 0;
+    if (u8_listdir(outdir, convert_entry, &x)) {
+        say("  ERROR: cannot read the folder %s: check -o.\n", outdir);
+        return 2;
+    }
+    if (!x.done && !x.failed) say("  No box made by 261017 in %s: nothing to convert.\n", outdir);
+    else say("\n  %d converted, %d not converted%s\n", x.done, x.failed,
+             x.failed ? ": the reasons are above; a damaged box is never touched." : ".");
+    return x.failed ? 1 : 0;
+}
+
 /* --reread: an edit left halfway is finished or undone first, then the
  * media to read are found in the box's own composition */
 static int open_reread(session_cfg *cfg, meta_box *box, const char *outdir, const char *list)
@@ -282,7 +344,11 @@ static int open_reread(session_cfg *cfg, meta_box *box, const char *outdir, cons
 static void usage(void)
 {
     say("  usage: dskrun NUM_FLOPPIES -t TITLE [options]\n");
-    say("         dskrun --reread MEDIA -t TITLE [-e EDITION] [options]\n\n");
+    say("         dskrun --reread MEDIA -t TITLE [-e EDITION] [options]\n");
+    say("         dskrun --convert [-t TITLE [-e EDITION]] [-o DIR]\n\n");
+    say("    --convert  bring the boxes made by 261017 to the current format\n");
+    say("               (all those of DIR, or the one of -t); a damaged box\n");
+    say("               is not touched. Exit code 1 if one was not converted\n");
     say("    --reread MEDIA  read again media of a closed box: floppy3,cd1,dvd2\n");
     say("               or missing. Each medium is saved on its own; the better\n");
     say("               read is kept and the other goes to set-aside/\n");
@@ -338,6 +404,7 @@ int main(int argc, char **argv)
     char title[256] = "", edition[128] = "", platform[64] = "unspecified", tpl[256] = "FLOPPY{nn}", outdir[512] = ".";
     char samdisk[512] = "", source[512] = "", comp[80], dic[512] = "", drive[16] = "", dats[512] = "";
     char reread[256] = "";
+    int convert = 0;
     int i, rc, tot = 0, ncd = 0, ndvd = 0;
 
     say("\ndskrun 2.2 - batch archiving of floppies, CDs and DVDs\n\n");
@@ -362,6 +429,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-d") && i + 1 < argc) to_utf8(argv[++i], drive, sizeof(drive), ARG_CP);
         else if (!strcmp(argv[i], "-R") && i + 1 < argc) to_utf8(argv[++i], dats, sizeof(dats), ARG_CP);
         else if (!strcmp(argv[i], "--reread") && i + 1 < argc) to_utf8(argv[++i], reread, sizeof(reread), ARG_CP);
+        else if (!strcmp(argv[i], "--convert"))          convert = 1;
         else if (!strcmp(argv[i], "-k"))                 cfg.keepall = 1;
         else if (!strcmp(argv[i], "-r"))                 host.ask_again = 1;
         else if (!strncmp(argv[i], "--copy-protection=", 18)) {
@@ -376,6 +444,7 @@ int main(int argc, char **argv)
     }
     if (cfg.maxread < 2) cfg.maxread = 2;
     if (cfg.maxread > META_MAXREAD) cfg.maxread = META_MAXREAD;
+    if (convert) return run_convert(outdir, title, edition);
     if (!title[0] || (!reread[0] && (tot < 0 || ncd < 0 || ndvd < 0 || tot + ncd + ndvd < 1 ||
                                      tot + ncd + ndvd > META_MAXDISK))) { usage(); return 2; }
 

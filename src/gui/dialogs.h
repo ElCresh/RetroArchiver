@@ -50,4 +50,8 @@ int box_edit_dialog(HWND owner, const char *bagdir, const meta_box *current,
 /* two reads as good as each other: 1 keep the new one, 0 the old one */
 int choose_dialog(HWND owner, const edit_choice *c);
 
+/* n boxes of 261017: CONVERT_GO, CONVERT_LATER or CONVERT_NEVER */
+enum { CONVERT_LATER, CONVERT_GO, CONVERT_NEVER };
+int convert_dialog(HWND owner, int n);
+
 #endif

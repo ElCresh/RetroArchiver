@@ -310,6 +310,27 @@ static void edit_damage_kept(void)
     sb_free(&err);
 }
 
+/* a box of 261017 left open: closing it moves messi-da-parte/ to set-aside/ */
+static void close_converts_aside(void)
+{
+    session_cfg c; session_host h; meta_box *box = meta_new(); char bag[400], p[600]; FILE *f;
+    setup(&c, &h, box, "Aperto Vecchio", 0);
+    e_script[1] = CMD_QUIT;
+    e_fill = 'a'; e_cmp_rc = 0;
+    CHECK(session_run(&c, &h) == SESSION_OPEN);
+    session_bagdir(bag, sizeof(bag), SROOT, "Aperto Vecchio", "");
+    snprintf(p, sizeof(p), "%s/messi-da-parte", bag);
+    u8_mkdir(p);
+    snprintf(p, sizeof(p), "%s/messi-da-parte/e01_b.dsk.duplicato", bag);
+    if ((f = u8_fopen(p, "wb")) != NULL) { fputs("old", f); fclose(f); }
+    setup(&c, &h, box, "Aperto Vecchio", 0);
+    e_fill = 'c';
+    CHECK(session_run(&c, &h) == SESSION_CLOSED);
+    meta_delete(box);
+    CHECK(!exists("Aperto Vecchio", "messi-da-parte"));
+    CHECK(exists("Aperto Vecchio", "set-aside/e01_b.dsk.duplicate"));
+}
+
 static void edit_refuses_open(void)
 {
     session_cfg c; session_host h; meta_box *box = meta_new();
@@ -334,4 +355,5 @@ void test_session_edit(void)
     edit_refuses_open();
     edit_aside_blocked();
     edit_damage_kept();
+    close_converts_aside();
 }

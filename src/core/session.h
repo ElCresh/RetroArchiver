@@ -104,6 +104,12 @@ int  session_twin(const meta_box *b, const meta_disk *d);
 #define SESSION_FAILED        ".failed"
 /* the folder of the files set aside in this bag: the old one if only that exists */
 const char *session_aside_dir(const char *bagdir);
+/* a name of messi-da-parte/ as set-aside/ calls it: ".danneggiato" ->
+ * ".damaged", ".duplicato" -> ".duplicate" (a number after it stays) */
+void session_aside_rename(const char *old, char *out, size_t n);
+/* messi-da-parte/ into set-aside/ with the new names, for a bag about to
+ * be closed (nothing there is in a manifest); -1 if something stayed */
+int  session_convert_aside(const char *bagdir);
 /* the archive's log, one row per disk, next to the boxes; 261017 wrote
  * archivio.csv, which stays as it is */
 #define SESSION_CSV "archive.csv"

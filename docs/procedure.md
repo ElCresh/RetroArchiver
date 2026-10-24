@@ -123,6 +123,27 @@ edited.
 From the console: `dskrun --reread cd1,cd2 -t "Windows 2000 Server"`
 (or `--reread missing` to complete a closed incomplete box).
 
+## Converting boxes made by 261017
+
+Boxes closed by the first release (261017) are read as they are, but they
+must be converted before they can be edited. When the archive holds some,
+the window asks once at start: **Convert**, **Later** (asked again at the
+next start) or **Don't ask again**. Tools > Convert the boxes of 261017...
+does it at any time, and Edit on an old box offers to convert it first.
+
+Each box is checked against its manifests first: a damaged one is not
+touched and is listed with the reason. Converting rewrites
+`metadata.json` in schema `retroarchiver-3` (outcomes in English, a
+`convert` entry in its history), `bag-info.txt` and the manifests, and
+moves `messi-da-parte/` to `set-aside/` (`.danneggiato` becomes
+`.damaged`, `.duplicato` `.duplicate`). Nothing in `data/` changes, the
+folder keeps its name, and the old `metadata.json`, `bag-info.txt` and
+manifests stay in `set-aside/previous-DATE/`. A box of 261017 left open is
+converted when it is resumed and closed.
+
+From the console: `dskrun --convert -o DIR` (all the old boxes of DIR) or
+`dskrun --convert -t TITLE`; exit code 1 if one was not converted.
+
 ## SAMdisk traps already met
 
 Verified by hand on the target PC.
