@@ -116,6 +116,68 @@ static void test_old_ini(const wchar_t *root)
     DeleteFileW(def); DeleteFileW(user);
 }
 
+/* the Settings window: everything at once, only the differences written */
+static void test_prefs(const wchar_t *root)
+{
+    wchar_t def[MAX_PATH], user[MAX_PATH], v[512];
+    settings s;
+    prefs p, d;
+    _snwprintf(def, MAX_PATH, L"%ls\\tmp_prefs_def.ini", root);
+    _snwprintf(user, MAX_PATH, L"%ls\\tmp_prefs_user.ini", root);
+    DeleteFileW(def); DeleteFileW(user);
+    set_init_paths(&s, def, user);
+
+    /* no ini: the code's values */
+    prefs_load(&s, &p);
+    check(p.maxreads == 3 && p.sounds == 0 && p.countdown == 5 && p.floppy_poll == 2, "prefs: code numbers");
+    check_str(p.samdisk, L"samdisk", "prefs: code SAMdisk");
+    check_str(p.readfrom, L"a:", "prefs: code ReadFrom");
+    check_str(p.drive, L"D:", "prefs: code Drive");
+    check_str(p.dvd_name, L"DVD{nn}", "prefs: code DVDFileName");
+    check(p.folder[1] == L':' && !wcscmp(p.folder + 2, L"\\RetroArchive"), "prefs: code archive folder");
+    check(!p.offset[0] && !p.noleadin[0] && !p.datdir[0] && !p.uilang[0], "prefs: empty by default");
+    check(prefs_save(&s, &p) && !exists(user), "prefs: nothing changed, no user ini");
+
+    /* the installer's defaults, one out of range */
+    write_defaults(def);
+    WritePrivateProfileStringW(SEC_AUTO, KEY_COUNTDOWN, L"500", def);
+    WritePrivateProfileStringW(SEC_OPTICAL, KEY_DRIVE, L"E:", def);
+    prefs_load(&s, &p);
+    check(p.maxreads == 5, "prefs: MaxReads from the defaults");
+    check(p.countdown == 5, "prefs: a default out of range is the code's");
+    check_str(p.folder, L"D:\\Cofanetti già fatti", "prefs: folder from the defaults");
+
+    /* the user changes three values: only those are written */
+    p.countdown = 10;
+    wcscpy(p.offset, L"+6");
+    wcscpy(p.noleadin, L"ASUS DRW-08D6MT A101");
+    check(prefs_save(&s, &p), "prefs: saved");
+    check(has_key(user, SEC_AUTO, KEY_COUNTDOWN) && has_key(user, SEC_OPTICAL, KEY_DRIVEOFFSET) &&
+          has_key(user, SEC_OPTICAL, KEY_NOLEADIN), "prefs: the changed keys are written");
+    check(!has_key(user, SEC_GENERAL, KEY_MAXREADS) && !has_key(user, SEC_OPTICAL, KEY_DRIVE) &&
+          !has_key(user, SEC_GENERAL, KEY_FOLDER) && !has_key(user, SEC_FLOPPY, KEY_SAMDISK),
+          "prefs: the unchanged keys are not");
+    prefs_load(&s, &d);
+    check(d.countdown == 10 && d.maxreads == 5, "prefs: read back");
+    check_str(d.offset, L"+6", "prefs: offset read back");
+
+    /* a hand-written user value out of range: the default */
+    WritePrivateProfileStringW(SEC_AUTO, KEY_FLOPPYPOLL, L"0", user);
+    WritePrivateProfileStringW(SEC_GENERAL, KEY_MAXREADS, L"tre", user);
+    prefs_load(&s, &d);
+    check(d.floppy_poll == 2 && d.maxreads == 5, "prefs: user values out of range are the default");
+
+    /* back to the defaults: the keys go */
+    prefs_defaults(&s, &d);
+    check(d.countdown == 5 && !d.offset[0], "prefs: prefs_defaults ignores the user");
+    check(prefs_save(&s, &d), "prefs: defaults saved");
+    check(!has_key(user, SEC_AUTO, KEY_COUNTDOWN) && !has_key(user, SEC_OPTICAL, KEY_DRIVEOFFSET) &&
+          !has_key(user, SEC_AUTO, KEY_FLOPPYPOLL), "prefs: equal to the defaults, the keys are removed");
+    GetPrivateProfileStringW(SEC_WINDOW, L"X", L"(manca)", v, 512, user);
+    check_str(v, L"(manca)", "prefs: other sections untouched");
+    DeleteFileW(def); DeleteFileW(user);
+}
+
 static void file_time(const wchar_t *p, FILETIME *t)
 {
     WIN32_FILE_ATTRIBUTE_DATA d;
@@ -231,6 +293,7 @@ int main(void)
 
     DeleteFileW(def); DeleteFileW(user); RemoveDirectoryW(dir);
     test_old_ini(root);
+    test_prefs(root);
     printf("settings: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

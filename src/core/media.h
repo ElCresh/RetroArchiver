@@ -68,6 +68,9 @@ void optical_set_datdir(const char *dir);
 /* the drive's read offset in samples ("+6", "-472"), given to DiscImageCreator
  * when it asks for it; "" not set. -1 if it is not a number */
 int  optical_set_drive_offset(const char *samples);
+/* the same check without setting it: 0 with the offset as DIC wants it in
+ * out ("+6", "0"; "" for an empty one), -1 if it is not a number */
+int  optical_parse_offset(const char *samples, char *out, size_t n);
 /* the list of the copy protection signature files (default: the program's
  * protection-signatures.txt, or the built-in list if it is missing) */
 void optical_set_signatures(const char *path);
@@ -118,6 +121,10 @@ void optical_on_drive_learned(void (*fn)(void *ctx, const char *model), void *ct
 int  optical_drive_listed(const char *list, const char *model);
 /* adds model to list, of n bytes; 1 if added, 0 if already there or no room */
 int  optical_list_add(char *list, size_t n, const char *model);
+/* the i-th model of list (from 0), with single spaces; 0 past the end */
+int  optical_list_item(const char *list, int i, char *out, size_t n);
+/* removes model from list, of n bytes: 1 if it was there */
+int  optical_list_remove(char *list, size_t n, const char *model);
 /* the model of the drive at that letter, as Windows knows it ("ASUS
  * DRW-08D6MT A101"); 0 if unknown */
 int  optical_drive_model(char letter, char *out, size_t n);

@@ -76,8 +76,8 @@ stopped at the third reset and offered again without it.
 
 **Drive offset.** For a drive missing from DiscImageCreator's
 `driveOffset.txt`, set its read offset in samples (AccurateRip or redump
-list) in `[Optical] DriveOffset` of `RetroArchiver.ini`, or
-`dskrun --drive-offset=N`: it is given to DiscImageCreator as the answer
+list) in Tools > Settings, CD and DVD (`[Optical] DriveOffset` of
+`RetroArchiver.ini`), or `dskrun --drive-offset=N`: it is given to DiscImageCreator as the answer
 to its question. Both choices, and the offset used, are recorded in
 `metadata.json`.
 
@@ -91,7 +91,8 @@ and there are no C2 errors, one read is enough (outcome *clean*,
 `"read_method": "dic-data"` in `metadata.json`: a faithful copy of the
 data, not a redump-grade dump); otherwise a second read is compared. The
 window remembers the drive in `[Optical] NoLeadInDrives` and reads its
-next data CDs with `data` straight away. Audio and mixed-mode CDs still
+next data CDs with `data` straight away; Settings lists those drives and
+can forget one. Audio and mixed-mode CDs still
 need a drive that reads the lead-in.
 
 ### Mixed boxes
@@ -144,15 +145,23 @@ Run `RetroArchiver-Setup.exe` on the archiving PC. It installs:
   for CDs and DVDs, and the Visual C++ 2015-2019 x86 runtime (14.27,
   the last version that installs on XP) only if it is missing.
 
-Settings are kept per user in `Application Data\RetroArchiver`; the
+Settings are kept per user in `Application Data\RetroArchiver`, and
+changed in Tools > Settings: General (language, archive folder, maximum
+reads, sounds), Floppy (SAMdisk, the drive or a `.dsk` image for tests,
+file names), CD and DVD (DiscImageCreator, drive, names, redump DAT
+folder, drive offset, drives without lead-in) and Automatic (the
+countdown and how often the floppy drive is asked). They apply at once.
+Help > About RetroArchiver shows the version, the license and the
+third-party programs with the version found on the PC, opens their
+licenses and copies all of it to the clipboard for a bug report. The
 default archive folder is `RetroArchive` on the system drive. Running
 the installer again updates an existing installation without touching
 settings or archive.
 
 The installer and the window speak English and Italian. The installer
 asks at the start, and the window starts in the same language; later it
-can be changed from Program language in the box preparation (Same as
-Windows follows it). The window's texts are in
+can be changed from Program language in Settings (Same as Windows
+follows it). The window's texts are in
 `lang\en.lng` and `lang\it.lng`: another language is one more file,
 see [docs/setup.md](docs/setup.md). The console tools are always in
 English, and so are the core's messages the window shows as they are (the

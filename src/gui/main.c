@@ -30,6 +30,8 @@
 #include "core/archive.h"
 #include "gui/settings.h"
 #include "gui/lang.h"
+#include "gui/winutil.h"
+#include "gui/dialogs.h"
 
 #define WM_APP_EVENT (WM_APP + 1)   /* there is an event in g_qhead   */
 #define WM_APP_WAIT  (WM_APP + 2)   /* the requested medium is in g_turn_in */
@@ -49,10 +51,8 @@
 #define OPT_MAX   1000              /* disk bar for CDs and DVDs: thousandths */
 
 #define TIMER_ID  1
-#define TIMER_SAMDISK 2             /* SAMdisk check ~600 ms after the last keystroke */
 #define TIMER_ADIR 3                /* archive re-read ~600 ms after the last keystroke */
 #define TIMER_LINES 4               /* SAMdisk lines: the window takes them in batches */
-#define TIMER_DIC 5                 /* DiscImageCreator check ~600 ms after the last keystroke */
 #define TIMER_FLOPPY 6              /* floppy drive check ~600 ms after the last keystroke */
 #define TIMER_AUTO 7                /* automatic mode: the countdown before the read, every second */
 #define LINES_MS  100
@@ -67,8 +67,8 @@ enum {
     /* setup: from ID_TITLE to ID_START */
     ID_TITLE = 100, ID_RESUME, ID_PLATFORM, ID_COUNT, ID_PUBLISHER, ID_YEAR,
     ID_LANGUAGE, ID_EDITION, ID_NOTES, ID_MEDIA, ID_CD, ID_DVD, ID_ICFLOP, ID_ICCD, ID_ICDVD,
-    ID_HINT, ID_DIR, ID_BROWSE, ID_MAXREAD, ID_SAMDISK, ID_SOURCE, ID_DIC, ID_DRIVE, ID_SOUNDS, ID_AUTO, ID_BAGPATH,
-    ID_UILANG, ID_PROT, ID_BACK, ID_START,
+    ID_HINT, ID_DIR, ID_BROWSE, ID_TOOLSUM, ID_SETTINGS, ID_AUTO, ID_BAGPATH,
+    ID_PROT, ID_BACK, ID_START,
     /* session */
     ID_BANNER = 200, ID_PILLS, ID_LABEL, ID_NOTE, ID_READ, ID_SKIP, ID_FINISH,
     ID_STOP, ID_LIST, ID_LOG, ID_NEW, ID_OPEN, ID_BOXBAR, ID_BOXTXT,
@@ -76,7 +76,9 @@ enum {
     ID_SBAR, ID_TOARCH, ID_LABELREAD,
     /* archive: from ID_ADIR to ID_ANEW */
     ID_ADIR = 300, ID_ABROWSE, ID_ASEARCH, ID_APLAT, ID_ASUM, ID_ALIST, ID_ADETAIL,
-    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AHINT, ID_ANEW
+    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AHINT, ID_ANEW,
+    /* the menu bar */
+    IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT
 };
 
 /* what the window knows about a disk: copied by the worker thread, which
@@ -132,42 +134,13 @@ static wchar_t  g_drive_w[8];           /* the CD and DVD drive, "D:", for the t
 static char     g_drive_model[160], g_noleadin[2048];
 static wchar_t  g_why[600];             /* why DiscImageCreator did not read the disc */
 static DWORD    g_t_sess, g_t_phase;
+static settings g_set;                  /* the two RetroArchiver.ini */
+static prefs    g_prefs;                /* what the Settings window edits, as loaded from them */
 
 /* setup, waiting for the disk, reading, end; and the archive, where it starts */
 enum { V_SETUP, V_WAIT, V_WORK, V_END, V_ARCHIVE };
 
 /* ---- conversions ---- */
-
-/* direct conversions into a short buffer fail and would leave the text
- * empty: convert into a buffer of the right size and truncate */
-static void to_w(const char *s, wchar_t *out, int n)
-{
-    int need = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
-    wchar_t *tmp;
-    out[0] = 0;
-    if (need <= 0) return;
-    if (need <= n) { MultiByteToWideChar(CP_UTF8, 0, s, -1, out, n); return; }
-    if (!(tmp = (wchar_t *)malloc(need * sizeof(wchar_t)))) return;
-    if (MultiByteToWideChar(CP_UTF8, 0, s, -1, tmp, need)) {
-        int k = n - 1;
-        if (k > 0 && tmp[k - 1] >= 0xD800 && tmp[k - 1] <= 0xDBFF) k--;   /* keep surrogate pairs whole */
-        memcpy(out, tmp, k * sizeof(wchar_t));
-        out[k] = 0;
-    }
-    free(tmp);
-}
-
-static void to_u8(const wchar_t *s, char *out, int n)
-{
-    int need = WideCharToMultiByte(CP_UTF8, 0, s, -1, NULL, 0, NULL, NULL);
-    char *tmp;
-    out[0] = 0;
-    if (need <= 0) return;
-    if (!(tmp = (char *)malloc(need))) return;
-    if (WideCharToMultiByte(CP_UTF8, 0, s, -1, tmp, need, NULL, NULL))
-        str_copy(out, (size_t)n, tmp);      /* cuts on a UTF-8 boundary */
-    free(tmp);
-}
 
 /* UTF-8 bytes needed for the control's text, terminator excluded */
 static int u8_len(int id)
@@ -182,6 +155,18 @@ static void get_u8(int id, char *out, int n)
     wchar_t w[512];
     GetDlgItemTextW(g_wnd, id, w, 512);
     to_u8(w, out, n);
+}
+
+/* a setting in UTF-8 without leading and trailing blanks, def if empty */
+static void pref_u8(const wchar_t *v, const char *def, char *out, int n)
+{
+    wchar_t w[MAX_PATH], *p = w; size_t len;
+    wcsncpy(w, v, MAX_PATH); w[MAX_PATH - 1] = 0;
+    while (*p == L' ' || *p == L'\t') p++;
+    len = wcslen(p);
+    while (len && (p[len - 1] == L' ' || p[len - 1] == L'\t')) p[--len] = 0;
+    to_u8(p, out, n);
+    if (!out[0]) str_copy(out, (size_t)n, def);
 }
 
 /* like get_u8, without leading and trailing blanks: "   " is not a title */
@@ -336,7 +321,7 @@ enum { SND_WAIT, SND_ERROR, SND_DONE };
  * otherwise speaker tones, which are heard anyway */
 static void sound(int s)
 {
-    if (IsDlgButtonChecked(g_wnd, ID_SOUNDS) == BST_CHECKED) {
+    if (g_prefs.sounds) {
         MessageBeep(s == SND_WAIT ? MB_ICONASTERISK : s == SND_ERROR ? MB_ICONEXCLAMATION : MB_OK);
         return;
     }
@@ -566,24 +551,15 @@ static void build_setup(void)
     set_default_archive(arc, MAX_PATH);         /* with no ini at all: C:\RetroArchive */
     field(T_SETUP_FOLDER, 254, ID_DIR, arc, 460);
     make(L"BUTTON", L"...", WS_TABSTOP, 590, 254, 30, 21, ID_BROWSE);
-    field(T_SETUP_MAXREAD, 282, ID_MAXREAD, L"3", 40);
-    /* the program's own language, on the right of the short field */
-    make_t(L"STATIC", T_SETUP_UILANG, SS_RIGHT, 330, 285, 140, 18, ID_UILANG + LBL);
-    make(L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 474, 282, 150, 200, ID_UILANG);
-    /* the two programs, each with where it reads from: same row, same label */
-    field_w(L"SAMdisk", 310, ID_SAMDISK, L"samdisk", 300);
-    make_t(L"STATIC", T_SETUP_READFROM, 0, 435, 313, 60, 18, ID_SOURCE + LBL);
-    make(L"EDIT", L"a:", WS_TABSTOP | ES_AUTOHSCROLL, 500, 310, 120, 21, ID_SOURCE);
-    field_w(L"DiscImageCreator", 338, ID_DIC, L"DiscImageCreator", 300);
-    make_t(L"STATIC", T_SETUP_READFROM, 0, 435, 341, 60, 18, ID_DRIVE + LBL);
-    make(L"EDIT", L"D:", WS_TABSTOP | ES_AUTOHSCROLL, 500, 338, 120, 21, ID_DRIVE);
-    make(L"STATIC", L"", SS_NOPREFIX | SS_PATHELLIPSIS, 12, 369, 610, 18, ID_BAGPATH);
+    make(L"STATIC", L"", SS_NOPREFIX | SS_PATHELLIPSIS, 12, 282, 610, 18, ID_BAGPATH);
+    /* the programs and drives come from the Settings window: here only what they are */
+    make(L"STATIC", L"", SS_NOPREFIX | SS_ENDELLIPSIS, 12, 309, 480, 18, ID_TOOLSUM);
+    make_t(L"BUTTON", T_SETUP_SETTINGS, WS_TABSTOP, 520, 305, 100, 23, ID_SETTINGS);
 
-    make_t(L"BUTTON", T_SETUP_SOUNDS, WS_TABSTOP | BS_AUTOCHECKBOX, 12, 428, 140, 20, ID_SOUNDS);
-    make_t(L"BUTTON", T_SETUP_AUTO, WS_TABSTOP | BS_AUTOCHECKBOX, 160, 428, 260, 20, ID_AUTO);
+    make_t(L"BUTTON", T_SETUP_AUTO, WS_TABSTOP | BS_AUTOCHECKBOX, 12, 352, 260, 20, ID_AUTO);
     /* the box's copy protection scan, under Automatico */
-    make_t(L"STATIC", T_SETUP_PROT, 0, 160, 457, 125, 18, ID_PROT + LBL);
-    make(L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 289, 454, 130, 200, ID_PROT);
+    make_t(L"STATIC", T_SETUP_PROT, 0, 12, 381, 125, 18, ID_PROT + LBL);
+    make(L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 141, 378, 130, 200, ID_PROT);
     prot_fill();
     make_t(L"BUTTON", T_SETUP_ARCHIVE, WS_TABSTOP, 426, 423, 100, 28, ID_BACK);
     make_t(L"BUTTON", T_SETUP_START, WS_TABSTOP | BS_DEFPUSHBUTTON, 534, 423, 100, 28, ID_START);
@@ -800,8 +776,6 @@ static void apply_limits(void)
     limit(ID_NOTES, FSIZE(notes));         limit(ID_LABEL, (int)sizeof(g_label_u8));
     limit(ID_NOTE, (int)sizeof(g_note_u8));
     limit(ID_DIR, (int)sizeof(g_outdir));
-    limit(ID_SAMDISK, 512);                limit(ID_SOURCE, 512);   /* start()'s buf */
-    limit(ID_DIC, 512);                    limit(ID_DRIVE, 16);
     SendDlgItemMessageW(g_wnd, ID_COUNT, EM_LIMITTEXT, 2, 0);      /* at most 64 */
     SendDlgItemMessageW(g_wnd, ID_CD, EM_LIMITTEXT, 2, 0);
     SendDlgItemMessageW(g_wnd, ID_DVD, EM_LIMITTEXT, 2, 0);
@@ -1356,27 +1330,19 @@ static void layout_setup(int W, int H)
     put(ID_LANGUAGE, 410, 82, R - 410, 21);
     put(ID_NOTES, 125, 138, R - 125, 21);
     put(ID_HINT, 12, 198, R - 12, 18);
-    set_group(G_ARCH, 6, 234, W - 12, 163);
+    set_group(G_ARCH, 6, 234, W - 12, 108);
     put(ID_DIR, 125, 254, R - 125 - 36, 21);
     put(ID_BROWSE, R - 30, 254, 30, 21);
-    put(ID_UILANG + LBL, R - 150 - 8 - 160, 285, 160, 18);
-    put(ID_UILANG, R - 150, 282, 150, 200);
-    /* SAMdisk and DIC: the path widens, "Leggi da" stays on the right */
-    put(ID_SAMDISK, 125, 310, R - 125 - 120 - 73, 21);
-    put(ID_SOURCE + LBL, R - 120 - 65, 313, 60, 18);
-    put(ID_SOURCE, R - 120, 310, 120, 21);
-    put(ID_DIC, 125, 338, R - 125 - 120 - 73, 21);
-    put(ID_DRIVE + LBL, R - 120 - 65, 341, 60, 18);
-    put(ID_DRIVE, R - 120, 338, 120, 21);
-    put(ID_BAGPATH, 12, 369, R - 12, 18);
+    put(ID_BAGPATH, 12, 282, R - 12, 18);
+    put(ID_TOOLSUM, 12, 309, R - 12 - 120 - 8, 18);
+    put(ID_SETTINGS, R - 120, 305, 120, 23);
     /* right below the group boxes: with a tall window the space stays at the bottom */
     (void)H;
-    put(ID_SOUNDS, 12, 411, 140, 20);
-    put(ID_AUTO, 160, 411, 260, 20);
-    put(ID_PROT + LBL, 160, 440, 125, 18);
-    put(ID_PROT, 289, 437, 130, 200);
-    put(ID_BACK, W - 6 - 100 - 8 - 100, 407, 100, 28);
-    put(ID_START, W - 6 - 100, 407, 100, 28);
+    put(ID_AUTO, 12, 356, 300, 20);
+    put(ID_PROT + LBL, 12, 385, 125, 18);
+    put(ID_PROT, 141, 382, 130, 200);
+    put(ID_BACK, W - 6 - 100 - 8 - 100, 352, 100, 28);
+    put(ID_START, W - 6 - 100, 352, 100, 28);
 }
 
 /* ---- the archive ---- */
@@ -1553,36 +1519,55 @@ static void layout(void)
 /* ---- RetroArchiver.ini: the defaults next to the executable, the user's
  * choices in Application Data (settings.c) ---- */
 
-static settings g_set;
 
+/* the window fields that are saved: the folder, and the box's last choices */
 static const struct { const wchar_t *sec, *key; int id; } ini_keys[] = {
-    { SEC_GENERAL, KEY_FOLDER, ID_DIR }, { SEC_GENERAL, KEY_MAXREADS, ID_MAXREAD },
-    { SEC_FLOPPY, KEY_SAMDISK, ID_SAMDISK }, { SEC_FLOPPY, KEY_READFROM, ID_SOURCE },
-    { SEC_BOX, KEY_PLATFORM, ID_PLATFORM },
-    { SEC_OPTICAL, KEY_DIC, ID_DIC }, { SEC_OPTICAL, KEY_DRIVE, ID_DRIVE },
+    { SEC_GENERAL, KEY_FOLDER, ID_DIR }, { SEC_BOX, KEY_PLATFORM, ID_PLATFORM },
     { SEC_BOX, KEY_LANGUAGE, ID_LANGUAGE },
     { NULL, NULL, 0 }
 };
 
 /* the file naming patterns, per kind: FLOPPY01.dsk, CD01\, DVD01\ */
-static const wchar_t *const name_secs[MEDIA_KINDS] = { SEC_FLOPPY, SEC_OPTICAL, SEC_OPTICAL };
-static const wchar_t *const name_keys[MEDIA_KINDS] = { KEY_FLOPPYNAME, KEY_CDNAME, KEY_DVDNAME };
 static const wchar_t *const name_defaults[MEDIA_KINDS] = { L"FLOPPY{nn}", L"CD{nn}", L"DVD{nn}" };
 
 /* the hard-coded values (the fields' initial texts): the user gets them
  * if there is no ini, and a choice equal to the default is not saved */
-#define INI_KEYS 8
+#define INI_KEYS 3
 static wchar_t g_builtin[INI_KEYS][512];
 typedef char ini_keys_count[sizeof(ini_keys) / sizeof(ini_keys[0]) == INI_KEYS + 1 ? 1 : -1];
 
 /* the older ini said C:\samdisk and C:\DIC: if nothing is there any more,
- * the field takes the one in tools\ next to the exe, and the status bar
- * shows that one's version */
-static void tool_fallback(int id, const wchar_t *rel)
+ * the one in tools\ next to the exe, and the status bar shows that one's
+ * version. path has MAX_PATH characters */
+static void tool_fallback(wchar_t *path, const wchar_t *rel)
 {
-    wchar_t v[512], alt[MAX_PATH];
-    GetDlgItemTextW(g_wnd, id, v, 512);
-    if (set_tool_fallback(v, rel, alt, MAX_PATH)) SetDlgItemTextW(g_wnd, id, alt);
+    wchar_t alt[MAX_PATH];
+    if (set_tool_fallback(path, rel, alt, MAX_PATH)) wcscpy(path, alt);
+}
+
+/* "Floppies from a:, CDs and DVDs from D:, up to 3 reads": under the
+ * folder in setup, where those fields were before the Settings window */
+static void toolsum_update(void)
+{
+    wchar_t w[800];
+    _snwprintf(w, 800, tr(T_SETUP_TOOLSUM), g_prefs.readfrom[0] ? g_prefs.readfrom : L"a:",
+               g_prefs.drive[0] ? g_prefs.drive : L"D:", g_prefs.maxreads);
+    w[799] = 0;
+    SetDlgItemTextW(g_wnd, ID_TOOLSUM, w);
+}
+
+/* what the reads take from the settings, in the core's UTF-8 */
+static void prefs_use(void)
+{
+    const wchar_t *names[MEDIA_KINDS] = { g_prefs.floppy_name, g_prefs.cd_name, g_prefs.dvd_name };
+    char dir[MAX_PATH * 3];
+    int i;
+    for (i = 0; i < MEDIA_KINDS; i++)
+        to_u8(names[i][0] ? names[i] : name_defaults[i], g_ini_names[i], sizeof(g_ini_names[i]));
+    to_u8(g_prefs.noleadin, g_noleadin, sizeof(g_noleadin));
+    to_u8(g_prefs.datdir, dir, sizeof(dir));
+    optical_set_datdir(dir);
+    toolsum_update();
 }
 
 static void ini_load(void)
@@ -1591,17 +1576,15 @@ static void ini_load(void)
     char prot_key[16];
     int i;
     set_init(&g_set);
+    prefs_load(&g_set, &g_prefs);
+    tool_fallback(g_prefs.samdisk, SET_TOOL_SAMDISK);
+    tool_fallback(g_prefs.dic, SET_TOOL_DIC);
     for (i = 0; ini_keys[i].key; i++) {
         GetDlgItemTextW(g_wnd, ini_keys[i].id, cur, 512);   /* the default stays the current one */
         wcscpy(g_builtin[i], cur);
         set_get(&g_set, ini_keys[i].sec, ini_keys[i].key, cur, v, 512);
         SetDlgItemTextW(g_wnd, ini_keys[i].id, v);
     }
-    tool_fallback(ID_SAMDISK, SET_TOOL_SAMDISK);
-    tool_fallback(ID_DIC, SET_TOOL_DIC);
-    /* the checkbox is not a text: Suoni=1 or 0 */
-    CheckDlgButton(g_wnd, ID_SOUNDS,
-                   set_int(&g_set, SEC_GENERAL, KEY_SOUNDS, 0) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(g_wnd, ID_AUTO,
                    set_int(&g_set, SEC_AUTO, KEY_ENABLED, 0) ? BST_CHECKED : BST_UNCHECKED);
     /* the copy protection scan: auto, on, off */
@@ -1609,16 +1592,7 @@ static void ini_load(void)
     to_u8(v, prot_key, sizeof(prot_key));
     g_prot = meta_prot_parse(prot_key) < 0 ? META_PROT_AUTO : meta_prot_parse(prot_key);
     SendDlgItemMessageW(g_wnd, ID_PROT, CB_SETCURSEL, g_prot, 0);
-    {   /* not in the window: written by the reads (on_noleadin) */
-        wchar_t list[2048];
-        set_get(&g_set, SEC_OPTICAL, KEY_NOLEADIN, L"", list, 2048);
-        to_u8(list, g_noleadin, sizeof(g_noleadin));
-    }
-    /* the file names are not in the window: they change only here */
-    for (i = 0; i < MEDIA_KINDS; i++) {
-        set_get(&g_set, name_secs[i], name_keys[i], name_defaults[i], v, 512);
-        to_u8(v[0] ? v : name_defaults[i], g_ini_names[i], sizeof(g_ini_names[i]));
-    }
+    prefs_use();
 }
 
 /* a window field into the user's ini, if different from the default */
@@ -1629,23 +1603,17 @@ static void ini_store(int i)
     set_save(&g_set, ini_keys[i].sec, ini_keys[i].key, g_builtin[i], v);
 }
 
+/* the box's choices, at Start; the settings are saved by the Settings window */
 static void ini_save(void)
 {
     wchar_t v[512];
     int i;
     for (i = 0; ini_keys[i].key; i++) ini_store(i);
-    set_save(&g_set, SEC_GENERAL, KEY_SOUNDS, L"0",
-             IsDlgButtonChecked(g_wnd, ID_SOUNDS) == BST_CHECKED ? L"1" : L"0");
     set_save(&g_set, SEC_AUTO, KEY_ENABLED, L"0",
              IsDlgButtonChecked(g_wnd, ID_AUTO) == BST_CHECKED ? L"1" : L"0");
     g_prot = prot_chosen();
     to_w(meta_prot_key(g_prot), v, 512);
     set_save(&g_set, SEC_BOX, KEY_COPYPROT, L"auto", v);
-    /* the names change only by hand in the ini: one that differs from the default stays */
-    for (i = 0; i < MEDIA_KINDS; i++) {
-        to_w(g_ini_names[i], v, 512);
-        set_save(&g_set, name_secs[i], name_keys[i], name_defaults[i], v);
-    }
 }
 
 /* window position and size, in work-area coordinates as
@@ -1675,7 +1643,7 @@ static int place_load(int show_cmd)
     int h = set_int(&g_set, SEC_WINDOW, L"Height", 0);
     RECT minr = { 0, 0, MIN_CW, MIN_CH };
     if (x == -32000 || y == -32000 || w <= 0 || h <= 0) return 0;
-    AdjustWindowRectEx(&minr, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_CONTROLPARENT);
+    AdjustWindowRectEx(&minr, WS_OVERLAPPEDWINDOW, TRUE, WS_EX_CONTROLPARENT);
     if (w < minr.right - minr.left || h < minr.bottom - minr.top) return 0;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
     SetRect(&r, x + wa.left, y + wa.top, x + wa.left + w, y + wa.top + h);   /* in screen coordinates */
@@ -1704,36 +1672,6 @@ typedef struct { int state; wchar_t ver[32]; } sd_result;
 static volatile LONG g_sd_gen;
 static int     g_sd_state = SD_CHECKING;
 static wchar_t g_sd_ver[32];
-
-/* the program's output, at most n-1 bytes; 0 if it does not start. code
- * may be NULL: DiscImageCreator without the Visual C++ runtime starts but
- * exits at once with STATUS_DLL_NOT_FOUND */
-static int run_capture(wchar_t *cmd, char *out, int n, DWORD *code)
-{
-    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
-    STARTUPINFOW si; PROCESS_INFORMATION pi;
-    HANDLE rd, wr, nul;
-    DWORD got; int len = 0, ok;
-    out[0] = 0;
-    if (!CreatePipe(&rd, &wr, &sa, 65536)) return 0;
-    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
-    nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, NULL);
-    memset(&si, 0, sizeof(si));
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = nul; si.hStdOutput = wr; si.hStdError = wr;
-    /* how CreateProcess finds "samdisk": exe folder, current, system, PATH */
-    ok = CreateProcessW(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-    CloseHandle(wr);
-    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
-    if (!ok) { CloseHandle(rd); return 0; }
-    if (WaitForSingleObject(pi.hProcess, 3000) == WAIT_TIMEOUT) TerminateProcess(pi.hProcess, 1);
-    while (len < n - 1 && ReadFile(rd, out + len, n - 1 - len, &got, NULL) && got) len += (int)got;
-    out[len] = 0;
-    if (code && !GetExitCodeProcess(pi.hProcess, code)) *code = 0;
-    CloseHandle(pi.hThread); CloseHandle(pi.hProcess); CloseHandle(rd);
-    return 1;
-}
 
 static DWORD WINAPI samdisk_worker(LPVOID p)
 {
@@ -1769,11 +1707,9 @@ static void samdisk_check(void)
     sd_job *job = (sd_job *)calloc(1, sizeof(sd_job));
     wchar_t v[512];
     HANDLE th;
-    KillTimer(g_wnd, TIMER_SAMDISK);
     samdisk_pending();
     if (!job) return;
-    GetDlgItemTextW(g_wnd, ID_SAMDISK, v, 512);
-    if (!v[0]) wcscpy(v, L"samdisk");      /* like start(): empty field = "samdisk" */
+    wcscpy(v, g_prefs.samdisk[0] ? g_prefs.samdisk : L"samdisk");   /* like start(): empty = "samdisk" */
     _snwprintf(job->cmd, 600, L"\"%ls\"", v); job->cmd[599] = 0;
     job->gen = g_sd_gen;
     th = CreateThread(NULL, 0, samdisk_worker, job, 0, NULL);
@@ -1857,8 +1793,7 @@ static void floppy_check(void)
     fd_job *job; char src[512]; int c[MEDIA_KINDS]; HANDLE th;
     KillTimer(g_wnd, TIMER_FLOPPY);
     InterlockedIncrement(&g_fd_gen);
-    get_u8_trim(ID_SOURCE, src, sizeof(src));
-    if (!src[0]) str_copy(src, sizeof(src), "a:");
+    pref_u8(g_prefs.readfrom, "a:", src, sizeof(src));
     setup_counts(c);
     g_fd_state = FD_NONE;
     if (g_running || g_view != V_SETUP || c[MEDIA_FLOPPY] < 1 || !floppy_source_is_drive(src)
@@ -1871,8 +1806,7 @@ static void floppy_check(void)
         while (*q == ' ') q++;
         g_fd_drive[0] = (wchar_t)toupper((unsigned char)*q); g_fd_drive[1] = L':'; g_fd_drive[2] = 0;
     }
-    get_u8_trim(ID_SAMDISK, job->samdisk, sizeof(job->samdisk));
-    if (!job->samdisk[0]) str_copy(job->samdisk, sizeof(job->samdisk), "samdisk");
+    pref_u8(g_prefs.samdisk, "samdisk", job->samdisk, sizeof(job->samdisk));
     str_copy(job->source, sizeof(job->source), src);
     job->gen = g_fd_gen;
     if (g_fd_thread && !DuplicateHandle(GetCurrentProcess(), g_fd_thread, GetCurrentProcess(),
@@ -1981,8 +1915,7 @@ static void label_read(void)
     watch_pause();               /* Windows cannot reach A: while fdrawcmd holds the controller */
     job->gen = InterlockedIncrement(&g_lb_gen);
     if (g_turn.kind == MEDIA_FLOPPY) {
-        get_u8_trim(ID_SOURCE, src, sizeof(src));
-        if (!src[0]) str_copy(src, sizeof(src), "a:");
+        pref_u8(g_prefs.readfrom, "a:", src, sizeof(src));
         if (floppy_source_is_drive(src)) {
             while (*src == ' ') memmove(src, src + 1, strlen(src));
             _snwprintf(job->root, 8, L"%c:\\", (wchar_t)toupper((unsigned char)src[0]));
@@ -2004,7 +1937,7 @@ static void label_read(void)
 
 /* ---- automatic mode ----
  * With the Automatico checkbox the window starts the read by itself when a
- * new disk is in the drive: label, a countdown of AUTO_SECONDS that Esc
+ * new disk is in the drive: label, a countdown ([Automatic] CountdownSeconds) that Esc
  * stops, then Leggi. A new disk, not just a disk: after a read the same one
  * stays in the drive, so a change is needed (removed and inserted, or
  * swapped). Floppies: a thread asks fdrawcmd.sys (IOCTL_FD_CHECK_DISK, tried
@@ -2013,12 +1946,12 @@ static void label_read(void)
  * serial number: the same as a disk already read in this box stops the
  * automatic start and asks. */
 
-#define AUTO_SECONDS 5
 /* a "present" answer slower than this found the disk-change line raised:
  * the driver seeks to clear it, so the disk was swapped in the meantime */
 #define FD_SWAP_MS 25
-#define FD_POLL_PRESENT 1000            /* waiting for the disk just read to be removed */
-#define FD_POLL_ABSENT 2000             /* empty drive: each question may move the head */
+/* the empty drive is asked every [Automatic] FloppyCheckSeconds (each question
+ * may move the head); while the disk just read is in, twice as often, to see
+ * it removed */
 
 #define FD_CTL_CODE(i, m) CTL_CODE(FILE_DEVICE_UNKNOWN, i, m, FILE_READ_DATA | FILE_WRITE_DATA)
 #define IOCTL_FD_CHECK_DISK FD_CTL_CODE(0x917, METHOD_BUFFERED)   /* fdrawcmd.sys 1.0.1.10 and later */
@@ -2028,7 +1961,7 @@ enum { FP_NEW, FP_GONE, FP_NODRIVER, FP_SLOWDRIVE };
  * down, asking because it looks like a disk already read */
 enum { AUTO_OFF, AUTO_WATCH, AUTO_LABEL, AUTO_COUNT, AUTO_ASK };
 
-typedef struct { LONG gen; int drive, armed, prev; HANDLE stop; } fp_job;
+typedef struct { LONG gen; int drive, armed, prev, poll_ms; HANDLE stop; } fp_job;
 typedef struct { int ok; DWORD serial; wchar_t label[64]; } vol_id;
 
 static int      g_auto_state = AUTO_OFF, g_auto_left;
@@ -2131,7 +2064,7 @@ static DWORD WINAPI fd_watch(LPVOID p)
         /* no driver, or an older one without the question: it never answers */
         if (st == -2 || (st < 0 && ++errs >= 3)) { fp_post(job->gen, FP_NODRIVER); break; }
         if (st >= 0) { prev = st; errs = 0; was_fast = fast; }
-        if (WaitForSingleObject(job->stop, st == 0 ? FD_POLL_ABSENT : FD_POLL_PRESENT) != WAIT_TIMEOUT) break;
+        if (WaitForSingleObject(job->stop, st == 0 ? job->poll_ms : job->poll_ms / 2) != WAIT_TIMEOUT) break;
     }
     free(job);
     return 0;
@@ -2161,6 +2094,7 @@ static void watch_start(int present)
     job->drive = g_fd_index;
     job->armed = !g_fd_used && !present;
     job->prev = present ? 1 : -1;
+    job->poll_ms = g_prefs.floppy_poll * 1000;
     job->stop = g_fp_stop;
     if (!(g_fp_thread = CreateThread(NULL, 0, fd_watch, job, 0, NULL))) {
         free(job);
@@ -2320,7 +2254,7 @@ static void auto_labelled(int state)
         return;
     }
     g_auto_state = AUTO_COUNT;
-    g_auto_left = AUTO_SECONDS;
+    g_auto_left = g_prefs.countdown;
     SetTimer(g_wnd, TIMER_AUTO, 1000, NULL);
     count_banner();
 }
@@ -2437,20 +2371,6 @@ static volatile LONG g_dic_gen;
 static int     g_dic_state = DIC_CHECKING, g_has_dat;
 static wchar_t g_dic_ver[32], g_dat_date[40];
 
-/* the line after "AppVersion": the last word, "20260101T233129" */
-static int parse_dic_version(const char *s, char *ver, int n)
-{
-    const char *p = strstr(s, "AppVersion"), *e, *w;
-    int k = 0;
-    if (!p || !(p = strchr(p, '\n'))) return 0;
-    p++;
-    for (e = p; *e && *e != '\r' && *e != '\n'; e++) ;
-    for (w = e; w > p && w[-1] != ' ' && w[-1] != '\t' && w[-1] != ','; w--) ;
-    while (w < e && k < n - 1) ver[k++] = *w++;
-    ver[k] = 0;
-    return k > 0;
-}
-
 static DWORD WINAPI dic_worker(LPVOID p)
 {
     dic_job *job = (dic_job *)p;
@@ -2458,7 +2378,7 @@ static DWORD WINAPI dic_worker(LPVOID p)
     char out[8192], ver[32], date[40]; DWORD code = 0;
     if (r) {
         if (!run_capture(job->cmd, out, sizeof(out), &code)) r->state = DIC_NOTFOUND;
-        else if (code == 0xC0000135 || code == 0xC0000139 || code == 0xC0000142) r->state = DIC_NODLL;
+        else if (exit_missing_dll(code)) r->state = DIC_NODLL;
         else if (!parse_dic_version(out, ver, sizeof(ver))) r->state = DIC_NOTDIC;
         else {
             r->state = DIC_OK;
@@ -2486,16 +2406,13 @@ static void dic_check(void)
     dic_job *job = (dic_job *)calloc(1, sizeof(dic_job));
     wchar_t v[512];
     HANDLE th;
-    KillTimer(g_wnd, TIMER_DIC);
     dic_pending();
     if (!job) return;
-    GetDlgItemTextW(g_wnd, ID_DIC, v, 512);
-    if (!v[0]) wcscpy(v, L"DiscImageCreator");
+    wcscpy(v, g_prefs.dic[0] ? g_prefs.dic : L"DiscImageCreator");
     _snwprintf(job->cmd, 600, L"\"%ls\" /v", v); job->cmd[599] = 0;
     job->gen = g_dic_gen;
     {   /* the drive letter: its model says whether it reads the lead-in */
-        const wchar_t *q = v;
-        GetDlgItemTextW(g_wnd, ID_DRIVE, v, 512);
+        const wchar_t *q = g_prefs.drive;
         while (*q && !iswalpha(*q)) q++;
         job->letter = *q ? (char)towupper(*q) : 'D';
     }
@@ -2573,6 +2490,8 @@ static void on_noleadin(char *model)
     if (optical_list_add(g_noleadin, sizeof(g_noleadin), model)) {
         to_w(g_noleadin, w, 2048);
         set_put(&g_set, SEC_OPTICAL, KEY_NOLEADIN, w);
+        wcsncpy(g_prefs.noleadin, w, PREFS_LIST);       /* the Settings window shows it */
+        g_prefs.noleadin[PREFS_LIST - 1] = 0;
     }
     to_w(model, m, 160);
     _snwprintf(line, 600, tr(T_LOG_NOLEADIN), m);
@@ -3318,7 +3237,9 @@ static void reset_state(void)
     box_progress();
 }
 
-/* DiscImageCreator not working, with CDs or DVDs in the box */
+static void settings_open(int page);
+
+/* DiscImageCreator not working, with CDs or DVDs in the box: what to do, and the Settings window */
 static int dic_ready(void)
 {
     wchar_t w[700], t[200];
@@ -3331,7 +3252,7 @@ static int dic_ready(void)
     _snwprintf(w, 700, tr(T_DIC_FIX), t);
     w[699] = 0;
     MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
-    SetFocus(GetDlgItem(g_wnd, ID_DIC));
+    settings_open(PAGE_OPTICAL);
     return 0;
 }
 
@@ -3348,7 +3269,7 @@ static int samdisk_ready(void)
     _snwprintf(w, 600, tr(T_SD_FIX), t);
     w[599] = 0;
     MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
-    SetFocus(GetDlgItem(g_wnd, ID_SAMDISK));
+    settings_open(PAGE_FLOPPY);
     return 0;
 }
 
@@ -3356,7 +3277,6 @@ static void start(void)
 {
     char buf[512];
     int c[MEDIA_KINDS], bad = setup_counts(c), k;
-    int mr = GetDlgItemInt(g_wnd, ID_MAXREAD, NULL, FALSE);
     const wchar_t *why;
     DWORD tid;
     HANDLE th;
@@ -3380,21 +3300,20 @@ static void start(void)
     meta_set_counts(g_box, c[MEDIA_FLOPPY], c[MEDIA_CD], c[MEDIA_DVD]);
     ini_save();
     get_u8(ID_DIR, g_outdir, sizeof(g_outdir));
-    get_u8(ID_SAMDISK, buf, sizeof(buf));
-    floppy_set_samdisk(buf[0] ? buf : "samdisk");
-    get_u8(ID_SOURCE, buf, sizeof(buf));
-    floppy_set_source(buf[0] ? buf : "a:");
+    pref_u8(g_prefs.samdisk, "samdisk", buf, sizeof(buf));
+    floppy_set_samdisk(buf);
+    pref_u8(g_prefs.readfrom, "a:", buf, sizeof(buf));
+    floppy_set_source(buf);
     {   /* a: -> \\.\fdraw0, b: -> \\.\fdraw1; a .dsk file has no drive to watch */
-        const char *q = buf[0] ? buf : "a:";
-        while (*q == ' ') q++;
+        const char *q = buf;
         g_fd_index = floppy_source_is_drive(q) && (toupper((unsigned char)*q) == 'A' || toupper((unsigned char)*q) == 'B')
                    ? toupper((unsigned char)*q) - 'A' : -1;
     }
     g_auto = IsDlgButtonChecked(g_wnd, ID_AUTO) == BST_CHECKED;
-    get_u8(ID_DIC, buf, sizeof(buf));
-    optical_set_dic(buf[0] ? buf : "DiscImageCreator");
-    get_u8_trim(ID_DRIVE, buf, sizeof(buf));
-    optical_set_drive(buf[0] ? buf : "D:");
+    pref_u8(g_prefs.dic, "DiscImageCreator", buf, sizeof(buf));
+    optical_set_dic(buf);
+    pref_u8(g_prefs.drive, "D:", buf, sizeof(buf));
+    optical_set_drive(buf);
     {   /* "d", "d:", "D:\" -> "D:" for the texts */
         const char *q = buf;
         while (*q && !isalpha((unsigned char)*q)) q++;
@@ -3402,16 +3321,17 @@ static void start(void)
         g_drive_w[7] = 0;
     }
     {   /* the CD drive's read offset, for DIC's question when it does not
-         * know the drive: in the ini only, no field in the window yet */
-        wchar_t off[64], w[600];
-        set_get(&g_set, SEC_OPTICAL, KEY_DRIVEOFFSET, L"", off, 64);
-        to_u8(off, buf, sizeof(buf));
+         * know the drive. The Settings window checks it; by hand in the ini
+         * it can still be wrong */
+        wchar_t w[600];
+        to_u8(g_prefs.offset, buf, sizeof(buf));
         if (optical_set_drive_offset(buf)) {
             optical_set_drive_offset("");
             if (c[MEDIA_CD]) {
-                _snwprintf(w, 600, tr(T_OFFSET_BAD), off);
+                _snwprintf(w, 600, tr(T_OFFSET_BAD), g_prefs.offset);
                 w[599] = 0;
                 MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
+                settings_open(PAGE_OPTICAL);
                 return;
             }
         }
@@ -3424,7 +3344,7 @@ static void start(void)
     g_cfg.box = g_box;
     g_cfg.outroot = g_outdir;
     for (k = 0; k < MEDIA_KINDS; k++) g_cfg.names[k] = g_ini_names[k];
-    g_cfg.maxread = mr < 2 ? 2 : (mr > META_MAXREAD ? META_MAXREAD : mr);
+    g_cfg.maxread = g_prefs.maxreads;          /* prefs_load keeps it in 2..META_MAXREAD */
     g_cfg.start = 1;
     g_cfg.media[MEDIA_FLOPPY] = &floppy_media;
     g_cfg.media[MEDIA_CD] = &cd_media;
@@ -4715,26 +4635,25 @@ static void lang_list(void)
     qsort(g_langs, (size_t)g_nlangs, sizeof(g_langs[0]), code_cmp);
 }
 
-/* the menu: "Same as Windows", then each language with its own name */
-static void uilang_fill(void)
+/* the Settings window's menu: "Same as Windows", then each language with
+ * its own name; n at most UI_LANG_MAX. How many */
+static int lang_menu(ui_lang *out, int n)
 {
-    HWND cb = GetDlgItem(g_wnd, ID_UILANG);
-    wchar_t name[64]; char path[MAX_PATH * 3];
-    int i, sel = 0;
+    char path[MAX_PATH * 3];
+    int i, k = 1;
     lang_list();
-    SendMessageW(cb, CB_RESETCONTENT, 0, 0);
-    SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)tr(T_SETUP_UILANG_SYS));
-    for (i = 0; i < g_nlangs; i++) {
+    out[0].code[0] = 0;
+    wcsncpy(out[0].name, tr(T_SETUP_UILANG_SYS), 64); out[0].name[63] = 0;
+    for (i = 0; i < g_nlangs && k < n; i++, k++) {
+        wcscpy(out[k].code, g_langs[i]);
         lang_file(g_langs[i], path, sizeof(path));
-        if (!lang_peek_file(path, "language.name", name, 64) || !name[0]) {
-            if (!wcscmp(g_langs[i], LANG_BUILTIN_W)) wcsncpy(name, lang_builtin(T_LANG_NAME), 64);
-            else wcsncpy(name, g_langs[i], 64);
-            name[63] = 0;
+        if (!lang_peek_file(path, "language.name", out[k].name, 64) || !out[k].name[0]) {
+            if (!wcscmp(g_langs[i], LANG_BUILTIN_W)) wcsncpy(out[k].name, lang_builtin(T_LANG_NAME), 64);
+            else wcsncpy(out[k].name, g_langs[i], 64);
+            out[k].name[63] = 0;
         }
-        SendMessageW(cb, CB_ADDSTRING, 0, (LPARAM)name);
-        if (!_wcsicmp(g_langs[i], g_uilang)) sel = i + 1;
     }
-    SendMessageW(cb, CB_SETCURSEL, sel, 0);
+    return k;
 }
 
 static void search_cue(void)
@@ -4743,8 +4662,10 @@ static void search_cue(void)
     SendDlgItemMessageW(g_wnd, ID_ASEARCH, EM_SETCUEBANNER, 0, (LPARAM)tr(T_ARC_SEARCH_CUE));
 }
 
+static void menu_set(void);
+
 /* every text on screen again, in the new language: no restart needed.
- * Only from setup, with no session running */
+ * Only with no session running: Settings is greyed out during a read */
 static void lang_refresh(void)
 {
     fixed_texts();
@@ -4752,7 +4673,8 @@ static void lang_refresh(void)
     column_titles(g_alist, arc_cols);
     label_tip();
     search_cue();
-    uilang_fill();
+    menu_set();
+    toolsum_update();
     platforms_fill();
     prot_fill();
     archive_fill(pick_dir());           /* the dates and the platform filter */
@@ -4760,14 +4682,133 @@ static void lang_refresh(void)
     view(g_view);                       /* title, layout, status bar */
 }
 
-static void uilang_changed(void)
+/* ---- the menu bar ----
+ * Archive (new box, open the archive folder, exit), Tools (Settings, not
+ * while a box is being read), Help (guide, About). Built again when the
+ * language changes. */
+
+static HMENU menu_build(void)
 {
-    int k = (int)SendDlgItemMessageW(g_wnd, ID_UILANG, CB_GETCURSEL, 0, 0);
-    if (k <= 0 || k > g_nlangs) g_uilang[0] = 0;
-    else wcscpy(g_uilang, g_langs[k - 1]);
-    set_save(&g_set, UILANG_SEC, UILANG_KEY, L"", g_uilang);
-    lang_choose();
-    lang_refresh();
+    HMENU bar = CreateMenu(), arc = CreatePopupMenu(), tools = CreatePopupMenu(), help = CreatePopupMenu();
+    AppendMenuW(arc, MF_STRING, IDM_NEW, tr(T_MENU_NEW));
+    AppendMenuW(arc, MF_STRING, IDM_OPENDIR, tr(T_MENU_OPENDIR));
+    AppendMenuW(arc, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(arc, MF_STRING, IDM_EXIT, tr(T_MENU_EXIT));
+    AppendMenuW(tools, MF_STRING, IDM_SETTINGS, tr(T_MENU_SETTINGS));
+    AppendMenuW(help, MF_STRING, IDM_GUIDE, tr(T_MENU_GUIDE));
+    AppendMenuW(help, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(help, MF_STRING, IDM_ABOUT, tr(T_MENU_ABOUT));
+    AppendMenuW(bar, MF_POPUP, (UINT_PTR)arc, tr(T_MENU_ARCHIVE));
+    AppendMenuW(bar, MF_POPUP, (UINT_PTR)tools, tr(T_MENU_TOOLS));
+    AppendMenuW(bar, MF_POPUP, (UINT_PTR)help, tr(T_MENU_HELP));
+    return bar;
+}
+
+static void menu_set(void)
+{
+    HMENU old = GetMenu(g_wnd);
+    SetMenu(g_wnd, menu_build());
+    if (old) DestroyMenu(old);
+}
+
+/* while a box is being read its settings and the window stay as they are */
+static void menu_states(HMENU m)
+{
+    UINT busy = g_running ? MF_GRAYED : MF_ENABLED;
+    EnableMenuItem(m, IDM_NEW, MF_BYCOMMAND | busy);
+    EnableMenuItem(m, IDM_SETTINGS, MF_BYCOMMAND | busy);
+}
+
+static void menu_new_box(void)
+{
+    if (g_running) return;
+    if (g_view == V_SETUP) focus_to(GetDlgItem(g_wnd, ID_TITLE));
+    else go_setup(g_view == V_ARCHIVE);
+}
+
+static void shell_open(const wchar_t *what)
+{
+    if ((INT_PTR)ShellExecuteW(g_wnd, L"open", what, NULL, NULL, SW_SHOWNORMAL) <= 32) {
+        wchar_t w[800];
+        _snwprintf(w, 800, tr(T_OPEN_FAILED), what);
+        w[799] = 0;
+        MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
+    }
+}
+
+static void menu_open_dir(void)
+{
+    wchar_t w[512];
+    GetDlgItemTextW(g_wnd, g_view == V_ARCHIVE ? ID_ADIR : ID_DIR, w, 512);
+    shell_open(w);
+}
+
+/* the guide installed with the program, else the read me, else the web page */
+static void menu_guide(void)
+{
+    static const wchar_t *const docs[] = { L"docs\\procedure.txt", L"README.txt", NULL };
+    wchar_t p[MAX_PATH];
+    int i;
+    for (i = 0; docs[i]; i++) {
+        exe_path(docs[i], p, MAX_PATH);
+        if (file_exists(p)) { shell_open(p); return; }
+    }
+    shell_open(RA_REPO_URL);
+}
+
+static void about_open(void)
+{
+    about_tools t;
+    wcscpy(t.samdisk, g_prefs.samdisk[0] ? g_prefs.samdisk : L"samdisk");
+    wcscpy(t.dic, g_prefs.dic[0] ? g_prefs.dic : L"DiscImageCreator");
+    about_dialog(g_wnd, &t);
+}
+
+/* ---- the Settings window ---- */
+
+static int differs(const wchar_t *a, const wchar_t *b) { return wcscmp(a, b) != 0; }
+
+/* what changes on screen and in the checks with the new settings */
+static void settings_apply(const prefs *old)
+{
+    const prefs *p = &g_prefs;
+    prefs_use();
+    if (differs(old->folder, p->folder)) {
+        SetDlgItemTextW(g_wnd, ID_DIR, p->folder);
+        SetDlgItemTextW(g_wnd, ID_ADIR, p->folder);
+        if (g_view == V_ARCHIVE) archive_scan();
+    }
+    if (differs(old->samdisk, p->samdisk)) samdisk_check();
+    if (differs(old->dic, p->dic) || differs(old->drive, p->drive) || differs(old->datdir, p->datdir))
+        dic_check();
+    if (differs(old->samdisk, p->samdisk) || differs(old->readfrom, p->readfrom)) floppy_check();
+    bagpath_update();
+    if (differs(old->uilang, p->uilang)) {
+        wcscpy(g_uilang, p->uilang);
+        lang_choose();
+        lang_refresh();                 /* every text, the menu too */
+    } else if (g_view == V_SETUP || g_view == V_ARCHIVE) sbar_update();
+}
+
+static void settings_open(int page)
+{
+    static prefs p, old;                /* about 10 KB each: not on the stack */
+    ui_lang langs[UI_LANG_MAX];
+    int n;
+    if (g_running) return;
+    GetDlgItemTextW(g_wnd, ID_DIR, g_prefs.folder, MAX_PATH);     /* also changed in the archive view */
+    p = g_prefs;
+    n = lang_menu(langs, UI_LANG_MAX);
+    if (!settings_dialog(g_wnd, &p, langs, n, page)) return;
+    old = g_prefs;
+    g_prefs = p;
+    if (!prefs_save(&g_set, &g_prefs)) {
+        wchar_t w[800];
+        _snwprintf(w, 800, tr(T_SET_NOSAVE), g_set.user[0] ? g_set.user : L"%APPDATA%");
+        w[799] = 0;
+        MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
+    }
+    settings_apply(&old);
 }
 
 static int on_command(HWND h, WPARAM wp)
@@ -4784,15 +4825,7 @@ static int on_command(HWND h, WPARAM wp)
         if (id == ID_TITLE || id == ID_DIR || id == ID_COUNT || id == ID_CD || id == ID_DVD) bagpath_update();
         if (id == ID_ADIR) SetTimer(h, TIMER_ADIR, 600, NULL);     /* re-read once typing stops */
         if (id == ID_ASEARCH) archive_fill(pick_dir());
-        if (id == ID_SAMDISK) {             /* checked once typing stops */
-            samdisk_pending();
-            SetTimer(h, TIMER_SAMDISK, 600, NULL);
-        }
-        if (id == ID_DIC || id == ID_DRIVE) {
-            dic_pending();
-            SetTimer(h, TIMER_DIC, 600, NULL);
-        }
-        if ((id == ID_SAMDISK || id == ID_SOURCE || id == ID_COUNT) && g_view == V_SETUP && !g_running) {
+        if (id == ID_COUNT && g_view == V_SETUP && !g_running) {   /* a drive to check, or not */
             floppy_pending();
             SetTimer(h, TIMER_FLOPPY, 600, NULL);
         }
@@ -4806,10 +4839,6 @@ static int on_command(HWND h, WPARAM wp)
     }
     if (id == ID_APLAT) {
         if (HIWORD(wp) == CBN_SELCHANGE) archive_fill(pick_dir());
-        return 1;
-    }
-    if (id == ID_UILANG) {
-        if (HIWORD(wp) == CBN_SELCHANGE && !g_running) uilang_changed();
         return 1;
     }
     switch (id) {
@@ -4842,6 +4871,13 @@ static int on_command(HWND h, WPARAM wp)
     case ID_START:  start(); return 1;
     case ID_RESUME: resume(); return 1;
     case ID_BROWSE: browse(ID_DIR, tr(T_BROWSE_DIR)); return 1;
+    case ID_SETTINGS:
+    case IDM_SETTINGS: settings_open(PAGE_GENERAL); return 1;
+    case IDM_NEW:     menu_new_box(); return 1;
+    case IDM_OPENDIR: menu_open_dir(); return 1;
+    case IDM_EXIT:    PostMessageW(h, WM_CLOSE, 0, 0); return 1;
+    case IDM_GUIDE:   menu_guide(); return 1;
+    case IDM_ABOUT:   about_open(); return 1;
     case ID_READ:   answer(CMD_READ); return 1;
     case ID_SKIP:   answer(CMD_SKIP); return 1;
     case ID_LABELREAD: label_read(); return 1;
@@ -4856,7 +4892,7 @@ static int on_command(HWND h, WPARAM wp)
 static void min_size(MINMAXINFO *mm)
 {
     RECT r = { 0, 0, MIN_CW, MIN_CH };
-    AdjustWindowRectEx(&r, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_CONTROLPARENT);
+    AdjustWindowRectEx(&r, WS_OVERLAPPEDWINDOW, TRUE, WS_EX_CONTROLPARENT);
     mm->ptMinTrackSize.x = r.right - r.left;
     mm->ptMinTrackSize.y = r.bottom - r.top;
 }
@@ -4884,8 +4920,6 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_TIMER:
         if (wp == TIMER_LINES) queue_drain(1);
         else if (wp == TIMER_ID) tick();
-        else if (wp == TIMER_SAMDISK) samdisk_check();
-        else if (wp == TIMER_DIC) dic_check();
         else if (wp == TIMER_FLOPPY) floppy_check();
         else if (wp == TIMER_AUTO) auto_tick();
         else if (wp == TIMER_ADIR) archive_dir_changed();
@@ -4931,6 +4965,9 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         return 0;
     case WM_SIZE:
         if (wp != SIZE_MINIMIZED) layout();
+        return 0;
+    case WM_INITMENUPOPUP:
+        menu_states((HMENU)wp);
         return 0;
     case WM_GETMINMAXINFO:
         min_size((MINMAXINFO *)lp);
@@ -5070,7 +5107,7 @@ static void default_rect(RECT *out)
     RECT wa, r = { 0, 0, 720, 560 };
     int w, h;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
-    AdjustWindowRectEx(&r, WS_OVERLAPPEDWINDOW, FALSE, WS_EX_CONTROLPARENT);
+    AdjustWindowRectEx(&r, WS_OVERLAPPEDWINDOW, TRUE, WS_EX_CONTROLPARENT);
     w = r.right - r.left; h = r.bottom - r.top;
     if (w > wa.right - wa.left) w = wa.right - wa.left;
     if (h > wa.bottom - wa.top) h = wa.bottom - wa.top;
@@ -5162,7 +5199,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show_cmd)
     set_tty_helper();
 
     icc.dwSize = sizeof(icc);
-    icc.dwICC = ICC_STANDARD_CLASSES | ICC_PROGRESS_CLASS | ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES;
+    icc.dwICC = ICC_STANDARD_CLASSES | ICC_PROGRESS_CLASS | ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES |
+                ICC_TAB_CLASSES | ICC_LINK_CLASS;
     InitCommonControlsEx(&icc);
     CoInitialize(NULL);
     g_wake = CreateEventW(NULL, FALSE, FALSE, NULL);
@@ -5189,7 +5227,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show_cmd)
     build_work();
     build_archive();
     search_cue();
-    uilang_fill();
+    menu_set();
+    toolsum_update();
     apply_limits();
     ini_load();
     samdisk_check();

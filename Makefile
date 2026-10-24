@@ -39,14 +39,15 @@ dskrun.exe: src/dskrun.c $(CORE) $(CORE_H)
 	$(WINCC) $(WINFLAGS) -o $@ src/dskrun.c $(CORE)
 
 # the window: Windows only
-GUI     = src/gui/settings.c src/gui/settings.h $(LANG_C) $(LANG_H)
-GUILIBS = -lcomctl32 -lshell32 -lole32 -lgdi32 -luser32
+GUI_C   = src/gui/settings.c src/gui/settings_dlg.c src/gui/about.c src/gui/winutil.c
+GUI     = $(GUI_C) src/gui/settings.h src/gui/dialogs.h src/gui/winutil.h src/gui/resource.h $(LANG_C) $(LANG_H)
+GUILIBS = -lcomctl32 -lcomdlg32 -lshell32 -lole32 -lgdi32 -luser32 -ladvapi32
 
-build/retroarchiver_res.o: src/gui/retroarchiver.rc src/gui/retroarchiver.manifest src/gui/retroarchiver.ico | build
+build/retroarchiver_res.o: src/gui/retroarchiver.rc src/gui/resource.h src/gui/retroarchiver.manifest src/gui/retroarchiver.ico | build
 	i686-w64-mingw32-windres -I src/gui -O coff -o $@ src/gui/retroarchiver.rc
 
 RetroArchiver.exe: src/gui/main.c $(GUI) build/retroarchiver_res.o $(CORE) $(CORE_H)
-	$(WINCC) $(WINFLAGS) -municode -mwindows -o $@ src/gui/main.c src/gui/settings.c $(LANG_C) build/retroarchiver_res.o $(CORE) $(GUILIBS)
+	$(WINCC) $(WINFLAGS) -municode -mwindows -o $@ src/gui/main.c $(GUI_C) $(LANG_C) build/retroarchiver_res.o $(CORE) $(GUILIBS)
 
 native: $(NAT)
 

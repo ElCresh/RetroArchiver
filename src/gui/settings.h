@@ -46,7 +46,10 @@
  * DRW-08D6MT A101; ...": learned by the reads, their data CDs are read
  * with DiscImageCreator data straight away */
 #define KEY_NOLEADIN   L"NoLeadInDrives"
-#define KEY_ENABLED    L"Enabled"          /* Automatic */
+#define KEY_DATDIR     L"DatFolder"        /* Optical: where the redump DATs are; "" = the program's folder */
+#define KEY_ENABLED    L"Enabled"          /* Automatic: the last choice of the box preparation */
+#define KEY_COUNTDOWN  L"CountdownSeconds" /* Automatic: seconds between the label and the read */
+#define KEY_FLOPPYPOLL L"FloppyCheckSeconds" /* Automatic: how often the empty floppy drive is asked */
 #define KEY_PLATFORM   L"Platform"         /* Box */
 #define KEY_LANGUAGE   L"Language"         /* Box: the box's language, not the program's */
 #define KEY_COPYPROT   L"CopyProtection"   /* Box: the CD copy protection scan, auto on off */
@@ -85,6 +88,40 @@ int  set_convert(const wchar_t *file);
 
 /* "C:\RetroArchive": the archive folder on the system drive */
 void set_default_archive(wchar_t *out, int n);
+
+/* ---- what the Settings window edits ----
+ * One struct with every setting as the program uses it: the window loads
+ * it at startup, the Settings window edits a copy and saves it with
+ * prefs_save, which writes only what differs from the defaults. */
+
+#define PREFS_MAXREADS_MIN   2
+#define PREFS_COUNTDOWN_MIN  1
+#define PREFS_COUNTDOWN_MAX  60
+#define PREFS_POLL_MIN       1
+#define PREFS_POLL_MAX       30
+#define PREFS_LIST           2048        /* NoLeadInDrives */
+
+typedef struct {
+    /* General */
+    wchar_t folder[MAX_PATH];
+    int     maxreads, sounds;
+    wchar_t uilang[16];                  /* "" = Windows' language */
+    /* Floppy */
+    wchar_t samdisk[MAX_PATH], readfrom[MAX_PATH], floppy_name[64];
+    /* Optical */
+    wchar_t dic[MAX_PATH], drive[16], cd_name[64], dvd_name[64];
+    wchar_t datdir[MAX_PATH], offset[16], noleadin[PREFS_LIST];
+    /* Automatic */
+    int     countdown, floppy_poll;      /* seconds */
+} prefs;
+
+/* the defaults alone: the installer's ini, else the code's values */
+void prefs_defaults(const settings *s, prefs *p);
+/* the user's choices over the defaults; numbers out of range become the default */
+void prefs_load(const settings *s, prefs *p);
+/* into the user's ini, each key only if it differs from its default.
+ * 0 if the user's ini cannot be written */
+int  prefs_save(const settings *s, const prefs *p);
 
 /* the third-party programs the installer brings, in the exe's folder */
 #define SET_TOOL_SAMDISK L"tools\\samdisk\\samdisk.exe"

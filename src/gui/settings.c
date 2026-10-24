@@ -1,6 +1,8 @@
 /* Settings in two ini files: see settings.h */
 #include "settings.h"
+#include "core/meta.h"
 #include <shlobj.h>
+#include <stddef.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -238,4 +240,93 @@ void set_default_archive(wchar_t *out, int n)
     if (len >= 2 && len < MAX_PATH && win[1] == L':') { drive[0] = win[0]; }
     _snwprintf(out, n, L"%ls\\%ls", drive, SET_ARCHIVE_DIR);
     out[n - 1] = 0;
+}
+
+/* ---- what the Settings window edits ---- */
+
+/* the text settings, with the code's default ("" for the archive folder:
+ * it depends on the system drive) */
+static const struct { const wchar_t *sec, *key, *def; size_t off; int n; } text_prefs[] = {
+#define TP(sec, key, def, f) { sec, key, def, offsetof(prefs, f), (int)(sizeof(((prefs *)0)->f) / sizeof(wchar_t)) }
+    TP(SEC_GENERAL, KEY_FOLDER,     NULL,                 folder),
+    TP(SEC_GENERAL, KEY_UILANG,     L"",                  uilang),
+    TP(SEC_FLOPPY,  KEY_SAMDISK,    L"samdisk",           samdisk),
+    TP(SEC_FLOPPY,  KEY_READFROM,   L"a:",                readfrom),
+    TP(SEC_FLOPPY,  KEY_FLOPPYNAME, L"FLOPPY{nn}",        floppy_name),
+    TP(SEC_OPTICAL, KEY_DIC,        L"DiscImageCreator",  dic),
+    TP(SEC_OPTICAL, KEY_DRIVE,      L"D:",                drive),
+    TP(SEC_OPTICAL, KEY_CDNAME,     L"CD{nn}",            cd_name),
+    TP(SEC_OPTICAL, KEY_DVDNAME,    L"DVD{nn}",           dvd_name),
+    TP(SEC_OPTICAL, KEY_DATDIR,     L"",                  datdir),
+    TP(SEC_OPTICAL, KEY_DRIVEOFFSET, L"",                 offset),
+    TP(SEC_OPTICAL, KEY_NOLEADIN,   L"",                  noleadin),
+#undef TP
+    { NULL, NULL, NULL, 0, 0 }
+};
+
+static const struct { const wchar_t *sec, *key; size_t off; int def, min, max; } int_prefs[] = {
+    { SEC_GENERAL, KEY_MAXREADS,   offsetof(prefs, maxreads),    3, PREFS_MAXREADS_MIN, META_MAXREAD },
+    { SEC_GENERAL, KEY_SOUNDS,     offsetof(prefs, sounds),      0, 0, 1 },
+    { SEC_AUTO,    KEY_COUNTDOWN,  offsetof(prefs, countdown),   5, PREFS_COUNTDOWN_MIN, PREFS_COUNTDOWN_MAX },
+    { SEC_AUTO,    KEY_FLOPPYPOLL, offsetof(prefs, floppy_poll), 2, PREFS_POLL_MIN, PREFS_POLL_MAX },
+    { NULL, NULL, 0, 0, 0, 0 }
+};
+
+static wchar_t *text_at(prefs *p, int i) { return (wchar_t *)((char *)p + text_prefs[i].off); }
+static int *int_at(prefs *p, int i) { return (int *)((char *)p + int_prefs[i].off); }
+
+static void code_default(int i, wchar_t *out, int n)
+{
+    if (text_prefs[i].def) copy_w(out, n, text_prefs[i].def);
+    else set_default_archive(out, n);
+}
+
+/* a number from one file, or def when it is not a number or out of range */
+static int int_in(const wchar_t *v, int i, int def)
+{
+    wchar_t *end; long k = wcstol(v, &end, 10);
+    if (end == v || *end || k < int_prefs[i].min || k > int_prefs[i].max) return def;
+    return (int)k;
+}
+
+static void load_prefs(const settings *s, prefs *p, int user)
+{
+    wchar_t def[SET_MAXVAL], v[SET_MAXVAL];
+    int i, d;
+    memset(p, 0, sizeof(*p));
+    for (i = 0; text_prefs[i].key; i++) {
+        code_default(i, def, SET_MAXVAL);
+        if (user) set_get(s, text_prefs[i].sec, text_prefs[i].key, def, v, SET_MAXVAL);
+        else read_default(s, text_prefs[i].sec, text_prefs[i].key, def, v, SET_MAXVAL);
+        copy_w(text_at(p, i), text_prefs[i].n, v);
+    }
+    for (i = 0; int_prefs[i].key; i++) {
+        read_default(s, int_prefs[i].sec, int_prefs[i].key, L"", v, SET_MAXVAL);
+        d = int_in(v, i, int_prefs[i].def);
+        if (user && read_file(s->user, int_prefs[i].sec, int_prefs[i].key, v, SET_MAXVAL)) d = int_in(v, i, d);
+        *int_at(p, i) = d;
+    }
+}
+
+void prefs_defaults(const settings *s, prefs *p) { load_prefs(s, p, 0); }
+void prefs_load(const settings *s, prefs *p) { load_prefs(s, p, 1); }
+
+int prefs_save(const settings *s, const prefs *p)
+{
+    wchar_t def[SET_MAXVAL], v[16];
+    prefs d;
+    int i, ok = 1;
+    prefs_defaults(s, &d);
+    for (i = 0; text_prefs[i].key; i++) {
+        code_default(i, def, SET_MAXVAL);
+        ok &= set_save(s, text_prefs[i].sec, text_prefs[i].key, def, text_at((prefs *)p, i));
+    }
+    /* the numbers against the effective default: an installer's value out of
+     * range counts as the code's one, as when loading */
+    for (i = 0; int_prefs[i].key; i++) {
+        int k = *int_at((prefs *)p, i);
+        _snwprintf(v, 16, L"%d", k); v[15] = 0;
+        ok &= set_put(s, int_prefs[i].sec, int_prefs[i].key, k == *int_at(&d, i) ? NULL : v);
+    }
+    return ok;
 }

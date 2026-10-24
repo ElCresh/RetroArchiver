@@ -150,6 +150,27 @@ static void test_toc(void)
     CHECK(!optical_drive_listed(list, "ASUS DRW-08D6MT"));
     CHECK(!optical_drive_listed(list, "") && !optical_drive_listed("", "ASUS"));
     CHECK(optical_list_add(list, 30, "LITE-ON LTR-52327S QS0C") == 0);              /* no room */
+
+    /* the Settings window lists them one by one and forgets one */
+    {
+        char m[200], hand[200] = "  ASUS   DRW-08D6MT A101 ;; PLEXTOR DVDR PX-716A 1.11;";
+        CHECK(optical_list_item(list, 0, m, sizeof(m)) == 1);
+        CHECK_STR(m, "ASUS DRW-08D6MT A101");
+        CHECK(optical_list_item(list, 1, m, sizeof(m)) == 1);
+        CHECK_STR(m, "PLEXTOR DVDR PX-716A 1.11");
+        CHECK(optical_list_item(list, 2, m, sizeof(m)) == 0 && !m[0]);
+        CHECK(optical_list_item("", 0, m, sizeof(m)) == 0);
+        /* written by hand in the ini: empty items do not count */
+        CHECK(optical_list_item(hand, 1, m, sizeof(m)) == 1);
+        CHECK_STR(m, "PLEXTOR DVDR PX-716A 1.11");
+        CHECK(optical_list_remove(list, sizeof(list), "asus drw-08d6mt  a101") == 1);
+        CHECK_STR(list, "PLEXTOR DVDR PX-716A 1.11");
+        CHECK(optical_list_remove(list, sizeof(list), "ASUS DRW-08D6MT A101") == 0);
+        CHECK(optical_list_remove(hand, sizeof(hand), "PLEXTOR DVDR PX-716A 1.11") == 1);
+        CHECK_STR(hand, "ASUS DRW-08D6MT A101");
+        CHECK(optical_list_remove(list, sizeof(list), "PLEXTOR DVDR PX-716A 1.11") == 1);
+        CHECK_STR(list, "");
+    }
 }
 
 static const char *jread(json_writer *w, const media_ops *m, const char *dir)
@@ -254,6 +275,17 @@ static void test_signatures(void)
     CHECK(optical_set_drive_offset("6 6") == -1);
     CHECK(optical_set_drive_offset("1234567") == -1);
     CHECK(optical_set_drive_offset("") == 0);
+    {   /* the Settings window checks without setting */
+        char o[16];
+        CHECK(optical_parse_offset(" 6", o, sizeof(o)) == 0);
+        CHECK_STR(o, "+6");
+        CHECK(optical_parse_offset("-472", o, sizeof(o)) == 0);
+        CHECK_STR(o, "-472");
+        CHECK(optical_parse_offset("+0", o, sizeof(o)) == 0);
+        CHECK_STR(o, "0");
+        CHECK(optical_parse_offset("", o, sizeof(o)) == 0 && !o[0]);
+        CHECK(optical_parse_offset("+6 samples", o, sizeof(o)) == -1);
+    }
 }
 
 void test_optical(void)

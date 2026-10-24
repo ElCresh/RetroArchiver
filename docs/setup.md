@@ -243,7 +243,11 @@ installed by hand.
 
    For each key the user's value wins, otherwise the default, otherwise
    the value built into the program. This way a new default brought by an
-   update reaches whoever had not changed it. The keys:
+   update reaches whoever had not changed it. The window's Tools >
+   Settings (Strumenti > Impostazioni) edits them in four tabs, General,
+   Floppy, CD and DVD, Automatic, checks them on OK and applies them at
+   once (the language too); it is greyed out while a box is being read.
+   The keys:
 
    | Section | Key | Setup default | Without any ini | What |
    |---|---|---|---|---|
@@ -253,11 +257,16 @@ installed by hand.
    | `General` | `UILanguage` | the setup's language | empty | the window's language, see below |
    | `Floppy` | `SAMdisk` | `<folder>\tools\samdisk\samdisk.exe` | `samdisk` | the program for floppies |
    | `Floppy` | `ReadFrom` | `a:` | `a:` | floppy drive, or a `.dsk` file for tests |
-   | `Floppy` | `FileName` | `FLOPPY{nn}` | the same | file names, only by hand in the ini |
+   | `Floppy` | `FileName` | `FLOPPY{nn}` | the same | file names |
    | `Optical` | `DiscImageCreator` | `<folder>\tools\DIC\DiscImageCreator.exe` | `DiscImageCreator` | the program for CDs and DVDs |
    | `Optical` | `Drive` | the first CD drive | `D:` | the CD/DVD drive letter |
-   | `Optical` | `CDFileName`, `DVDFileName` | `CD{nn}`, `DVD{nn}` | the same | file names, only by hand in the ini |
-   | `Automatic` | `Enabled` | | `0` | 1 = the Automatic checkbox |
+   | `Optical` | `CDFileName`, `DVDFileName` | `CD{nn}`, `DVD{nn}` | the same | file names |
+   | `Optical` | `DatFolder` | | empty | where the redump DATs are; empty = the program's folder |
+   | `Optical` | `DriveOffset` | empty | empty | the CD drive's read offset in samples (`+6`), for DIC's question |
+   | `Optical` | `NoLeadInDrives` | | empty | drives learned not to read the lead-in, `;` between them |
+   | `Automatic` | `Enabled` | | `0` | 1 = the Automatic checkbox, the last choice in the box preparation |
+   | `Automatic` | `CountdownSeconds` | | `5` | seconds between the label and the read, 1 to 60 |
+   | `Automatic` | `FloppyCheckSeconds` | | `2` | how often the empty floppy drive is asked, 1 to 30 (twice as often while the disk just read is in) |
    | `Box` | `Platform`, `Language` | | empty | the last choice in the box preparation |
    | `Window` | `X`, `Y`, `Width`, `Height`, `Maximized` | | | the window position, only in the user's ini |
 
@@ -276,7 +285,7 @@ installed by hand.
    `UILanguage` is the window's language: `it`, `en` (the name of a file in
    `lang\`) or empty to follow the language of Windows. The setup writes
    the language chosen at its start in the defaults; Program language
-   (Lingua del programma) in the box preparation writes the user's
+   (Lingua del programma) in Settings writes the user's
    choice, and the window changes at once. Windows in Italian gives
    Italian, any other language English, unless `lang\` has a file for it.
    If
@@ -285,8 +294,9 @@ installed by hand.
    executable.
 
    The redump DAT goes next to `RetroArchiver.exe` (in Program Files this
-   needs an administrator): the window finds it by itself and shows its
-   date in the status bar.
+   needs an administrator), or in the folder chosen in Settings
+   (`DatFolder`): the window finds it by itself and shows its date in the
+   status bar.
 
    The language files, `lang\<code>.lng`, are UTF-8 text with one
    `key=text` per line (`en.lng` explains the format at its top). A new

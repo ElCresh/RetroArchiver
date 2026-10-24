@@ -109,11 +109,12 @@ void optical_set_disc_root(const char *dir) { str_copy(disc_root, sizeof(disc_ro
 static void set_protection(int mode) { prot_mode = mode; }
 static int protection_used(void) { return prot_used; }
 
-int optical_set_drive_offset(const char *s)
+int optical_parse_offset(const char *s, char *out, size_t n)
 {
     const char *p = s; long v;
+    if (n) out[0] = 0;
     while (*p == ' ') p++;
-    if (!*p) { offset[0] = 0; return 0; }
+    if (!*p) return 0;
     if (*p == '+' || *p == '-') p++;
     if (!isdigit((unsigned char)*p)) return -1;
     while (isdigit((unsigned char)*p)) p++;
@@ -122,8 +123,16 @@ int optical_set_drive_offset(const char *s)
     v = atol(s);
     /* DIC reads at most 6 characters */
     if (v < -99999 || v > 99999) return -1;
-    if (v) snprintf(offset, sizeof(offset), "%+ld", v);
-    else str_copy(offset, sizeof(offset), "0");
+    if (v) snprintf(out, n, "%+ld", v);
+    else str_copy(out, n, "0");
+    return 0;
+}
+
+int optical_set_drive_offset(const char *s)
+{
+    char v[16];
+    if (optical_parse_offset(s, v, sizeof(v))) return -1;
+    str_copy(offset, sizeof(offset), v);
     return 0;
 }
 
@@ -949,6 +958,36 @@ int optical_list_add(char *list, size_t n, const char *model)
     if (k + strlen(m) + 3 > n) return 0;
     snprintf(list + k, n - k, "%s%s", k ? "; " : "", m);
     return 1;
+}
+
+int optical_list_item(const char *list, int i, char *out, size_t n)
+{
+    const char *p = list, *e;
+    char raw[200];
+    size_t k;
+    while (list && *p) {
+        for (e = p; *e && *e != ';'; e++) ;
+        k = (size_t)(e - p) < sizeof(raw) ? (size_t)(e - p) : sizeof(raw) - 1;
+        memcpy(raw, p, k);
+        raw[k] = 0;
+        model_words(raw, out, n);
+        if (out[0] && i-- == 0) return 1;     /* an empty item, ";;" by hand, does not count */
+        p = *e ? e + 1 : e;
+    }
+    if (n) out[0] = 0;
+    return 0;
+}
+
+int optical_list_remove(char *list, size_t n, const char *model)
+{
+    char rest[2048] = "", m[200];
+    int i, gone = 0;
+    for (i = 0; optical_list_item(list, i, m, sizeof(m)); i++) {
+        if (same_model(model, m, strlen(m))) gone = 1;
+        else optical_list_add(rest, sizeof(rest), m);
+    }
+    if (gone) str_copy(list, n, rest);
+    return gone;
 }
 
 #ifdef _WIN32
