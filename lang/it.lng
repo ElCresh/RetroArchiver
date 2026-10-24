@@ -136,6 +136,10 @@ column.archived=Archiviato
 archive.resume=Riprendi
 archive.open=Apri cartella
 archive.verify=Ricontrolla impronte
+archive.delete=Elimina
+delete.confirm=Eliminare il cofanetto «%ls»?\n\nLa cartella %ls va nel Cestino con tutte le immagini: da lì si può ancora ripristinare. In archive.csv le sue righe restano, con una riga in più per ogni disco segnata come eliminata.
+delete.failed=Il cofanetto non è stato eliminato: la cartella %ls c'è ancora. Un suo file è aperto in un altro programma, oppure hai risposto No a Windows? Chiudi quel programma e riprova.
+delete.nolog=Il cofanetto «%ls» è nel Cestino, ma archive.csv non si è potuto scrivere: è aperto in un altro programma? Le righe vecchie del cofanetto ci sono ancora.
 archive.hint=Doppio clic su un cofanetto aperto per riprenderlo dal supporto che manca.
 archive.new=Nuovo cofanetto
 archive.browse=Cartella dell'archivio dei cofanetti
@@ -468,6 +472,7 @@ about.copy=Copia informazioni
 
 # modifica di un cofanetto chiuso
 menu.edit=&Modifica cofanetto...
+menu.delete=&Elimina cofanetto...
 button.edit=Modifica
 edit.title=Modifica di “%ls”
 edit.tab.data=Cofanetto

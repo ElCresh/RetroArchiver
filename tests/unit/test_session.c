@@ -27,6 +27,29 @@ static int h_wait(void *c, const disk_turn *t, char *l, size_t ll, char *no, siz
     return t->n == 1 ? CMD_READ : CMD_FINISH;
 }
 
+/* a deleted box: a "deleted" row for each medium read, none for the others */
+static void deleted_rows(void)
+{
+    meta_box *b = meta_new(); meta_disk *d; char p[300], text[600]; FILE *f; size_t n = 0;
+    u8_mkdirs("tmp_unit/deleted");
+    u8_join(p, sizeof(p), "tmp_unit/deleted", SESSION_CSV);
+    u8_remove(p);
+    str_copy(b->title, sizeof(b->title), "Office; 97");
+    meta_set_counts(b, 2, 1, 0);
+    d = meta_disk_get(b, 1); str_copy(d->master, sizeof(d->master), "FLOPPY01.dsk"); d->nreads = 2;
+    str_copy(d->status, sizeof(d->status), "clean");
+    meta_disk_get(b, 2);
+    d = meta_disk_get(b, 3); d->nreads = 1; str_copy(d->status, sizeof(d->status), "read-failed");
+    CHECK(session_csv_deleted("tmp_unit/deleted", b) == 0);
+    if ((f = u8_fopen(p, "rb")) != NULL) { n = fread(text, 1, sizeof(text) - 1, f); fclose(f); }
+    text[n] = 0;
+    CHECK(strstr(text, "disk;master;reads;status;when;box\n") == text);
+    CHECK(strstr(text, "\n1;FLOPPY01.dsk;2;deleted;") && strstr(text, ";Office, 97\n"));
+    CHECK(strstr(text, "\n3;;1;deleted;") != NULL);
+    CHECK(strstr(text, "\n2;") == NULL);
+    meta_delete(b);
+}
+
 static void test_partial(void)
 {
     media_ops m = { "floppy", ".dsk", NULL, f_scan, f_read, f_cmp, f_tech };
@@ -264,6 +287,7 @@ void test_session(void)
     /* a long title is cut, the edition stays */
     session_bagdir(dir, sizeof(dir), "arch", longt, "97");
     CHECK(strlen(dir) < 4 + 1 + 81 && strstr(dir, "A (97)") == dir + strlen(dir) - 6);
+    deleted_rows();
     test_partial();
     cancel_in_compare(0, "Annullato");
     cancel_in_compare(1, "Annullato con riprova");

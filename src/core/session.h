@@ -109,6 +109,10 @@ const char *session_aside_dir(const char *bagdir);
 #define SESSION_CSV "archive.csv"
 /* one row of it for d, with its own status or status; -1 if it cannot be written */
 int  session_csv_row(const char *outroot, const char *box_title, const meta_disk *d, const char *status);
+/* the box was deleted (its folder in the Recycle Bin): a SESSION_DELETED
+ * row for each medium with reads. -1 if the log cannot be written */
+#define SESSION_DELETED "deleted"
+int  session_csv_deleted(const char *outroot, const meta_box *b);
 /* the names of the files set aside in the bag, one per line ('\n'); how many */
 int  session_aside_list(const char *bagdir, strbuf *out);
 /* {n} {nn} {nnn} {set} {date} ({data} as in 261017); the result is truncated to n bytes */

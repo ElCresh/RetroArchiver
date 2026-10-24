@@ -81,9 +81,9 @@ enum {
     ID_SBAR, ID_TOARCH, ID_LABELREAD,
     /* archive: from ID_ADIR to ID_ANEW */
     ID_ADIR = 300, ID_ABROWSE, ID_ASEARCH, ID_APLAT, ID_ASUM, ID_ALIST, ID_ADETAIL,
-    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_AHINT, ID_ANEW,
+    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW,
     /* the menu bar */
-    IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT
+    IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE
 };
 
 /* what the window knows about a disk: copied by the worker thread, which
@@ -698,6 +698,7 @@ static void build_archive(void)
     make_t(L"BUTTON", T_ARC_OPEN, WS_TABSTOP, 0, 0, 130, 26, ID_AOPEN);
     make_t(L"BUTTON", T_ARC_VERIFY, WS_TABSTOP, 0, 0, 130, 26, ID_AVERIFY);
     make_t(L"BUTTON", T_BTN_EDIT, WS_TABSTOP, 0, 0, 130, 26, ID_AEDIT);
+    make_t(L"BUTTON", T_ARC_DELETE, WS_TABSTOP, 0, 0, 130, 26, ID_ADELETE);
     make_t(L"STATIC", T_ARC_HINT, SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_AHINT);
     make_t(L"BUTTON", T_ARC_NEW, WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 150, 28, ID_ANEW);
     SendDlgItemMessageW(g_wnd, ID_ARESUME, WM_SETFONT, (WPARAM)g_bold, TRUE);
@@ -1390,6 +1391,13 @@ static int pick_editable(void)
         && !g_verifying && !g_saving && !g_running;
 }
 
+/* Elimina: any box of the list, even a broken one, with nothing running */
+static int pick_deletable(void)
+{
+    return g_pick >= 0 && g_pick < g_arc.n && !g_arc.box[g_pick].editing
+        && !g_verifying && !g_saving && !g_running;
+}
+
 /* the width of a label's text, plus a little margin */
 static int text_width(int id)
 {
@@ -1450,6 +1458,7 @@ static void layout_archive(int W, int H)
     else if (pick_closed()) { put(ID_AEDIT, bx, k, 130, 26); k += 32; }
     put(ID_AOPEN, bx, k, 130, 26);
     put(ID_AVERIFY, bx, k + 32, 130, 26);
+    put(ID_ADELETE, bx, k + 64, 130, 26);
     put(ID_AHINT, 8, by + 6, W - 16 - 150 - 12, 18);
     put(ID_ANEW, W - 8 - 150, by, 150, 28);
 }
@@ -2744,7 +2753,7 @@ static int visible_in(int v, int id)
         if (g_arc_empty) return listed(in_empty, id);
         if (id == ID_ARESUME) return pick_open();
         if (id == ID_AEDIT) return pick_closed();
-        if (id == ID_AOPEN || id == ID_AVERIFY) return g_pick >= 0;
+        if (id == ID_AOPEN || id == ID_AVERIFY || id == ID_ADELETE) return g_pick >= 0;
         return 1;
     }
     if (v == V_WAIT) return listed(in_wait, id) && (id != ID_READ || g_turn.readable);
@@ -3604,11 +3613,12 @@ static void arc_row(int row, int idx)
 static void archive_buttons(void)
 {
     int i;
-    static const int ids[] = { ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, 0 };
+    static const int ids[] = { ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, 0 };
     layout();
     if (g_view != V_ARCHIVE) return;
     EnableWindow(GetDlgItem(g_wnd, ID_AVERIFY), !g_verifying);
     EnableWindow(GetDlgItem(g_wnd, ID_AEDIT), pick_editable());
+    EnableWindow(GetDlgItem(g_wnd, ID_ADELETE), pick_deletable());
     /* moved by layout, on XP they kept the neighbour's image: redraw them */
     for (i = 0; ids[i]; i++) {
         HWND b = GetDlgItem(g_wnd, ids[i]);
@@ -4182,6 +4192,48 @@ static int edit_confirm(const meta_box *old, const edit_change *ch, int n)
     to_w(old->title, t, 300);
     _snwprintf(all, 5000, tr(T_EDIT_CONFIRM), t, list); all[4999] = 0;
     return MessageBoxW(g_wnd, all, L"RetroArchiver", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON1) == IDYES;
+}
+
+/* Elimina: the folder goes to the Recycle Bin, never deleted for good
+ * without Windows asking (a box too big for the Bin); the log keeps the
+ * box's rows and gets a "deleted" one for each medium */
+static void delete_pick(void)
+{
+    char dir[600], root[600], data[640], *sep; wchar_t wt[300], wd[700], from[MAX_PATH + 2], w[1400];
+    meta_box *m; strbuf err; SHFILEOPSTRUCTW op; int have, rc;
+    if (!pick_deletable()) return;
+    str_copy(dir, sizeof(dir), g_arc.box[g_pick].dir);
+    to_w(g_arc.box[g_pick].title, wt, 300);
+    to_w(dir, wd, 700);
+    _snwprintf(w, 1400, tr(T_DEL_CONFIRM), wt, wd); w[1399] = 0;
+    if (MessageBoxW(g_wnd, w, L"RetroArchiver", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+    /* the metadata before the folder goes: they give the log's rows */
+    m = meta_new();
+    sb_init(&err);
+    u8_join(data, sizeof(data), dir, "data");
+    have = m && meta_load(m, data, &err) == 0;
+    sb_free(&err);
+    memset(from, 0, sizeof(from));          /* the list ends with two NULs */
+    if (!GetFullPathNameW(wd, MAX_PATH, from, NULL)) wcsncpy(from, wd, MAX_PATH);
+    memset(&op, 0, sizeof(op));
+    op.hwnd = g_wnd;
+    op.wFunc = FO_DELETE;
+    op.pFrom = from;
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING;
+    rc = SHFileOperationW(&op);
+    if (rc || op.fAnyOperationsAborted || u8_exists(dir)) {
+        _snwprintf(w, 1400, tr(T_DEL_FAILED), wd); w[1399] = 0;
+        MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
+    } else if (have) {
+        str_copy(root, sizeof(root), dir);
+        if ((sep = strrchr(root, U8_SEP[0])) != NULL) *sep = 0;
+        if (session_csv_deleted(root, m)) {
+            _snwprintf(w, 1400, tr(T_DEL_NOLOG), wt); w[1399] = 0;
+            MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONINFORMATION);
+        }
+    }
+    meta_delete(m);
+    archive_scan();
 }
 
 static void edit_pick(void)
@@ -4977,6 +5029,7 @@ static HMENU menu_build(void)
     HMENU bar = CreateMenu(), arc = CreatePopupMenu(), tools = CreatePopupMenu(), help = CreatePopupMenu();
     AppendMenuW(arc, MF_STRING, IDM_NEW, tr(T_MENU_NEW));
     AppendMenuW(arc, MF_STRING, IDM_EDIT, tr(T_MENU_EDIT));
+    AppendMenuW(arc, MF_STRING, IDM_DELETE, tr(T_MENU_DELETE));
     AppendMenuW(arc, MF_STRING, IDM_OPENDIR, tr(T_MENU_OPENDIR));
     AppendMenuW(arc, MF_SEPARATOR, 0, NULL);
     AppendMenuW(arc, MF_STRING, IDM_EXIT, tr(T_MENU_EXIT));
@@ -5004,6 +5057,7 @@ static void menu_states(HMENU m)
     EnableMenuItem(m, IDM_NEW, MF_BYCOMMAND | busy);
     EnableMenuItem(m, IDM_SETTINGS, MF_BYCOMMAND | busy);
     EnableMenuItem(m, IDM_EDIT, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_editable() ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(m, IDM_DELETE, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_deletable() ? MF_ENABLED : MF_GRAYED));
 }
 
 static void menu_new_box(void)
@@ -5156,6 +5210,7 @@ static int on_command(HWND h, WPARAM wp)
     case ID_AOPEN:   open_pick(); return 1;
     case ID_AVERIFY: verify_pick(); return 1;
     case ID_AEDIT: edit_pick(); return 1;
+    case ID_ADELETE: delete_pick(); return 1;
     case ID_ANEW:    go_setup(1); return 1;
     case ID_START:  start(); return 1;
     case ID_RESUME: resume(); return 1;
@@ -5168,6 +5223,7 @@ static int on_command(HWND h, WPARAM wp)
     case IDM_GUIDE:   menu_guide(); return 1;
     case IDM_ABOUT:   about_open(); return 1;
     case IDM_EDIT:    edit_pick(); return 1;
+    case IDM_DELETE:  delete_pick(); return 1;
     case ID_READ:   answer(CMD_READ); return 1;
     case ID_SKIP:   answer(CMD_SKIP); return 1;
     case ID_LABELREAD: label_read(); return 1;

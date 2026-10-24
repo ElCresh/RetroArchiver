@@ -216,6 +216,17 @@ int session_csv_row(const char *outroot, const char *box_title, const meta_disk 
     return fclose(f) == 0 ? 0 : -1;
 }
 
+/* a deleted box keeps its history in the log: one "deleted" row for each
+ * medium that had something read, the rows before it stay as they are */
+int session_csv_deleted(const char *outroot, const meta_box *b)
+{
+    int i, rc = 0;
+    for (i = 0; i < b->ndisk; i++)
+        if ((b->disk[i].nreads || b->disk[i].master[0]) &&
+            session_csv_row(outroot, b->title, &b->disk[i], SESSION_DELETED)) rc = -1;
+    return rc;
+}
+
 static void csv_row(run_ctx *r, const meta_disk *d)
 {
     char p[1024];

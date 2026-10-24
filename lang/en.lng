@@ -140,6 +140,10 @@ column.archived=Archived
 archive.resume=Resume
 archive.open=Open folder
 archive.verify=Check hashes
+archive.delete=Delete
+delete.confirm=Delete the box "%ls"?\n\nThe folder %ls goes to the Recycle Bin with all its images: you can still restore it from there. In archive.csv its rows stay, with one more row marked deleted for each disk.
+delete.failed=The box was not deleted: the folder %ls is still there. Is one of its files open in another program, or did you answer No to Windows? Close that program and try again.
+delete.nolog=The box "%ls" is in the Recycle Bin, but archive.csv could not be written: is it open in another program? The box's old rows are still there.
 archive.hint=Double-click an open box to resume it from the medium that is missing.
 archive.new=New box
 archive.browse=Folder of the box archive
@@ -472,6 +476,7 @@ about.copy=Copy info
 
 # editing a closed box
 menu.edit=&Edit box...
+menu.delete=&Delete box...
 button.edit=Edit
 edit.title=Edit “%ls”
 edit.tab.data=Box
