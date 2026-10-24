@@ -299,8 +299,11 @@ static void tee_line(void *c, const char *line)
      * then a raw read of LBA -1 refused with ILLEGAL_REQUEST, and DIC stops
      * with error 1. The cd command needs it; /sf has nothing to do with it.
      * Which of the two DIC checks depends on the sign of the disc's
-     * combined offset: the same drive may say lead-out on another disc */
-    if (strstr(line, "can't read the lead-in") || strstr(line, "LBA[-00001")) t->leadin = 1;
+     * combined offset: the same drive may say lead-out on another disc.
+     * The Sony AD-7200S (offset +48) stops at LBA -2 with "LOGICAL BLOCK
+     * ADDRESS OUT OF RANGE" and no such sentence: any error on a negative
+     * LBA during cd is the lead-in */
+    if (strstr(line, "can't read the lead-in") || strstr(line, "LBA[-0")) t->leadin = 1;
     else if (strstr(line, "can't read the lead-out") && !t->leadin) t->leadin = 2;
     /* seen on the PC with /sf: "GetLastError: 121" (semaphore timeout), then
      * "SenseData 06-29-00 = UNIT_ATTENTION - POWER ON, RESET..." and "Please

@@ -986,6 +986,17 @@ ok("no lead-in, data CD: the failed cd attempt stays in the console log, its oth
 ok("no lead-in, data CD: the drive is remembered", "Drive ASUS DRW-08D6MT 1.00 cannot read the lead-in: "
    "remembered" in out, out)
 
+# the Sony AD-7200S (offset +48, seen on the PC): it stops at LBA -2 with
+# "OUT OF RANGE" and never says "can't read the lead-in"
+dic_log()
+rc, out = run("CD dati lettore Sony", 0, [], [""], ["-C", "1"], tpl=None,
+              dic=["LEADIN2 data_good", "data_good"], env_extra=disc_env(DISC_PLAIN))
+cd = meta(bag("CD dati lettore Sony"))["media"][0]
+ok("no lead-in at LBA -2, without DIC saying so: read again with data, clean",
+   rc == 0 and dic_log() == ["cd nosf offset none", "data 0-300 nosf offset none"]
+   and cd["status"] == "clean" and (cd.get("disc") or {}).get("read_method") == "dic-data",
+   json.dumps(cd) + out)
+
 # a mixed CD: no data command, the reason is said
 rc, out = run("CD misto senza lead-in", 0, [], [""], ["-C", "1"], tpl=None, dic=["LEADIN cd_good"],
               env_extra=disc_env(DISC_PLAIN))

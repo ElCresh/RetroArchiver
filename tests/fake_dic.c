@@ -14,7 +14,9 @@
  *                     (complete read but exit code n), RESETSn folder (n
  *                     drive resets first, then the folder or FAIL), LEADIN
  *                     [folder] (a drive that cannot read the lead-in: the read
- *                     fails, leaving the folder's _disc.txt with its TOC);
+ *                     fails, leaving the folder's _disc.txt with its TOC),
+ *                     LEADIN2 [folder] (the same, stopping at LBA -2
+ *                     without saying so, like the Sony AD-7200S);
  *                     without a script cd_good, data_good or dvd_good. A
  *                     data read fails if END is not the folder's DISC.bin end
  *   FAKE_DIC_NODRIVE  if defined, "ls" fails as with a wrong drive
@@ -276,9 +278,22 @@ static int dump(int kind, const char *file, int sf)
     /* a drive that cannot read the lead-in, as the ASUS DRW-08D6MT on the PC;
      * "LEADIN data_good": the TOC DIC wrote before stopping is that disc's */
     if (!strncmp(what, "LEADIN", 6)) {
-        if (what[6] == ' ') {
-            snprintf(src, sizeof(src), "%s/%s", fix ? fix : "fixtures/dic", what + 7);
+        /* LEADIN2: like the Sony AD-7200S (offset +48), no scrambled reading,
+         * stops at LBA -2 without saying "can't read the lead-in" */
+        int sony = what[6] == '2';
+        const char *sp = strchr(what, ' ');
+        if (sp) {
+            snprintf(src, sizeof(src), "%s/%s", fix ? fix : "fixtures/dic", sp + 1);
             copy_one(src, "DISC_disc.txt", dir, base);
+        }
+        if (sony) {
+            printf("[WARNING] This drive does not support scrambled reading\n"
+                   "Set OpCode: 0xbe, SubCode: 1(Raw)\n"
+                   "LBA[-00002, 0xfffffffe]: [F:ReadCDAll][L:1098]\n\tOpcode: 0xbe\n"
+                   "\tScsiStatus: 0x02 = CHECK_CONDITION\n"
+                   "\tSenseData Key-Asc-Ascq: 05-21-00 = ILLEGAL_REQUEST - LOGICAL BLOCK ADDRESS OUT OF RANGE\n"
+                   "lpCmd: be, 04, ff, ff, ff, fe, 00, 00, 01, f8, 01, 00\ndwBufSize: 2742\n");
+            return 1;
         }
         printf("This drive can't read the lead-in\nSet OpCode: 0xbe, SubCode: 1(Raw)\n"
                "LBA[-00001, 0xffffffff]: [F:ReadCDAll][L:1114]\n\tOpcode: 0xbe\n"
