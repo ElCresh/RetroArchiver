@@ -897,15 +897,23 @@ ok("old firmware: the log says to update it, no copy protection scan after it",
    and dic_log() == ["cd nosf offset none"] * 3 and cd["status"] == "clean", out)
 
 # a scratched CD (Office 2000 on the PLEXTOR): DIC ends with C2 errors left and
-# no image; the log says to clean it and read it slower, and no /sf after it
-rc, out = run("CD graffiato", 0, [], ["", ""], ["-C", "1", "-r", "--cd-speed=4"], tpl=None,
-              dic=["C2STOP", "cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
+# no image; Retry reads that disc at half the speed, 16 -> 8 -> 4, and no /sf after it
+rc, out = run("CD graffiato", 0, [], ["", "", ""], ["-C", "1", "-r"], tpl=None,
+              dic=["C2STOP", "C2STOP", "cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
 cd = meta(bag("CD graffiato"))["media"][0]
-ok("C2 errors left: the log says the disc is scratched and to read it slower, no /sf after it",
-   rc == 0 and "929 sectors still unreadable after 20 rereads" in out and "--cd-speed=4" in out
-   and dic_log() == ["cd nosf offset none"] * 3 and cd["status"] == "clean", out)
-ok("CD speed: in the metadata of the read",
+ok("C2 errors left: the disc is scratched, Retry goes to 8x and then to 4x, no /sf after it",
+   rc == 0 and "929 sectors still unreadable after 20 rereads (C2 errors) at 16x" in out
+   and "Retry reads it again at 8x" in out and "at 8x: the disc" in out and "Retry reads it again at 4x" in out
+   and dic_log() == ["cd nosf offset none"] * 4 and cd["status"] == "clean", out)
+ok("CD speed: the lowered one in the metadata of both reads of the disc",
    cd["disc"].get("read_speed") == "4x", json.dumps(cd.get("disc", {}).get("read_speed")))
+# already at the lowest speed: nothing lower, the log says to wash it or change drive
+rc, out = run("CD graffiato lento", 0, [], ["", ""], ["-C", "1", "-r", "--cd-speed=4"], tpl=None,
+              dic=["C2STOP", "cd_good", "cd_good"], env_extra=disc_env(DISC_PLAIN))
+cd = meta(bag("CD graffiato lento"))["media"][0]
+ok("C2 errors left at 4x: the lowest speed, wash it or another drive",
+   rc == 0 and "at 4x, the lowest speed RetroArchiver uses" in out and "another drive" in out
+   and cd["disc"].get("read_speed") == "4x" and dic_log() == ["cd nosf offset none"] * 3, out)
 rc, out = run("Velocita sbagliata", 0, [], [""], ["-C", "1", "--cd-speed=99"], tpl=None)
 ok("CD speed out of range gives the usage", rc == 2 and "--cd-speed=N" in out, out)
 

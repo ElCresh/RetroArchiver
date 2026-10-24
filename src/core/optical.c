@@ -91,6 +91,13 @@ static char drive[2] = "D";
 static char datdir[512] = "";
 static char offset[16] = "";            /* "" = not set */
 static char cd_speed[8] = CD_SPEED;
+/* a CD that DIC stopped on with C2 errors left is read again slower: half
+ * the speed each time, down to SLOW_MIN. Only that disc: the next ones
+ * start again from cd_speed */
+#define SLOW_MIN 4
+static char slow_disc[96] = "";         /* "CD01", "" none */
+static int slow_x = 0, slowed_to = 0;
+static char cur_speed[8] = CD_SPEED;    /* of the read in progress */
 static char sigpath[512] = "", disc_root[512] = "";
 static int prot_mode = META_PROT_AUTO;  /* for the next read */
 static int prot_used = 0;               /* of the last read */
@@ -134,7 +141,37 @@ int optical_set_cd_speed(int x)
 {
     if (x < OPTICAL_SPEED_MIN || x > OPTICAL_SPEED_MAX) return -1;
     snprintf(cd_speed, sizeof(cd_speed), "%d", x);
+    slow_disc[0] = 0;
     return 0;
+}
+
+/* the disc of a read: "CD01" for CD01 and CD01_b */
+static void disc_key(const char *base, char *out, size_t n)
+{
+    size_t k;
+    str_copy(out, n, base);
+    k = strlen(out);
+    if (k > 2 && out[k - 2] == '_' && islower((unsigned char)out[k - 1])) out[k - 2] = 0;
+}
+
+static const char *speed_for(const char *base)
+{
+    char key[96];
+    disc_key(base, key, sizeof(key));
+    if (slow_disc[0] && !strcmp(key, slow_disc)) snprintf(cur_speed, sizeof(cur_speed), "%d", slow_x);
+    else str_copy(cur_speed, sizeof(cur_speed), cd_speed);
+    return cur_speed;
+}
+
+/* DIC stopped with C2 errors left: the next read of this disc goes slower */
+static void slow_down(const char *base)
+{
+    int cur = atoi(cur_speed);
+    slowed_to = 0;
+    if (cur <= SLOW_MIN) return;
+    slow_x = cur / 2 < SLOW_MIN ? SLOW_MIN : cur / 2;
+    disc_key(base, slow_disc, sizeof(slow_disc));
+    slowed_to = slow_x;
 }
 
 int optical_set_drive_offset(const char *s)
@@ -1076,7 +1113,7 @@ static void cd_input(const char *out_dir, char *input, size_t n, FILE *con)
 {
     FILE *f;
     input[0] = 0;
-    if (con) fprintf(con, OFFSET_MARK "%s\n" SPEED_MARK "%sx\n", offset[0] ? offset : "not set", cd_speed);
+    if (con) fprintf(con, OFFSET_MARK "%s\n" SPEED_MARK "%sx\n", offset[0] ? offset : "not set", cur_speed);
     if (!offset[0]) return;
     u8_join(input, n, out_dir, INPUT_FILE);
     /* binary: DIC's C runtime reads the console's CRLF too */
@@ -1103,11 +1140,17 @@ static void fail_text(char *p, size_t n, int dvd, int code, const tee *t, const 
     else if (t->denied)
         snprintf(p, n, "DiscImageCreator cannot open drive %s: (access denied): run the program "
                        "as an administrator.", drive);
+    else if (t->c2_left > 0 && !dvd && slowed_to)
+        snprintf(p, n, "DiscImageCreator stopped with %d sectors still unreadable after %s rereads (C2 "
+                       "errors) at %sx: the disc is scratched or dirty there. Retry reads it again at %dx; "
+                       "washing it first helps (water and a drop of soap, dried from the centre outwards).",
+                 t->c2_left, C2_REREAD, cur_speed, slowed_to);
     else if (t->c2_left > 0 && !dvd)
         snprintf(p, n, "DiscImageCreator stopped with %d sectors still unreadable after %s rereads (C2 "
-                       "errors): the disc is scratched or dirty there. Wash it with water and a drop of "
-                       "soap, dry it from the centre outwards, and read it again at a lower speed (CD "
-                       "speed 4 or 8 in the settings; dskrun --cd-speed=4).", t->c2_left, C2_REREAD);
+                       "errors) at %sx, the lowest speed RetroArchiver uses: the disc is scratched or "
+                       "dirty there. Wash it with water and a drop of soap, dry it from the centre "
+                       "outwards and try again, or read it with another drive.",
+                 t->c2_left, C2_REREAD, cur_speed);
     else if (t->firmware)
         snprintf(p, n, "DiscImageCreator does not read with this drive until its firmware is the "
                        "latest one: update the drive's firmware (DiscImageCreator's log says where "
@@ -1253,7 +1296,7 @@ static int read_data(const char *out_dir, const char *base, const char *arg, int
                      const char *why, runner_line_fn on_line, void *ctx)
 {
     char end[16], input[1100], name[200], bin[1100], p[1600];
-    const char *argv[] = { dic, "data", drive, arg, cd_speed, "0", end, "/c2", C2_REREAD, "/sf", "/q", NULL };
+    const char *argv[] = { dic, "data", drive, arg, speed_for(base), "0", end, "/c2", C2_REREAD, "/sf", "/q", NULL };
     tee t; int code = 0, rc, have; long long size;
 
     snprintf(end, sizeof(end), "%ld", g_toc.end);
@@ -1285,6 +1328,7 @@ static int read_data(const char *out_dir, const char *base, const char *arg, int
     prot_used = t.resets ? (t.sf ? 2 : -1) : sf;
     if (t.wrong || t.denied || t.firmware || t.c2_left || (t.ask_offset && !offset[0])) prot_used = -1;
     if (!have) {
+        if (t.c2_left) slow_down(base); else slowed_to = 0;
         fail_text(p, sizeof(p), 0, code, &t, out_dir, base, name);
         say(on_line, ctx, p);
         return -1;
@@ -1310,6 +1354,7 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
     prot_used = -1;             /* until DIC starts: no room, no folder */
 
     str_copy(base, sizeof(base), base_of(out_dir));
+    if (!dvd) cd_argv[4] = speed_for(base);
     /* before 30 minutes of reading: is there room, and is the file system fine? */
     str_copy(parent, sizeof(parent), out_dir);
     sep = strrchr(parent, U8_SEP[0]);
@@ -1412,6 +1457,7 @@ static int read_media(int dvd, const char *out_dir, runner_line_fn on_line, void
                  t.leadin == 2 ? "the sectors after the end of the disc" : "the sector before the start of the disc, LBA -1",
                  why2);
     } else {
+        if (t.c2_left && !dvd) slow_down(base); else slowed_to = 0;
         fail_text(p, sizeof(p), dvd, code, &t, out_dir, base,
                   u8_filesize(dat) > 0 ? base_of(dvd ? img : cue) : base_of(dat));
     }
