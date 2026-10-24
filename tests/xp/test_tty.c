@@ -6,6 +6,7 @@
  *   tty_test.exe FAKE_SAMDISK FIXTURES [SAMDISK IMAGE.dsk]
  *   (make test runs it from build/; on the VM also with the real SAMdisk) */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <windows.h>
 #include "core/runner.h"
@@ -42,12 +43,58 @@ static void on_line(void *c, const char *line)
     if (strstr(line, "fake_samdisk: copied")) s->done++;
 }
 
+/* Stop while a program runs in the hidden console: the program must die too.
+ * The test first enters a job that forbids breaking away, like the processes
+ * that Windows 7 starts from Explorer: there the helper's own job was refused
+ * and DiscImageCreator survived Stop, holding the drive */
+typedef struct { const char *self; DWORD pid; int rc; } stopper;
+
+static void on_pid(void *c, const char *line)
+{
+    stopper *s = (stopper *)c;
+    if (!strncmp(line, "pid ", 4)) s->pid = (DWORD)strtoul(line + 4, NULL, 10);
+}
+
+static DWORD WINAPI stop_thread(LPVOID p)
+{
+    stopper *s = (stopper *)p; const char *cmd[3]; int code;
+    cmd[0] = s->self; cmd[1] = "--sleep"; cmd[2] = NULL;
+    s->rc = runner_run_tty(cmd, on_pid, s, &code);
+    return 0;
+}
+
+static void test_stop(const char *self)
+{
+    HANDLE job = CreateJobObjectW(NULL, NULL), th, child; stopper s; int i, dead;
+    if (job) AssignProcessToJobObject(job, GetCurrentProcess());
+    memset(&s, 0, sizeof(s));
+    s.self = self;
+    th = CreateThread(NULL, 0, stop_thread, &s, 0, NULL);
+    for (i = 0; i < 100 && !s.pid; i++) Sleep(100);
+    ok("stop: the program in the console has started", s.pid != 0);
+    runner_cancel();
+    WaitForSingleObject(th, 10000);
+    CloseHandle(th);
+    child = s.pid ? OpenProcess(SYNCHRONIZE, FALSE, s.pid) : NULL;
+    dead = !child || WaitForSingleObject(child, 5000) == WAIT_OBJECT_0;
+    if (child) { if (!dead) TerminateProcess(child, 1); CloseHandle(child); }
+    ok("stop: the program dies with the helper, also inside a job", dead);
+    runner_clear();
+}
+
 int main(int argc, char **argv)
 {
     const char *cmd[5]; seen s; int code = -1, rc; FILE *f;
     char out[MAX_PATH], script[MAX_PATH + 16], pos[MAX_PATH + 32], self[MAX_PATH];
     /* like the window: launched with --tty it acts as an intermediary */
     if (argc >= 3 && !strcmp(argv[1], "--tty")) return runner_tty_host((const char *const *)argv + 2);
+    /* a program that runs until stopped, for test_stop */
+    if (argc >= 2 && !strcmp(argv[1], "--sleep")) {
+        printf("pid %lu\n", (unsigned long)GetCurrentProcessId());
+        fflush(stdout);
+        Sleep(60000);
+        return 0;
+    }
     if (argc < 3) { printf("usage: tty_test.exe FAKE_SAMDISK FIXTURES\n"); return 2; }
     GetModuleFileNameA(NULL, self, sizeof(self));
     runner_set_tty_helper(self);
@@ -122,6 +169,9 @@ int main(int argc, char **argv)
                code, s.lines, s.cyl, s.last_cyl);
         ok("real SAMdisk: with the console progress arrives", rc == RUNNER_DONE && code == 0 && s.cyl >= 2);
     }
+
+    /* last: it leaves the test inside a job */
+    test_stop(self);
 
     DeleteFileA(out); DeleteFileA(script); DeleteFileA(pos);
     printf("\ntty: %d failed\n", fails);

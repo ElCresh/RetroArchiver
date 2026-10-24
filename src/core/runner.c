@@ -29,10 +29,12 @@ static void flush(splitter *s)
 
 #ifdef _WIN32
 #include <windows.h>
+#include <tlhelp32.h>
 
 /* copy of the running process's handle: whoever takes it with the atomic
  * exchange closes it, so runner_cancel never uses an already closed handle */
 static PVOID volatile running = NULL;
+static volatile LONG running_pid = 0;
 static volatile LONG canceled = 0;
 
 /* SAMdisk writes in the OEM code page, the program's internal text is UTF-8 */
@@ -144,8 +146,10 @@ static int run_pipe(const char *const *argv, runner_line_fn on_line, void *ctx, 
     if (canceled) return RUNNER_CANCELED;
     if (!spawn(argv, &pi, &rd, in)) return RUNNER_NOSTART;
     if (DuplicateHandle(GetCurrentProcess(), pi.hProcess, GetCurrentProcess(), &dup,
-                        PROCESS_TERMINATE, FALSE, 0))
+                        PROCESS_TERMINATE, FALSE, 0)) {
+        InterlockedExchange(&running_pid, (LONG)pi.dwProcessId);
         InterlockedExchangePointer(&running, dup);
+    }
     /* canceled while starting: runner_cancel may not have seen the handle */
     if (InterlockedCompareExchange(&canceled, 0, 0)) TerminateProcess(pi.hProcess, 1);
 
@@ -287,7 +291,12 @@ static int tty_child(const char *const *argv, HANDLE pipe, HANDLE in0, PROCESS_I
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdInput = in; si.hStdOutput = out; si.hStdError = out;
     memset(pi, 0, sizeof(*pi));
-    ok = CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, CREATE_SUSPENDED, NULL, NULL, &si, pi);
+    /* out of the helper's own job, if it has one: before Windows 8 a process
+     * belongs to one job only, and our job (kill on close) would be refused.
+     * A job that forbids it refuses the breakaway: then without */
+    ok = CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, CREATE_SUSPENDED | CREATE_BREAKAWAY_FROM_JOB,
+                        NULL, NULL, &si, pi);
+    if (!ok) ok = CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, CREATE_SUSPENDED, NULL, NULL, &si, pi);
     free(wcmd);
     if (!in0 && in != INVALID_HANDLE_VALUE) CloseHandle(in);
     if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
@@ -371,12 +380,40 @@ int runner_run_tty(const char *const *argv, runner_line_fn on_line, void *ctx, i
     return runner_run_tty_input(argv, NULL, on_line, ctx, exit_code);
 }
 
+/* Terminates the processes started by pid, and theirs. The helper's job
+ * should do it when the helper dies, but on Windows 7 the job can be refused
+ * (seen on the PC: DiscImageCreator kept running after Stop and held the
+ * drive). Called while pid is still alive, so its id is not reused */
+static void kill_children(DWORD pid, int depth)
+{
+    PROCESSENTRY32 pe; HANDLE snap, h;
+    if (depth > 4) return;
+    snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    pe.dwSize = sizeof(pe);
+    if (Process32First(snap, &pe)) {
+        do {
+            if (pe.th32ParentProcessID != pid || pe.th32ProcessID == pid) continue;
+            kill_children(pe.th32ProcessID, depth + 1);
+            if ((h = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID)) != NULL) {
+                TerminateProcess(h, 1);
+                CloseHandle(h);
+            }
+        } while (Process32Next(snap, &pe));
+    }
+    CloseHandle(snap);
+}
+
 void runner_cancel(void)
 {
     HANDLE h;
     InterlockedExchange(&canceled, 1);      /* first the flag, then the handle */
     h = InterlockedExchangePointer(&running, NULL);
-    if (h) { TerminateProcess(h, 1); CloseHandle(h); }
+    if (h) {
+        kill_children((DWORD)InterlockedExchange(&running_pid, 0), 0);
+        TerminateProcess(h, 1);
+        CloseHandle(h);
+    }
 }
 
 int runner_stopped(void) { return InterlockedCompareExchange(&canceled, 0, 0) != 0; }
