@@ -49,6 +49,7 @@ SetCompressor /SOLID lzma
 !include "FileFunc.nsh"
 !include "WinMessages.nsh"
 !include "WinVer.nsh"
+!include "x64.nsh"
 !include "${THIRD_PARTY}/third_party.nsh"
 
 ; the default archive, in the root of the system drive: the name is only
@@ -101,7 +102,7 @@ VIAddVersionKey /LANG=1040 "LegalCopyright" "SAMdisk, fdrawcmd.sys e DiscImageCr
 
 Var Summary     ; text of the final page and of install-check.txt
 Var FdResult      ; how the fdrawcmd.sys installation went this time
-Var Runtime     ; "ok", "old" or "missing"
+Var Runtime     ; "ok", "old", "missing" or "noucrt"
 Var VcResult      ; how the runtime installation went this time
 Var ArchiveDir    ; C:\RetroArchive, on the system drive
 Var IniConv       ; keys converted from Italian in the defaults ini
@@ -142,6 +143,7 @@ Var IniConvUser   ; and in the ini of the user who installs
 !define MUI_FINISHPAGE_TEXT_REBOOTLATER "$(L_REBOOT_LATER)"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\RetroArchiver.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "$(L_RUN)"
+!define MUI_FINISHPAGE_RUN_FUNCTION RunUnelevated
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishShow
 !insertmacro MUI_PAGE_FINISH
 
@@ -250,6 +252,18 @@ Function TopEdge
   System::Call 'user32::MapWindowPoints(p 0, p $mui.FinishPage, p r1, i 2)'
   System::Call '*$1(i,i.R2,i,i)'
   System::Free $1
+FunctionEnd
+
+; the finish page opens the window through Explorer: started by the setup it
+; would inherit the administrator token (seen on Windows 7 with UAC), and with
+; another account's credentials it would save that account's settings. XP has
+; no UAC: there it starts as before
+Function RunUnelevated
+  ${If} ${AtLeastWinVista}
+    Exec '"$WINDIR\explorer.exe" "$INSTDIR\RetroArchiver.exe"'
+  ${Else}
+    Exec '"$INSTDIR\RetroArchiver.exe"'
+  ${EndIf}
 FunctionEnd
 
 ; ---- RetroArchiver is open: it must be closed before replacing the files ----
@@ -424,10 +438,21 @@ FunctionEnd
 
 ; ---- checks ----
 
-; the Visual C++ 2015-2019 x86 runtime: $Runtime = ok, old or missing.
-; On XP there is no WOW6432Node; on 64-bit Windows the registry of a
+; the Visual C++ 2015-2019 x86 runtime: $Runtime = ok, old, missing or
+; noucrt. On XP there is no WOW6432Node; on 64-bit Windows the registry of a
 ; 32-bit program ends up there by itself.
 Function CheckRuntime
+  Call CheckVcRuntime
+  ; it also needs the Universal CRT: on XP the package copies it into
+  ; system32, on 7 and 8.1 it installs update KB2999226 with wusa, which can
+  ; fail (0x5 on the Windows 7 VM) while the package still exits with 0
+  ${If} $Runtime == "ok"
+  ${AndIfNot} ${FileExists} "$SYSDIR\ucrtbase.dll"
+    StrCpy $Runtime "noucrt"
+  ${EndIf}
+FunctionEnd
+
+Function CheckVcRuntime
   ClearErrors
   ReadRegDWORD $0 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x86" "Installed"
   ReadRegDWORD $1 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x86" "Major"
@@ -456,14 +481,21 @@ Function FdrawcmdActive
   Call WordAfter
 FunctionEnd
 
-; fdrawcmd.sys installed: $0 = 1 or 0
+; fdrawcmd.sys installed: $0 = 1 or 0. On 64-bit Windows this 32-bit setup
+; would look in SysWOW64\drivers, while the driver is in system32\drivers
 Function FdrawcmdPresent
   StrCpy $0 0
   ClearErrors
   ReadRegDWORD $1 HKLM "SYSTEM\CurrentControlSet\Services\fdrawcmd" "Start"
+  ${If} ${RunningX64}
+    ${DisableX64FSRedirection}
+  ${EndIf}
   ${IfNot} ${Errors}
   ${AndIf} ${FileExists} "$SYSDIR\drivers\fdrawcmd.sys"
     StrCpy $0 1
+  ${EndIf}
+  ${If} ${RunningX64}
+    ${EnableX64FSRedirection}
   ${EndIf}
 FunctionEnd
 
@@ -519,11 +551,19 @@ Function WarnRuntime
     StrCpy $0 "$(L_VC_FAILED)"
   ${ElseIf} $Runtime == "old"
     StrCpy $0 "$(L_VC_OLD)"
+  ${ElseIf} $Runtime == "noucrt"
+    StrCpy $0 "$(L_VC_NOUCRT)"
   ${Else}
     StrCpy $0 "$(L_VC_MISSING)"
   ${EndIf}
   DetailPrint "$(L_VC_DETAIL)"
-  MessageBox MB_OK|MB_ICONEXCLAMATION "$(L_VC_BOX)" /SD IDOK
+  ; the package, once installed, does not try the update again: only
+  ; Windows Update helps
+  ${If} $Runtime == "noucrt"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(L_VC_BOX_UCRT)" /SD IDOK
+  ${Else}
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(L_VC_BOX)" /SD IDOK
+  ${EndIf}
 FunctionEnd
 
 ; ---- components ----
@@ -730,10 +770,13 @@ Section "-Check"
     StrCpy $R2 "$(L_RT_PRESENT)"
   ${ElseIf} $Runtime == "old"
     StrCpy $R2 "$(L_RT_OLD)"
+  ${ElseIf} $Runtime == "noucrt"
+    StrCpy $R2 "$(L_RT_NOUCRT)"
   ${Else}
     StrCpy $R2 "$(L_RT_MISSING)"
   ${EndIf}
   ${If} $VcResult == "ok"
+  ${AndIf} $Runtime == "ok"
     StrCpy $R2 "$(L_RT_NOW)"
   ${EndIf}
   StrCpy $Summary "$Summary$\r$\n$(L_SUM_RUNTIME)"
@@ -743,7 +786,9 @@ Section "-Check"
   ${OrIf} $IniConvUser > 0
     StrCpy $Summary "$Summary$\r$\n$(L_SUM_INICONV)"
   ${EndIf}
-  ${If} $Runtime != "ok"
+  ${If} $Runtime == "noucrt"
+    StrCpy $Summary "$Summary$\r$\n$\r$\n$(L_SUM_NOUCRT)"
+  ${ElseIf} $Runtime != "ok"
     StrCpy $Summary "$Summary$\r$\n$\r$\n$(L_SUM_NORUNTIME)"
   ${EndIf}
   StrCpy $Summary "$Summary$\r$\n$\r$\n$(L_SUM_ALSO)"
@@ -753,6 +798,7 @@ Section "-Check"
   FileWriteWord $0 0xFEFF
   FileWriteUTF16LE $0 "RetroArchiver ${VERSION}$\r$\n$\r$\n$Summary$\r$\n"
   ${If} $Runtime != "ok"
+  ${AndIf} $Runtime != "noucrt"
     FileWriteUTF16LE $0 "$\r$\n$(L_CHECK_VC)$\r$\n${VCREDIST_URL}$\r$\n"
   ${EndIf}
   FileClose $0

@@ -70,10 +70,15 @@
   "Il runtime di Visual C++ 2015-2019 x86 installato è più vecchio della versione 14.27"
 !insertmacro TEXT L_VC_MISSING "The Visual C++ 2015-2019 x86 runtime version 14.27 is missing" \
   "Manca il runtime di Visual C++ 2015-2019 x86 versione 14.27"
+!insertmacro TEXT L_VC_NOUCRT "The Visual C++ runtime is there, but not the Universal C Runtime of Windows (update KB2999226)" \
+  "Il runtime di Visual C++ c'è, ma manca l'Universal C Runtime di Windows (aggiornamento KB2999226)"
 !insertmacro TEXT L_VC_DETAIL "$0: without it DiscImageCreator does not start." "$0: senza, DiscImageCreator non parte."
 !insertmacro TEXT L_VC_BOX \
   "$0, which DiscImageCreator needs: without it CDs and DVDs cannot be read (floppies can).$\r$\n$\r$\nTry again by running this setup once more, or install it by hand: VC_redist.x86.exe version 14.27.29114 from Microsoft's site:$\r$\n$\r$\n${VCREDIST_URL}$\r$\n$\r$\nThe link is also in $INSTDIR\${CHECK_FILE}." \
   "$0, che serve a DiscImageCreator: senza, i CD e i DVD non si leggono (i floppy sì).$\r$\n$\r$\nRiprova lanciando di nuovo questo setup, oppure installalo a mano: VC_redist.x86.exe versione 14.27.29114 dal sito Microsoft:$\r$\n$\r$\n${VCREDIST_URL}$\r$\n$\r$\nIl link è anche in $INSTDIR\${CHECK_FILE}."
+!insertmacro TEXT L_VC_BOX_UCRT \
+  "$0, which DiscImageCreator needs: without it CDs and DVDs cannot be read (floppies can).$\r$\n$\r$\nInstall it from Windows Update (KB2999226, $\"Update for Universal C Runtime in Windows$\"), then restart Windows. Running this setup again does not install it." \
+  "$0, che serve a DiscImageCreator: senza, i CD e i DVD non si leggono (i floppy sì).$\r$\n$\r$\nInstallalo da Windows Update (KB2999226, $\"Aggiornamento per Universal C Runtime in Windows$\"), poi riavvia Windows. Rilanciare questo setup non lo installa."
 !insertmacro TEXT L_VC_PRESENT "Visual C++ runtime 14.27 or newer: already there." \
   "Runtime di Visual C++ 14.27 o più nuovo: c'è già."
 !insertmacro TEXT L_VC_UNSUPPORTED "it does not work on this version of Windows" "non va su questa versione di Windows"
@@ -123,6 +128,7 @@
 !insertmacro TEXT L_RT_PRESENT "present" "presente"
 !insertmacro TEXT L_RT_OLD "older than 14.27" "più vecchio della 14.27"
 !insertmacro TEXT L_RT_MISSING "missing" "manca"
+!insertmacro TEXT L_RT_NOUCRT "without the Universal C Runtime (KB2999226)" "senza l'Universal C Runtime (KB2999226)"
 !insertmacro TEXT L_RT_NOW "$R2 (installed now)" "$R2 (installato ora)"
 !insertmacro TEXT L_SUM_RUNTIME "• Visual C++ runtime 14.27: $R2" "• runtime di Visual C++ 14.27: $R2"
 !insertmacro TEXT L_SUM_ARCHIVE "• archive: $R2" "• archivio: $R2"
@@ -132,6 +138,9 @@
 !insertmacro TEXT L_SUM_NORUNTIME \
   "Without the runtime CDs and DVDs cannot be read. Run this setup again, or install VC_redist.x86.exe 14.27.29114 by hand: the link is in ${CHECK_FILE}." \
   "Senza il runtime i CD e i DVD non si leggono. Rilancia questo setup, oppure installa a mano VC_redist.x86.exe 14.27.29114: il link è in ${CHECK_FILE}."
+!insertmacro TEXT L_SUM_NOUCRT \
+  "Without the Universal C Runtime CDs and DVDs cannot be read. Install update KB2999226 from Windows Update and restart Windows: running this setup again does not install it." \
+  "Senza l'Universal C Runtime i CD e i DVD non si leggono. Installa l'aggiornamento KB2999226 da Windows Update e riavvia Windows: rilanciare questo setup non lo installa."
 !insertmacro TEXT L_SUM_ALSO "This summary is also in $INSTDIR\${CHECK_FILE}." \
   "Questo riepilogo è anche in $INSTDIR\${CHECK_FILE}."
 !insertmacro TEXT L_CHECK_VC "Visual C++ 2015-2019 x86 runtime version 14.27.29114 (the last one that works on XP):" \

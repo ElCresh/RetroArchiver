@@ -8,4 +8,15 @@
                         processorArchitecture="x86" publicKeyToken="6595b64144ccf1df" language="*"/>
     </dependentAssembly>
   </dependency>
+  <!-- From Vista on: without this the 32-bit window runs virtualized, and what
+       it writes under Program Files ends up in the user's VirtualStore. No
+       elevation: on Windows 7 fdrawcmd.sys and DiscImageCreator also work for
+       a standard user. XP SP3 ignores it. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
 </assembly>
