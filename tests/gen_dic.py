@@ -379,6 +379,8 @@ def main():
     cd_variant("cd_brokendat", raw, good, no_tracks=True)
     data_variant("data_good", raw)
     data_variant("data_edc", raw, edc=2)
+    # another data CD of the same size: two different discs of one box
+    data_variant("data_other", mode1(jiso))
     dvd_variant("dvd_good", iso)
     dvd_variant("dvd_joliet", jiso)
 

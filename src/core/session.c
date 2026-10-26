@@ -894,6 +894,38 @@ static void aside_dup(run_ctx *r, const meta_disk *d, char *name, size_t len)
     (void)len;
 }
 
+static void identity_of(const run_ctx *r, const meta_disk *d, const char *dir, media_identity *id);
+
+/* the fingerprint of the tracks of a CD or DVD read: the SHA-256 of its
+ * folder would differ between two copies of the same disc, since the file
+ * names inside it are CD01, CD02. A medium not read again in an edit is in
+ * the bag's data/, the others in r->datadir. -1 if it cannot be loaded */
+static int tracks_of(const run_ctx *r, const meta_disk *d, char key[65])
+{
+    media_identity id; char data[1040];
+    identity_of(r, d, r->datadir, &id);
+    if (!id.method[0]) {
+        u8_join(data, sizeof(data), r->bagdir, "data");
+        identity_of(r, d, data, &id);
+    }
+    if (!id.method[0] || !id.key[0]) return -1;
+    memcpy(key, id.key, 65);
+    return 0;
+}
+
+/* another disc of the same kind with the same tracks; 0 if none */
+static int optical_twin(const run_ctx *r, const meta_disk *d)
+{
+    const meta_box *b = r->cfg->box; char k[65], o[65]; int i;
+    if (tracks_of(r, d, k)) return 0;
+    for (i = 0; i < b->ndisk; i++) {
+        const meta_disk *x = &b->disk[i];
+        if (x->n == d->n || x->kind != d->kind || !x->master[0]) continue;
+        if (!tracks_of(r, x, o) && !strcmp(k, o)) return x->n;
+    }
+    return 0;
+}
+
 /* The same image as another disk of the box: usually the same disk inserted
  * twice. Its reads are set aside, never deleted, and it goes back to be read
  * from zero, so the right disk is not compared with the wrong reads; the
@@ -901,7 +933,7 @@ static void aside_dup(run_ctx *r, const meta_disk *d, char *name, size_t len)
 static void check_twin(run_ctx *r, meta_disk *d)
 {
     char who[32], other[32], file[128];
-    int t = session_twin(r->cfg->box, d), i, k = 0;
+    int t = d->kind == MEDIA_FLOPPY ? session_twin(r->cfg->box, d) : optical_twin(r, d), i, k = 0;
     if (!t) { d->duplicate_of = 0; return; }
     name_of(r->cfg->box, d->n, who, sizeof(who));
     name_of(r->cfg->box, t, other, sizeof(other));
@@ -912,9 +944,10 @@ static void check_twin(run_ctx *r, meta_disk *d)
         d->duplicate_of = 0;
         return;
     }
-    ev(r, EV_LINE, d->n, "WARNING: %s is identical to %s (same SHA-256 fingerprint): is it the same disk "
+    ev(r, EV_LINE, d->n, "WARNING: %s is identical to %s (same SHA-256 fingerprint%s): is it the same disk "
                          "inserted twice? %s is still to be read: insert the right one. If the two "
-                         "disks really are the same, read it again: the second time it is kept.", who, other, who);
+                         "disks really are the same, read it again: the second time it is kept.", who, other,
+                         d->kind == MEDIA_FLOPPY ? "" : " of the tracks", who);
     for (i = 0; i < d->nreads; i++) {
         CP(file, d->reads[i].file);
         aside_dup(r, d, file, sizeof(file));

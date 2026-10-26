@@ -806,6 +806,34 @@ ok("same disk twice with -r: floppy 2 asked again at once, the box closes",
    rc == 0 and out.count("Insert floppy 2") == 2
    and [d["status"] for d in meta(bag("Doppione subito"))["media"]] == ["clean", "clean"], out)
 
+# 29b. the same CD twice: the folders CD01 and CD02 differ in their file names,
+# the tracks do not
+rc, out = run("CD doppione", 0, [], ["", ""], ["-C", "2"], tpl=None, dic=["cd_good", "cd_good"], dats=REDUMP)
+b = bag("CD doppione")
+c2 = meta(b)["media"][1]
+ok("same CD twice: CD 2 is identical to CD 1 by its tracks",
+   rc == 1 and "CD 2 is identical to CD 1 (same SHA-256 fingerprint of the tracks)" in out
+   and c2["status"] == "duplicate" and c2.get("duplicate_of") == 1 and c2["reads"] == [], json.dumps(c2) + out)
+ok("same CD twice: its read set aside as CD02.duplicate, not deleted",
+   os.path.isdir(os.path.join(b, "set-aside", "CD02.duplicate"))
+   and not os.path.exists(os.path.join(b, "data", "CD02")), str(data_files(b)))
+rc, out = run("CD doppione", 0, [], [""], ["-C", "2"], tpl=None, dic=["cd_noise", "cd_noise"], dats=REDUMP)
+ok("same CD twice: resumed with the right disc, the box closes",
+   rc == 0 and [d["status"] for d in meta(b)["media"]] == ["redump-verified", "clean"]
+   and check_bag.check(b, PROFILE) == [], json.dumps(meta(b)["media"]) + out)
+rc, out = run("CD gemelli", 0, [], ["", "", ""], ["-C", "2", "-r"], tpl=None,
+              dic=["cd_good", "cd_good", "cd_good"], dats=REDUMP)
+ok("two CDs really the same: read again, the second time kept",
+   rc == 0 and "CD 2 is again identical to CD 1" in out
+   and [d["status"] for d in meta(bag("CD gemelli"))["media"]] == ["redump-verified", "redump-verified"], out)
+rc, out = run("DVD doppione", 0, [], ["", ""], ["-D", "2"], tpl=None, dic=["dvd_good", "dvd_good"], dats=REDUMP)
+ok("same DVD twice: DVD 2 is identical to DVD 1",
+   rc == 1 and "DVD 2 is identical to DVD 1" in out
+   and meta(bag("DVD doppione"))["media"][1]["status"] == "duplicate", out)
+rc, out = run("CD diversi", 0, [], ["", ""], ["-C", "2"], tpl=None, dic=["cd_good", "cd_noise", "cd_noise"],
+              dats=REDUMP)
+ok("two different CDs: no duplicate", rc == 0 and "identical to" not in out, out)
+
 # 30. the copy protection scan (DiscImageCreator /sf): the box chooses, and with
 # auto the files on the disc decide. RETROARCHIVER_DISC_ROOT is the disc's files
 DISC_PLAIN = os.path.join(WORK, "disco-normale")
@@ -1065,7 +1093,7 @@ ok("no lead-in, EDC/ECC errors: errors status, two reads",
 model_env = disc_env(DISC_PLAIN, RETROARCHIVER_DRIVE_MODEL="ASUS  DRW-08D6MT 1.00",
                      RETROARCHIVER_TOC=os.path.join(FIX, "dic", "data_good", "DISC_disc.txt"))
 rc, out = run("Due CD senza lead-in", 0, [], ["", ""], ["-C", "2"], tpl=None,
-              dic=["LEADIN data_good", "data_good", "data_good"], env_extra=model_env)
+              dic=["LEADIN data_good", "data_good", "data_other"], env_extra=model_env)
 m = meta(bag("Due CD senza lead-in"))
 ok("remembered drive: the second CD skips cd",
    rc == 0 and dic_log() == ["cd nosf offset none"] + ["data 0-300 nosf offset none"] * 2
