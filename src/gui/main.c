@@ -2017,7 +2017,8 @@ static void label_read(void)
 #define FD_CTL_CODE(i, m) CTL_CODE(FILE_DEVICE_UNKNOWN, i, m, FILE_READ_DATA | FILE_WRITE_DATA)
 #define IOCTL_FD_CHECK_DISK FD_CTL_CODE(0x917, METHOD_BUFFERED)   /* fdrawcmd.sys 1.0.1.10 and later */
 
-enum { FP_NEW, FP_GONE, FP_NODRIVER, FP_SLOWDRIVE };
+/* FP_CHANGED: a CD or DVD drive counted a change with a disc in all along */
+enum { FP_NEW, FP_GONE, FP_NODRIVER, FP_SLOWDRIVE, FP_CHANGED };
 /* off for this turn, waiting for a new disk, reading its label, counting
  * down, asking because it looks like a disk already read */
 enum { AUTO_OFF, AUTO_WATCH, AUTO_LABEL, AUTO_COUNT, AUTO_ASK };
@@ -2032,6 +2033,7 @@ static volatile LONG g_fp_gen;
 static volatile LONG g_fd_slow;         /* every answer of the drive is slow: only removals count */
 static HANDLE   g_fp_thread, g_fp_stop;
 static LONG     g_lb_auto;              /* the label read started by the automatic mode */
+static int      g_auto_quiet;           /* it came from FP_CHANGED */
 static wchar_t  g_auto_label[64];       /* what it wrote in the field */
 static vol_id   g_vol_turn;             /* the disk in the drive, from the last label read */
 static vol_id   g_vol[META_MAXDISK + 1];        /* the disks read in this box */
@@ -2164,6 +2166,95 @@ static void watch_start(int present)
     }
 }
 
+/* CDs and DVDs: WM_DEVICECHANGE alone is not enough. Windows does not send it
+ * with the CD-ROM's media change notification off (Cdrom\AutoRun=0, usual on
+ * PCs set up for dumping), and a disc swapped before the wait began (while
+ * the box was still being written) has already been announced to no one. The
+ * drive's media change count, taken when the read started, tells both */
+#define OPT_POLL_MS 1000
+
+static ULONG g_opt_base;                /* media change count at the last read */
+static int   g_opt_has_base;
+
+/* 1 a disc is in, 0 none, -1 no answer; *has: *count is the drive's count */
+static int opt_check(wchar_t letter, ULONG *count, int *has)
+{
+    wchar_t path[8];
+    DWORD got = 0, e;
+    BOOL ok;
+    int k;
+    *has = 0;
+    _snwprintf(path, 8, L"\\\\.\\%c:", letter); path[7] = 0;
+    /* CHECK_VERIFY2 needs no access rights (XP and later); a driver without
+     * it gets the older CHECK_VERIFY, which wants the drive open for reading */
+    for (k = 0; k < 2; k++) {
+        HANDLE h = CreateFileW(path, k ? GENERIC_READ : FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               NULL, OPEN_EXISTING, 0, NULL);
+        if (h == INVALID_HANDLE_VALUE) { e = GetLastError(); continue; }
+        ok = DeviceIoControl(h, k ? IOCTL_STORAGE_CHECK_VERIFY : IOCTL_STORAGE_CHECK_VERIFY2,
+                             NULL, 0, count, sizeof(*count), &got, NULL);
+        e = ok ? 0 : GetLastError();
+        CloseHandle(h);
+        if (ok) { *has = got >= sizeof(*count); return 1; }
+        if (e == ERROR_NOT_READY || e == ERROR_NO_MEDIA_IN_DRIVE) return 0;
+    }
+    return -1;
+}
+
+typedef struct { LONG gen; wchar_t letter; ULONG base; int has_base; HANDLE stop; } opt_job;
+
+/* a disc arriving in the empty drive, or a count different from the read's */
+static DWORD WINAPI opt_watch(LPVOID p)
+{
+    opt_job *job = (opt_job *)p;
+    ULONG c;
+    int st, has, prev = -1, errs = 0;
+    for (;;) {
+        st = opt_check(job->letter, &c, &has);
+        if (st == 1 && prev == 0) fp_post(job->gen, FP_NEW);
+        else if (st == 1 && has && job->has_base && c != job->base) fp_post(job->gen, FP_CHANGED);
+        else if (st == 0 && prev == 1) fp_post(job->gen, FP_GONE);
+        if (st == 1 && has) { job->base = c; job->has_base = 1; }
+        if (st < 0 && ++errs >= 5) { fp_post(job->gen, FP_NODRIVER); break; }
+        if (st >= 0) { prev = st; errs = 0; }
+        if (WaitForSingleObject(job->stop, OPT_POLL_MS) != WAIT_TIMEOUT) break;
+    }
+    free(job);
+    return 0;
+}
+
+static wchar_t opt_letter(void)
+{
+    return (wchar_t)toupper(g_drive_w[0] ? g_drive_w[0] : L'D');
+}
+
+/* the read starts: what the drive counted so far */
+static void opt_mark(void)
+{
+    ULONG c;
+    int has;
+    g_opt_has_base = opt_check(opt_letter(), &c, &has) == 1 && has;
+    if (g_opt_has_base) g_opt_base = c;
+}
+
+static void opt_watch_start(void)
+{
+    opt_job *job;
+    watch_stop();
+    if (!(job = (opt_job *)calloc(1, sizeof(opt_job)))) return;
+    if (!(g_fp_stop = CreateEventW(NULL, TRUE, FALSE, NULL))) { free(job); return; }
+    job->gen = InterlockedIncrement(&g_fp_gen);
+    job->letter = opt_letter();
+    job->base = g_opt_base;
+    job->has_base = g_opt_used && g_opt_has_base;
+    job->stop = g_fp_stop;
+    if (!(g_fp_thread = CreateThread(NULL, 0, opt_watch, job, 0, NULL))) {
+        free(job);
+        CloseHandle(g_fp_stop);
+        g_fp_stop = NULL;
+    }
+}
+
 /* Windows' floppy driver waits for the controller while the watcher keeps
  * asking (even with the drive closed between questions: seen on the VM, the
  * label read hung until the watcher stopped). It pauses for the label read
@@ -2172,7 +2263,7 @@ static int g_fp_paused;
 
 static void watch_pause(void)
 {
-    if (!g_fp_thread) return;
+    if (!g_fp_thread || g_turn.kind != MEDIA_FLOPPY) return;
     watch_stop();
     g_fp_paused = 1;
 }
@@ -2203,6 +2294,7 @@ static void auto_found(void)
 {
     KillTimer(g_wnd, TIMER_AUTO);
     g_auto_state = AUTO_LABEL;
+    g_auto_quiet = 0;
     label_read();
     g_lb_auto = g_lb_gen;
 }
@@ -2249,7 +2341,10 @@ static void auto_begin(void)
     g_auto_state = AUTO_WATCH;
     auto_drive(d);
     if (g_turn.kind == MEDIA_FLOPPY) watch_start(0);
-    else if (!g_opt_used) { auto_found(); return; }    /* the first disc may already be in */
+    else {
+        opt_watch_start();
+        if (!g_opt_used) { auto_found(); return; }      /* the first disc may already be in */
+    }
     _snwprintf(w, 200, tr(T_AUTO_WAITING), d); w[199] = 0;
     auto_status(w);
 }
@@ -2308,7 +2403,16 @@ static void auto_labelled(int state)
         auto_rewatch(w);            /* no disc yet: Windows will say when it arrives */
         return;
     }
-    if ((twin = vol_twin()) > 0) {
+    /* a drive that reset itself during the read (scratched discs) counts a
+     * change with the same disc still in: nothing to ask, still waiting */
+    if ((twin = vol_twin()) > 0 && g_auto_quiet) {
+        wchar_t w[120], d[3];
+        auto_drive(d);
+        _snwprintf(w, 120, tr(T_AUTO_WAITING), d); w[119] = 0;
+        auto_rewatch(w);
+        return;
+    }
+    if (twin > 0) {
         g_auto_state = AUTO_ASK;
         ask_banner(twin);
         sound(SND_ERROR);
@@ -2338,14 +2442,20 @@ static void on_diskin(WPARAM gen, LPARAM what)
     case FP_NEW:
         auto_found();
         break;
+    case FP_CHANGED:
+        auto_found();
+        g_auto_quiet = 1;
+        break;
     case FP_GONE:
-        _snwprintf(w, 200, tr(T_AUTO_GONE), d); w[199] = 0;
+        _snwprintf(w, 200, tr(g_turn.kind == MEDIA_FLOPPY ? T_AUTO_GONE : T_AUTO_DISC_GONE), d); w[199] = 0;
         auto_rewatch(w);
         break;
     case FP_SLOWDRIVE:
         auto_status(tr(T_AUTO_SLOW));
         break;
     default:
+        /* a drive that does not answer: Windows' notices are left */
+        if (g_turn.kind != MEDIA_FLOPPY) { watch_stop(); break; }
         _snwprintf(w, 200, tr(T_AUTO_NODRIVER), d); w[199] = 0;
         auto_manual(w);
         break;
@@ -2405,14 +2515,15 @@ static int awaited_media(const DEV_BROADCAST_HDR *h, int media_only)
  * if the field is still empty; in automatic mode it is the new disk */
 static void on_media_arrival(const DEV_BROADCAST_HDR *h)
 {
-    if (g_auto_state != AUTO_OFF) { if (awaited_media(h, 0)) auto_found(); }
+    /* while the drive is watched the watcher has seen it too: once is enough */
+    if (g_auto_state != AUTO_OFF) { if (!g_fp_thread && awaited_media(h, 0)) auto_found(); }
     else if (awaited_media(h, 1) && GetWindowTextLengthW(g_label) == 0) label_read();
 }
 
 static void on_media_removal(const DEV_BROADCAST_HDR *h)
 {
     wchar_t w[120], d[3];
-    if (g_auto_state == AUTO_OFF || !awaited_media(h, 0)) return;
+    if (g_auto_state == AUTO_OFF || g_fp_thread || !awaited_media(h, 0)) return;
     auto_drive(d);
     _snwprintf(w, 120, tr(T_AUTO_DISC_GONE), d); w[119] = 0;
     auto_rewatch(w);
@@ -4522,7 +4633,7 @@ static void answer(int cmd)
     auto_leave();               /* the floppy watcher lets go of the drive before SAMdisk opens it */
     if (cmd == CMD_READ && g_turn.readable) {
         /* the next disk of this kind must be a new one */
-        if (g_turn.kind == MEDIA_FLOPPY) g_fd_used = 1; else g_opt_used = 1;
+        if (g_turn.kind == MEDIA_FLOPPY) g_fd_used = 1; else { g_opt_used = 1; opt_mark(); }
         if (g_cur >= 1 && g_cur <= META_MAXDISK) g_vol[g_cur] = g_vol_turn;
     }
     slot_name(g_cur, 0, who, 32);

@@ -300,7 +300,7 @@ T(T_INS_FLOPPY_AGAIN,   "insert.floppy.auto.next", L"Automatic read: remove the 
 T(T_INS_OPT_N,          "insert.optical",       L"Insert %ls %d of %d in drive %ls")
 T(T_INS_OPT_ONE,        "insert.optical.one",   L"Insert the %ls in drive %ls")
 T(T_INS_OPT_MANUAL,     "insert.optical.manual", L"Close the drive, wait until its light stops blinking, then press Enter or Read (F5); F2 reads the label again, Alt+S skips. Reading with DiscImageCreator takes 10 to 30 minutes. Label of the %ls (optional):")
-T(T_INS_OPT_AUTO,       "insert.optical.auto",  L"Automatic read: %ls, it starts by itself when Windows sees it (10 to 30 minutes). Enter or F5 reads now, Alt+S skips, Esc goes back to reading by hand. Label of the %ls (optional):")
+T(T_INS_OPT_AUTO,       "insert.optical.auto",  L"Automatic read: %ls, the read starts by itself as soon as it is in the drive and takes 10 to 30 minutes. Enter or F5 reads now, Alt+S skips, Esc goes back to reading by hand. Label of the %ls (optional):")
 T(T_INS_OPT_FIRST,      "insert.optical.first", L"insert the disc")
 T(T_INS_OPT_AGAIN,      "insert.optical.next",  L"remove the disc just read and insert this one")
 T(T_UNREAD_TITLE,       "unreadable.title",     L"%ls %d of %d: reading %ls is not available yet")
