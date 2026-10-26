@@ -46,6 +46,10 @@ typedef struct {
     long long bytes;
     char sha256[65];
     char at[20];             /* "2026-10-15T21:20:11" */
+    /* the RetroArchiver that made this read ("261026"), so that an
+     * anomaly found in the package says which version to look at. Empty
+     * in the bags closed before 261026, which did not record it */
+    char software[16];
 } meta_read;
 
 typedef struct {

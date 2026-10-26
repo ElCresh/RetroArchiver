@@ -97,4 +97,33 @@ void test_arc_text(void)
     arc_advice_w(&b, w, 1200);
     CHECK(!wcscmp(w, L"Chiuso completo: tutti i floppy letti e verificati."));
     lang_reset();
+
+    /* Archive.org: nothing at all for a box never uploaded */
+    make(&b, ARC_COMPLETE, "pp", "ff");
+    arc_ia_short_w(&b, w, 1200);
+    CHECK(!wcscmp(w, L""));
+    arc_ia_line_w(&b, w, 1200);
+    CHECK(!wcscmp(w, L""));
+    CHECK(arc_ia_tone(&b) == TONE_OPEN);
+
+    b.ia_state = IA_ST_VERIFIED;
+    str_copy(b.ia_id, sizeof(b.ia_id), "windows-2000-server-retail-it-pc-ita");
+    str_copy(b.ia_date, sizeof(b.ia_date), "2026-10-26T22:52:40");
+    arc_ia_short_w(&b, w, 1200);
+    CHECK(!wcscmp(w, L"verified"));
+    arc_ia_line_w(&b, w, 1200);
+    CHECK(!wcscmp(w, L"Archive.org: uploaded and verified on 2026-10-26 - "
+                     L"windows-2000-server-retail-it-pc-ita"));
+    CHECK(arc_ia_tone(&b) == TONE_OK);
+
+    b.ia_state = IA_ST_OUTDATED;
+    arc_ia_short_w(&b, w, 1200);
+    CHECK(!wcscmp(w, L"to update"));
+    CHECK(arc_ia_tone(&b) == TONE_WARN);
+    b.ia_state = IA_ST_FAILED;
+    CHECK(arc_ia_tone(&b) == TONE_BAD);
+    /* an interrupted upload has no date to show: only what to do */
+    b.ia_state = IA_ST_INTERRUPTED;
+    arc_ia_line_w(&b, w, 1200);
+    CHECK(wcsstr(w, L"resume") != NULL && wcsstr(w, L"2026") == NULL);
 }

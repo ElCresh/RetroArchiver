@@ -13,4 +13,11 @@ void arc_outcome_w(const arc_box *b, wchar_t *out, size_t n);
 void arc_media_w(const arc_box *b, wchar_t *out, size_t n);
 void arc_advice_w(const arc_box *b, wchar_t *out, size_t n);
 
+/* Archive.org: the short state for the list's column ("" if the box was
+ * never uploaded) and the line of the detail, with the date and the
+ * identifier; arc_ia_tone gives it the colour of its state */
+void arc_ia_short_w(const arc_box *b, wchar_t *out, size_t n);
+void arc_ia_line_w(const arc_box *b, wchar_t *out, size_t n);
+int  arc_ia_tone(const arc_box *b);
+
 #endif

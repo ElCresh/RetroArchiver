@@ -17,9 +17,11 @@ INC       = -Isrc
 WINDEFS   = -D_WIN32_WINNT=0x0501 -DWINVER=0x0501 -D__USE_MINGW_ANSI_STDIO=1
 WINFLAGS  = $(CFLAGS) $(INC) $(WINDEFS) -ffunction-sections -Wl,--gc-sections -s -static
 
-# the network (net, tls, https over BearSSL, and iakeys on top of them):
-# the window uses it, dskrun and dskdiff do not
-NET_C  = src/core/net.c src/core/tls.c src/core/https.c src/core/iakeys.c
+# the network (net, tls, https over BearSSL, and iakeys and iaupload on top
+# of them): the window uses it, dskrun and dskdiff do not. iarec.c, the
+# record an upload leaves in the bag, needs no network and stays in CORE:
+# the archive reads it
+NET_C  = src/core/net.c src/core/tls.c src/core/https.c src/core/iakeys.c src/core/iaupload.c
 CORE   = $(filter-out $(NET_C),$(wildcard src/core/*.c))
 CORE_H = $(wildcard src/core/*.h)
 UNIT   = $(wildcard tests/unit/*.c)
@@ -66,7 +68,7 @@ dskrun.exe: src/dskrun.c $(CORE) $(CORE_H)
 	$(WINCC) $(WINFLAGS) -o $@ src/dskrun.c $(CORE)
 
 # the window: Windows only
-GUI_C   = src/gui/settings.c src/gui/settings_dlg.c src/gui/about.c src/gui/winutil.c src/gui/box_edit_dlg.c
+GUI_C   = src/gui/settings.c src/gui/settings_dlg.c src/gui/about.c src/gui/winutil.c src/gui/box_edit_dlg.c src/gui/ia_dlg.c
 GUI     = $(GUI_C) src/gui/settings.h src/gui/dialogs.h src/gui/winutil.h src/gui/resource.h $(LANG_C) $(LANG_H)
 # the network too (Test the keys of the Archive.org tab); crypt32.dll, for
 # the DPAPI of the keys, is not linked: settings.c loads it with
@@ -131,12 +133,14 @@ build/fake_https.exe: tests/fake_https.c build/libbearssl.a | build
 	$(WINCC) $(WINFLAGS) $(BR_INC) -o $@ $< build/libbearssl.a $(NETLIBS)
 
 # the network tests alone: on the XP VM they need only fake_https.exe and
-# tests/tls, not the fixtures of the whole unit.exe
+# tests/tls, not the fixtures of the whole unit.exe. iaupload.c stays out:
+# it sits on the whole core, and its tests (a bag to upload) are in unit.exe
 NET_DEPS = src/core/strbuf.c src/core/fsu8.c src/core/sha256.c src/core/json.c
+NET_ONLY = $(filter-out src/core/iaupload.c,$(NET_C))
 
-build/https_test.exe: tests/xp/test_https_main.c tests/unit/test_https.c $(NET_C) $(NET_DEPS) build/libbearssl.a | build
+build/https_test.exe: tests/xp/test_https_main.c tests/unit/test_https.c $(NET_ONLY) $(NET_DEPS) build/libbearssl.a | build
 	$(WINCC) $(WINFLAGS) $(BR_INC) -DRA_TEST_BUILD -Itests/unit -o $@ \
-		tests/xp/test_https_main.c tests/unit/test_https.c $(NET_C) $(NET_DEPS) \
+		tests/xp/test_https_main.c tests/unit/test_https.c $(NET_ONLY) $(NET_DEPS) \
 		build/libbearssl.a $(NETLIBS)
 
 # the window settings in two ini files: Windows only (host or XP VM)

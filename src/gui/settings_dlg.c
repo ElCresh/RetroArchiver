@@ -31,11 +31,6 @@
 /* where the drives' read offsets are listed (the redump one has no fixed address) */
 #define OFFSET_URL L"http://www.accuraterip.com/driveoffsets.htm"
 
-/* the CA bundle: the setup puts Mozilla's roots here, next to the exe, and
- * a copy in the user's folder wins over it (tls.c reads the file) */
-#define CACERT_REL L"certs\\cacert.pem"
-#define CACERT_NAME L"cacert.pem"
-
 #define WM_APP_IA_TEST (WM_APP + 2)      /* lParam: ia_test*, the thread's */
 
 typedef struct {
@@ -245,30 +240,15 @@ static void put_w(wchar_t *out, int n, const wchar_t *s)
 
 /* ---- the Archive.org keys ---- */
 
-/* the folder of the user's ini: where a cacert.pem of theirs goes, and
- * what the messages name. The literal if its place is unknown */
+/* the folder of the user's ini, as the messages name it */
 static void user_dir(const sdlg *d, wchar_t *out, int n)
 {
-    wchar_t *p;
-    if (!d->set || !d->set->user[0]) { put_w(out, n, L"%APPDATA%\\RetroArchiver"); return; }
-    put_w(out, n, d->set->user);
-    if ((p = wcsrchr(out, L'\\')) != NULL) *p = 0;
+    user_ini_dir(d->set ? d->set->user : L"", out, n);
 }
 
-/* the CA bundle for tls.c: the user's copy wins over the setup's; "" if
- * neither is there, and then the window says to reinstall */
 static void cacert_file(const sdlg *d, char *out, int n)
 {
-    wchar_t dir[MAX_PATH], w[MAX_PATH];
-    out[0] = 0;
-    user_dir(d, dir, MAX_PATH);
-    if ((int)(wcslen(dir) + wcslen(CACERT_NAME) + 2) < MAX_PATH) {
-        _snwprintf(w, MAX_PATH, L"%ls\\%ls", dir, CACERT_NAME);
-        w[MAX_PATH - 1] = 0;
-        if (file_exists(w)) { to_u8(w, out, n); return; }
-    }
-    exe_path(CACERT_REL, w, MAX_PATH);
-    if (w[0] && file_exists(w)) to_u8(w, out, n);
+    cacert_path(d->set ? d->set->user : L"", out, n);
 }
 
 /* a Unix time as the language writes dates */

@@ -57,4 +57,23 @@ int choose_dialog(HWND owner, const edit_choice *c);
 enum { CONVERT_LATER, CONVERT_GO, CONVERT_NEVER };
 int convert_dialog(HWND owner, int n);
 
+/* ---- Upload to Archive.org (ia_dlg.c) ---- */
+
+typedef struct {
+    const char *bagdir;          /* the box, closed and whole */
+    const settings *set;         /* the keys, and where the user's cacert.pem would be */
+    const wchar_t *collection;   /* the collection of the new items, from the settings */
+    const wchar_t *prefix;       /* before the proposed identifier; may be empty */
+    HWND logwnd;                 /* the window whose black log takes the English lines */
+    UINT logmsg;                 /* with that message; lParam: a malloc'd wchar_t* to free */
+    UINT donemsg;                /* when the window closes; wParam 1: something went up */
+} ia_dlg_args;
+
+/* Opens the upload window: the fields, the files, the public warning,
+ * then the progress. It is not modal, so another box can be read while an
+ * upload goes on: the caller keeps the handle, lets IsDialogMessage see
+ * its messages, and drops it when donemsg arrives. NULL if it does not
+ * open. Everything in a is copied */
+HWND ia_upload_open(HWND owner, const ia_dlg_args *a);
+
 #endif

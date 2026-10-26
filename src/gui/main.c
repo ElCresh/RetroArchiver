@@ -30,6 +30,7 @@
 #include "core/archive.h"
 #include "core/boxedit.h"
 #include "core/boxtxn.h"
+#include "core/iaupload.h"
 #include "gui/settings.h"
 #include "gui/lang.h"
 #include "gui/winutil.h"
@@ -56,6 +57,8 @@
 #define WM_APP_CONVPROG (WM_APP + 16) /* lParam: cv_prog*, a box of 261017 being converted */
 #define WM_APP_CONVERTED (WM_APP + 17) /* lParam: cv_result*, the conversion ended */
 #define WM_APP_CHOOSE (WM_APP + 15)  /* sent by the worker: lParam edit_choice*, returns 1 keep the new read */
+#define WM_APP_IA_LOG (WM_APP + 18)  /* lParam: a malloc'd line of the upload, in English */
+#define WM_APP_IA_DONE (WM_APP + 19) /* the upload window closed; wParam 1: something went up */
 #define OPT_MAX   1000              /* disk bar for CDs and DVDs: thousandths */
 
 #define TIMER_ID  1
@@ -82,11 +85,13 @@ enum {
     ID_STOP, ID_LIST, ID_LOG, ID_NEW, ID_OPEN, ID_BOXBAR, ID_BOXTXT,
     ID_DISKBAR, ID_CYLTXT, ID_ELAPSED, ID_BAGDIR, ID_BAGCONT, ID_BAGHASH, ID_BAGASIDE,
     ID_SBAR, ID_TOARCH, ID_LABELREAD,
-    /* archive: from ID_ADIR to ID_ANEW */
+    /* archive: from ID_ADIR to ID_AIA. The ids already there keep their
+     * numbers (guidrive.ps1 of the VM names them): a new one goes last */
     ID_ADIR = 300, ID_ABROWSE, ID_ASEARCH, ID_APLAT, ID_ASUM, ID_ALIST, ID_ADETAIL,
-    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW,
+    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW, ID_AIA,
     /* the menu bar */
-    IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE, IDM_CONVERT
+    IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE,
+    IDM_CONVERT, IDM_IA
 };
 
 /* what the window knows about a disk: copied by the worker thread, which
@@ -646,7 +651,7 @@ static void add_column(HWND lv, int i, int name, int w, int fmt)
 /* the column titles of the two lists, for a language change */
 static const int list_cols[] = { T_COL_MEDIUM, T_COL_LABEL, T_COL_READS, T_COL_OUTCOME, -1 };
 static const int arc_cols[] = { T_COL_TITLE, T_COL_PLATFORM, T_COL_YEAR, T_COL_MEDIA, T_COL_OUTCOME,
-                                T_COL_ARCHIVED, -1 };
+                                T_COL_ARCHIVED, T_COL_IA, -1 };
 
 static void column_titles(HWND lv, const int *ids)
 {
@@ -681,6 +686,7 @@ static int      g_pick = -1;            /* the chosen box, index into g_arc */
 static int      g_arc_loaded, g_arc_empty, g_arc_missing, g_verifying;
 static int      g_saving;               /* an edit of the box's data, or a conversion, is being saved */
 static int      g_converting;           /* g_saving is a conversion of the boxes of 261017 */
+static HWND     g_ia_dlg;               /* the upload window, open: one at a time */
 static int      g_convert_asked;        /* the question about the boxes of 261017: once per start */
 static char     g_conv_then_edit[600];  /* converted for Modifica: edited when the archive is read again */
 static char     g_edit_after[600];
@@ -709,11 +715,13 @@ static void build_archive(void)
     add_column(g_alist, 3, arc_cols[3], 132, LVCFMT_LEFT);
     add_column(g_alist, 4, arc_cols[4], 168, LVCFMT_LEFT);
     add_column(g_alist, 5, arc_cols[5], 76, LVCFMT_LEFT);
+    add_column(g_alist, 6, arc_cols[6], 84, LVCFMT_LEFT);
     g_adetail = make(L"STATIC", L"", SS_OWNERDRAW, 0, 0, 400, 140, ID_ADETAIL);
     make_t(L"BUTTON", T_ARC_RESUME, WS_TABSTOP, 0, 0, 130, 26, ID_ARESUME);
     make_t(L"BUTTON", T_ARC_OPEN, WS_TABSTOP, 0, 0, 130, 26, ID_AOPEN);
     make_t(L"BUTTON", T_ARC_VERIFY, WS_TABSTOP, 0, 0, 130, 26, ID_AVERIFY);
     make_t(L"BUTTON", T_BTN_EDIT, WS_TABSTOP, 0, 0, 130, 26, ID_AEDIT);
+    make_t(L"BUTTON", T_ARC_IA, WS_TABSTOP, 0, 0, 130, 26, ID_AIA);
     make_t(L"BUTTON", T_ARC_DELETE, WS_TABSTOP, 0, 0, 130, 26, ID_ADELETE);
     make_t(L"STATIC", T_ARC_HINT, SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_AHINT);
     make_t(L"BUTTON", T_ARC_NEW, WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 150, 28, ID_ANEW);
@@ -1386,8 +1394,8 @@ static void layout_setup(int W, int H)
 
 /* ---- the archive ---- */
 
-#define SEL_H 172                       /* height of the "Il cofanetto scelto" box */
-#define ARC_FIXED_COLS (92 + 44 + 132 + 168 + 76)
+#define SEL_H 200                       /* height of the "Il cofanetto scelto" box */
+#define ARC_FIXED_COLS (92 + 44 + 132 + 168 + 76 + 84)
 
 static int pick_open(void)
 {
@@ -1405,6 +1413,14 @@ static int pick_editable(void)
 {
     /* a box of 261017 too: Modifica converts it first, asking */
     return pick_closed() && !g_arc.box[g_pick].editing && !g_verifying && !g_saving && !g_running;
+}
+
+/* Archive.org: a closed box of this version, not being edited, with no
+ * other upload under way (one at a time) and nothing being saved */
+static int pick_uploadable(void)
+{
+    return pick_closed() && !g_arc.box[g_pick].editing && !g_arc.box[g_pick].old_format &&
+           !g_saving && !g_ia_dlg;
 }
 
 /* Elimina: any box of the list, even a broken one, with nothing running */
@@ -1474,7 +1490,8 @@ static void layout_archive(int W, int H)
     else if (pick_closed()) { put(ID_AEDIT, bx, k, 130, 26); k += 32; }
     put(ID_AOPEN, bx, k, 130, 26);
     put(ID_AVERIFY, bx, k + 32, 130, 26);
-    put(ID_ADELETE, bx, k + 64, 130, 26);
+    put(ID_AIA, bx, k + 64, 130, 26);
+    put(ID_ADELETE, bx, k + 96, 130, 26);
     put(ID_AHINT, 8, by + 6, W - 16 - 150 - 12, 18);
     put(ID_ANEW, W - 8 - 150, by, 150, 28);
 }
@@ -2898,11 +2915,12 @@ static int visible_in(int v, int id)
     if ((id >= ID_TITLE && id <= ID_START) || (id >= ID_TITLE + LBL && id <= ID_START + LBL))
         return v == V_SETUP;
     if (id == ID_SBAR) return 1;
-    if ((id >= ID_ADIR && id <= ID_ANEW) || (id >= ID_ADIR + LBL && id <= ID_ANEW + LBL)) {
+    if ((id >= ID_ADIR && id <= ID_AIA) || (id >= ID_ADIR + LBL && id <= ID_AIA + LBL)) {
         if (v != V_ARCHIVE) return 0;
         if (g_arc_empty) return listed(in_empty, id);
         if (id == ID_ARESUME) return pick_open();
         if (id == ID_AEDIT) return pick_closed();
+        if (id == ID_AIA) return pick_closed();
         if (id == ID_AOPEN || id == ID_AVERIFY || id == ID_ADELETE) return g_pick >= 0;
         return 1;
     }
@@ -3761,16 +3779,18 @@ static void arc_row(int row, int idx)
     arc_media_w(b, w, 300);    arc_text(row, 3, w);     /* "3 / 3 floppy, 0 / 1 CD" */
     arc_outcome_w(b, w, 300);  arc_text(row, 4, w);
     fmt_date(b->date, w, 300); arc_text(row, 5, w);
+    arc_ia_short_w(b, w, 300); arc_text(row, 6, w);     /* "verificato", "da aggiornare" */
 }
 
 static void archive_buttons(void)
 {
     int i;
-    static const int ids[] = { ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, 0 };
+    static const int ids[] = { ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_AIA, ID_ADELETE, 0 };
     layout();
     if (g_view != V_ARCHIVE) return;
     EnableWindow(GetDlgItem(g_wnd, ID_AVERIFY), !g_verifying);
     EnableWindow(GetDlgItem(g_wnd, ID_AEDIT), pick_editable());
+    EnableWindow(GetDlgItem(g_wnd, ID_AIA), pick_uploadable());
     EnableWindow(GetDlgItem(g_wnd, ID_ADELETE), pick_deletable());
     /* moved by layout, on XP they kept the neighbour's image: redraw them */
     for (i = 0; ids[i]; i++) {
@@ -4065,6 +4085,27 @@ static void paint_detail(HDC dc, int w, int h)
     SetRect(&r, 8, y + 5, w - 8, y + 5 + th);
     DrawTextW(dc, t, -1, &r, DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX);
     y += th + 16;
+
+    /* Archive.org, in the colour of its state: nothing if it never went up */
+    arc_ia_line_w(b, t, 1200);
+    if (t[0]) {
+        int ik = tone_ban(arc_ia_tone(b));
+        SetRect(&r, 0, 0, w - 16, 0);
+        DrawTextW(dc, t, -1, &r, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX);
+        th = r.bottom;
+        {
+            HBRUSH br = CreateSolidBrush(ban_bg[ik]);
+            HPEN pen = CreatePen(PS_SOLID, 1, ban_edge[ik]);
+            HGDIOBJ op = SelectObject(dc, pen), ob = SelectObject(dc, br);
+            RoundRect(dc, 0, y, w, y + th + 10, 6, 6);
+            SelectObject(dc, op); SelectObject(dc, ob);
+            DeleteObject(pen); DeleteObject(br);
+        }
+        SetTextColor(dc, RGB(0x20, 0x20, 0x20));
+        SetRect(&r, 8, y + 5, w - 8, y + 5 + th);
+        DrawTextW(dc, t, -1, &r, DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX);
+        y += th + 16;
+    }
 
     if (b->disks[0]) y = paint_chips(dc, b, y, w) + 6;
     SetTextColor(dc, RGB(0x44, 0x44, 0x44));
@@ -4440,6 +4481,12 @@ static void on_edit_saved(es_result *r)
         archive_show(r->newdir);
         if (g_pick >= 0) to_w(g_arc.box[g_pick].title, t, 300); else t[0] = 0;
         _snwprintf(w, 900, tr(T_EDIT_SAVED), t); w[899] = 0;
+        /* the item on Archive.org is now behind the box */
+        if (g_pick >= 0 && g_arc.box[g_pick].ia_state != IA_ST_NONE &&
+            wcslen(w) + wcslen(tr(T_EDIT_SAVED_IA)) + 2 < 900) {
+            wcscat(w, L" ");
+            wcscat(w, tr(T_EDIT_SAVED_IA));
+        }
         sbar_text(0, w);
     }
     free(r);
@@ -4507,6 +4554,13 @@ static void delete_pick(void)
     to_w(g_arc.box[g_pick].title, wt, 300);
     to_w(dir, wd, 700);
     _snwprintf(w, 1400, tr(T_DEL_CONFIRM), wt, wd); w[1399] = 0;
+    /* the item on Archive.org stays: nobody who uploads can delete it */
+    if (g_arc.box[g_pick].ia_state != IA_ST_NONE) {
+        wchar_t id[IA_ID_MAX + 8], note[600];
+        to_w(g_arc.box[g_pick].ia_id, id, IA_ID_MAX + 8);
+        _snwprintf(note, 600, tr(T_DEL_IA), id); note[599] = 0;
+        if (wcslen(w) + wcslen(note) + 4 < 1400) { wcscat(w, L"\n\n"); wcscat(w, note); }
+    }
     if (MessageBoxW(g_wnd, w, L"RetroArchiver", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
     /* the metadata before the folder goes: they give the log's rows */
     m = meta_new();
@@ -4535,6 +4589,55 @@ static void delete_pick(void)
     }
     meta_delete(m);
     archive_scan();
+}
+
+/* ---- archive: Archive.org ---- */
+
+/* the upload window, on the chosen box. Without the keys there is nothing
+ * to upload with: the Archive.org tab of the Settings opens instead */
+static void ia_pick(void)
+{
+    static char dir[600];               /* the window reads it while it lives */
+    ia_dlg_args a;
+    ia_keys k;
+    int why;
+    wchar_t w[900];
+
+    if (!pick_uploadable()) return;
+    str_copy(dir, sizeof(dir), g_arc.box[g_pick].dir);
+    if ((why = ia_box_can_upload(dir)) != IA_BOX_OK) {
+        static const int txt[] = { 0, T_IAUP_BOX_NOTBOX, T_IAUP_BOX_OPEN, T_IAUP_BOX_BROKEN,
+                                   T_IAUP_BOX_EDITING, T_IAUP_BOX_OLD };
+        _snwprintf(w, 900, tr(T_IAUP_ERR_BOX), tr(txt[why > 0 && why <= IA_BOX_OLD ? why : 1]));
+        w[899] = 0;
+        MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONINFORMATION);
+        return;
+    }
+    if (set_ia_keys_get(&g_set, &k) != SET_SECRET_OK || !k.access[0] || !k.secret[0]) {
+        ia_keys_wipe(&k);
+        MessageBoxW(g_wnd, tr(T_IAUP_NOKEYS), L"RetroArchiver", MB_ICONINFORMATION);
+        settings_open(PAGE_IA);
+        return;
+    }
+    ia_keys_wipe(&k);
+    memset(&a, 0, sizeof(a));
+    a.bagdir = dir;
+    a.set = &g_set;
+    a.collection = g_prefs.ia_collection;
+    a.prefix = g_prefs.ia_prefix;
+    a.logwnd = g_wnd;
+    a.logmsg = WM_APP_IA_LOG;
+    a.donemsg = WM_APP_IA_DONE;
+    g_ia_dlg = ia_upload_open(g_wnd, &a);
+    archive_buttons();
+}
+
+/* the upload window closed: if something went up the archive says so */
+static void ia_closed(int uploaded)
+{
+    g_ia_dlg = NULL;
+    if (uploaded) archive_scan();
+    archive_buttons();
 }
 
 static void edit_pick(void)
@@ -5375,6 +5478,7 @@ static HMENU menu_build(void)
     HMENU bar = CreateMenu(), arc = CreatePopupMenu(), tools = CreatePopupMenu(), help = CreatePopupMenu();
     AppendMenuW(arc, MF_STRING, IDM_NEW, tr(T_MENU_NEW));
     AppendMenuW(arc, MF_STRING, IDM_EDIT, tr(T_MENU_EDIT));
+    AppendMenuW(arc, MF_STRING, IDM_IA, tr(T_MENU_IA));
     AppendMenuW(arc, MF_STRING, IDM_DELETE, tr(T_MENU_DELETE));
     AppendMenuW(arc, MF_STRING, IDM_OPENDIR, tr(T_MENU_OPENDIR));
     AppendMenuW(arc, MF_SEPARATOR, 0, NULL);
@@ -5407,6 +5511,11 @@ static void menu_states(HMENU m)
     EnableMenuItem(m, IDM_CONVERT, MF_BYCOMMAND | (g_view == V_ARCHIVE && old_boxes() && !g_running && !g_saving
                                                    && !g_verifying ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(m, IDM_DELETE, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_deletable() ? MF_ENABLED : MF_GRAYED));
+    /* the same entry says Update once the box has its item */
+    ModifyMenuW(m, IDM_IA, MF_BYCOMMAND | MF_STRING, IDM_IA,
+                tr(g_view == V_ARCHIVE && g_pick >= 0 && g_pick < g_arc.n &&
+                   g_arc.box[g_pick].ia_state != IA_ST_NONE ? T_MENU_IA_UPDATE : T_MENU_IA));
+    EnableMenuItem(m, IDM_IA, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_uploadable() ? MF_ENABLED : MF_GRAYED));
 }
 
 static void menu_new_box(void)
@@ -5559,6 +5668,7 @@ static int on_command(HWND h, WPARAM wp)
     case ID_AOPEN:   open_pick(); return 1;
     case ID_AVERIFY: verify_pick(); return 1;
     case ID_AEDIT: edit_pick(); return 1;
+    case ID_AIA:   ia_pick(); return 1;
     case ID_ADELETE: delete_pick(); return 1;
     case ID_ANEW:    go_setup(1); return 1;
     case ID_START:  start(); return 1;
@@ -5573,6 +5683,7 @@ static int on_command(HWND h, WPARAM wp)
     case IDM_ABOUT:   about_open(); return 1;
     case IDM_EDIT:    edit_pick(); return 1;
     case IDM_CONVERT: convert_start(NULL); return 1;
+    case IDM_IA:      ia_pick(); return 1;
     case IDM_DELETE:  delete_pick(); return 1;
     case ID_READ:   answer(CMD_READ); return 1;
     case ID_SKIP:   answer(CMD_SKIP); return 1;
@@ -5625,6 +5736,13 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         return 0;
     case WM_APP_VERIFY:
         on_verify((vf_result *)lp);
+        return 0;
+    /* the upload's lines: English, as the core writes them, like SAMdisk's */
+    case WM_APP_IA_LOG:
+        if (lp) { log_append((const wchar_t *)lp); free((void *)lp); }
+        return 0;
+    case WM_APP_IA_DONE:
+        ia_closed((int)wp);
         return 0;
     case WM_APP_EDITSAVED:
         on_edit_saved((es_result *)lp);
@@ -5966,6 +6084,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show_cmd)
     SetFocus(g_alist);
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
         if (wait_key(&msg) || log_key(&msg)) continue;
+        /* the upload window is not modal: another box can be read while
+         * it works, so its keys pass through here */
+        if (g_ia_dlg && IsDialogMessageW(g_ia_dlg, &msg)) continue;
         if (IsDialogMessageW(g_wnd, &msg)) continue;
         TranslateMessage(&msg);
         DispatchMessageW(&msg);

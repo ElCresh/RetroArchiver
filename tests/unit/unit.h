@@ -36,5 +36,6 @@ void test_optical(void);
 void test_lang(void);
 void test_arc_text(void);
 void test_https(void);
+void test_iaupload(void);
 
 #endif

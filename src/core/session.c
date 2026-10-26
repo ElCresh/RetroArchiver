@@ -189,6 +189,7 @@ static int record(run_ctx *r, meta_disk *d, const char *file)
     if (sha256_path(path, m->sha256, &m->bytes)) return -1;
     CP(m->file, file);
     meta_now(m->at);
+    CP(m->software, RA_VERSION);        /* which version made this read */
     d->nreads++;
     return 0;
 }

@@ -151,4 +151,46 @@
 #define IDC_CV_TEXT      1660
 #define IDC_CV_NEVER     1661
 
+/* Upload to Archive.org: the dialog with two tabs, then the progress */
+#define IDD_IAUPLOAD     130
+#define IDD_IA_ITEM      131
+#define IDD_IA_FILES     132
+
+#define IDC_IU_WARN      1700
+#define IDC_IU_UNDERSTOOD 1701
+#define IDC_IU_UPLOAD    1702             /* Upload, then Resume */
+#define IDC_IU_STOP      1703
+#define IDC_IU_PROG      1704             /* what it is doing now */
+#define IDC_IU_BAR_FILE  1705
+#define IDC_IU_BAR_TOTAL 1706
+#define IDC_IU_URL       1707
+#define IDC_IU_OPEN      1708
+
+#define IDC_IU_ID_L      1710
+#define IDC_IU_ID        1711
+#define IDC_IU_CHECK     1712
+#define IDC_IU_ID_ST     1713
+#define IDC_IU_COLL_L    1714
+#define IDC_IU_COLL      1715
+#define IDC_IU_TITLE_L   1716
+#define IDC_IU_TITLE     1717
+#define IDC_IU_CREATOR_L 1718
+#define IDC_IU_CREATOR   1719
+#define IDC_IU_PUB_L     1720
+#define IDC_IU_PUB       1721
+#define IDC_IU_DATE_L    1722
+#define IDC_IU_DATE      1723
+#define IDC_IU_LANG_L    1724
+#define IDC_IU_LANG      1725
+#define IDC_IU_SUBJ_L    1726
+#define IDC_IU_SUBJ      1727
+#define IDC_IU_DESC_L    1728
+#define IDC_IU_DESC      1729
+#define IDC_IU_RIGHTS_L  1730
+#define IDC_IU_RIGHTS    1731
+#define IDC_IU_RESET     1732
+
+#define IDC_IU_LIST      1740
+#define IDC_IU_TOTAL     1741
+
 #endif

@@ -1,8 +1,10 @@
 /* Helpers shared by the window and its dialogs: see winutil.h */
 #include "gui/winutil.h"
 #include "core/strbuf.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 
 /* direct conversions into a short buffer fail and would leave the text
  * empty: convert into a buffer of the right size and truncate */
@@ -93,4 +95,36 @@ int file_exists(const wchar_t *path)
 {
     DWORD a = path[0] ? GetFileAttributesW(path) : INVALID_FILE_ATTRIBUTES;
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+/* the CA bundle: the setup puts Mozilla's roots next to the exe, and a
+ * copy in the user's folder wins over it (tls.c reads the file) */
+#define CACERT_REL  L"certs\\cacert.pem"
+#define CACERT_NAME L"cacert.pem"
+
+void user_ini_dir(const wchar_t *userini, wchar_t *out, int n)
+{
+    wchar_t *p;
+    if (!userini || !userini[0]) {
+        wcsncpy(out, L"%APPDATA%\\RetroArchiver", (size_t)n);
+        out[n - 1] = 0;
+        return;
+    }
+    wcsncpy(out, userini, (size_t)n);
+    out[n - 1] = 0;
+    if ((p = wcsrchr(out, L'\\')) != NULL) *p = 0;
+}
+
+void cacert_path(const wchar_t *userini, char *out, int n)
+{
+    wchar_t dir[MAX_PATH], w[MAX_PATH];
+    out[0] = 0;
+    user_ini_dir(userini, dir, MAX_PATH);
+    if ((int)(wcslen(dir) + wcslen(CACERT_NAME) + 2) < MAX_PATH) {
+        _snwprintf(w, MAX_PATH, L"%ls\\%ls", dir, CACERT_NAME);
+        w[MAX_PATH - 1] = 0;
+        if (file_exists(w)) { to_u8(w, out, n); return; }
+    }
+    exe_path(CACERT_REL, w, MAX_PATH);
+    if (w[0] && file_exists(w)) to_u8(w, out, n);
 }

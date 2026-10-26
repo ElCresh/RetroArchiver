@@ -5,6 +5,7 @@
 #define ARCHIVE_H
 #include <stddef.h>
 #include "bagit.h"
+#include "iarec.h"
 #include "meta.h"
 #include "strbuf.h"
 
@@ -33,6 +34,10 @@ typedef struct {
     char error[300];                /* ARC_BROKEN: what is wrong */
     int  editing;                   /* an edit is under way, or was interrupted (editing/) */
     int  old_format;                /* written by 261017: to convert before editing it */
+    /* Archive.org, from uploads/archive.org.json (iarec.h): IA_ST_* , the
+     * item's identifier and when it was last verified or uploaded */
+    int  ia_state;
+    char ia_id[IA_ID_MAX], ia_url[320], ia_date[20];
 } arc_box;
 
 typedef struct { int n, cap; arc_box *box; } arc_list;

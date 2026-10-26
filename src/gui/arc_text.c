@@ -230,3 +230,44 @@ void arc_advice_w(const arc_box *b, wchar_t *out, size_t n)
         }
     }
 }
+
+/* ---- Archive.org ---- */
+
+/* an identifier is letters, digits, '.', '_' and '-' only: one byte per
+ * character, so no UTF-8 decoding is needed here */
+static void ascii_w(const char *s, wchar_t *out, size_t n)
+{
+    size_t k = 0;
+    for (; s[k] && k + 1 < n; k++) out[k] = (wchar_t)(unsigned char)s[k];
+    out[k] = 0;
+}
+
+void arc_ia_short_w(const arc_box *b, wchar_t *out, size_t n)
+{
+    static const int key[] = { 0, T_ARCT_IA_STOPPED, T_ARCT_IA_PENDING, T_ARCT_IA_VERIFIED,
+                               T_ARCT_IA_FAILED, T_ARCT_IA_OUTDATED };
+    out[0] = 0;
+    if (b->ia_state <= IA_ST_NONE || b->ia_state > IA_ST_OUTDATED) return;
+    put0(out, n, key[b->ia_state]);
+}
+
+void arc_ia_line_w(const arc_box *b, wchar_t *out, size_t n)
+{
+    static const int key[] = { 0, T_ARCT_IA_L_STOPPED, T_ARCT_IA_L_PENDING, T_ARCT_IA_L_VERIFIED,
+                               T_ARCT_IA_L_FAILED, T_ARCT_IA_L_OUTDATED };
+    wchar_t date[64], id[IA_ID_MAX + 8];
+    out[0] = 0;
+    if (b->ia_state <= IA_ST_NONE || b->ia_state > IA_ST_OUTDATED) return;
+    lang_date(b->ia_date, date, 64);
+    ascii_w(b->ia_id, id, IA_ID_MAX + 8);
+    if (b->ia_state == IA_ST_INTERRUPTED) put1(out, n, key[b->ia_state], id);
+    else put2(out, n, key[b->ia_state], date, id);
+}
+
+int arc_ia_tone(const arc_box *b)
+{
+    if (b->ia_state == IA_ST_VERIFIED) return TONE_OK;
+    if (b->ia_state == IA_ST_FAILED) return TONE_BAD;
+    if (b->ia_state == IA_ST_NONE) return TONE_OPEN;
+    return TONE_WARN;
+}

@@ -225,6 +225,8 @@ static void write_disk(json_writer *w, const meta_disk *d, const char *datadir,
         jw_int(w, "bytes", d->reads[k].bytes);
         jw_str(w, "sha256", d->reads[k].sha256);
         jw_str(w, "at", d->reads[k].at);
+        /* only when there is one: a read of an older bag has none */
+        if (d->reads[k].software[0]) jw_str(w, "retroarchiver", d->reads[k].software);
         jw_end_obj(w);
     }
     jw_end_arr(w);
@@ -345,6 +347,7 @@ static void load_disk(meta_box *b, const jval *e)
         m->bytes = json_int(r, "bytes", 0);
         CP(m->sha256, json_str(r, "sha256"));
         CP(m->at, json_str(r, "at"));
+        CP(m->software, json_str(r, "retroarchiver"));
     }
     cmp = json_get(e, "compare");
     if (cmp && cmp->t == J_OBJ) {

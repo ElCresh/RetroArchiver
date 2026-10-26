@@ -178,6 +178,17 @@ int arc_load(const char *bagdir, arc_box *b)
     if (u8_exists(p)) b->old_format = 1;
     u8_join(p, sizeof(p), bagdir, BAG_EDIT_DIR);
     b->editing = u8_isdir(p);
+    /* what Archive.org has: a small record, and one digest of a few KB to
+     * see whether the box changed since. Cheap enough for the scan */
+    {
+        ia_record rec;
+        b->ia_state = ia_box_state(bagdir, &rec);
+        CP(b->ia_id, rec.identifier);
+        CP(b->ia_url, rec.url);
+        CP(b->ia_date, rec.verified[0] ? rec.verified :
+                       rec.updated[0] ? rec.updated : rec.created);
+        ia_record_free(&rec);
+    }
     meta_delete(m);
     sb_free(&err);
     return 1;

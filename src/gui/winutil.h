@@ -25,6 +25,15 @@ int exit_missing_dll(DWORD code);
 
 /* <exe folder>\rel; "" if too long */
 void exe_path(const wchar_t *rel, wchar_t *out, int n);
+
+/* The folder of the user's ini (userini may be the settings' path or ""),
+ * where a cacert.pem of theirs goes and which the messages name; the
+ * literal "%APPDATA%\RetroArchiver" if its place is unknown */
+void user_ini_dir(const wchar_t *userini, wchar_t *out, int n);
+/* The CA bundle for tls.c, as UTF-8: the user's copy wins over the one the
+ * setup installed next to the executable; "" if neither is there, and then
+ * the window says the certificate file is missing */
+void cacert_path(const wchar_t *userini, char *out, int n);
 /* 1 if the file exists (and is not a folder) */
 int file_exists(const wchar_t *path);
 

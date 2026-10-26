@@ -191,6 +191,7 @@ void test_meta(void)
     d->reads[0].bytes = 1515776;
     str_copy(d->reads[0].sha256, sizeof(d->reads[0].sha256),
              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    str_copy(d->reads[0].software, sizeof(d->reads[0].software), "261026");
     str_copy(d->reads[1].file, sizeof(d->reads[1].file), "disco01_b.dsk");
     str_copy(d->verdict, sizeof(d->verdict), "data_differ");
     d->agree = 1; d->unstable_tracks = 2;
@@ -212,6 +213,10 @@ void test_meta(void)
         CHECK(strstr(text, "\"type\": \"floppy\",\n        \"count\": 3") != NULL);
         CHECK(strstr(text, "\"format\": \"1.44M\"") != NULL);
         CHECK(strstr(text, "\"closed\": null") != NULL);
+        /* the version of the read that has one, and none for the other */
+        CHECK(strstr(text, "\"retroarchiver\": \"261026\"\n") != NULL);
+        CHECK(strstr(text, "\"file\": \"disco01_b.dsk\"") != NULL &&
+              strstr(strstr(text, "\"file\": \"disco01_b.dsk\""), "retroarchiver") == NULL);
     }
 
     CHECK(meta_load(c, "tmp_unit/meta", &err) == 0);
@@ -221,6 +226,8 @@ void test_meta(void)
     CHECK_STR(c->disk[0].label, "Disk 1");
     CHECK(c->disk[0].nreads == 2);
     CHECK(c->disk[0].reads[0].bytes == 1515776);
+    CHECK_STR(c->disk[0].reads[0].software, "261026");
+    CHECK_STR(c->disk[0].reads[1].software, "");       /* an older read has none */
     CHECK_STR(c->disk[0].verdict, "data_differ");
     CHECK(c->disk[0].unstable_tracks == 2);
     CHECK_STR(c->disk[1].status, "missing");
