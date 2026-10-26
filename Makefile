@@ -115,7 +115,7 @@ VERSION    := $(shell sed -n 's/^.define RA_VERSION "\(.*\)"/\1/p' src/core/vers
 VIVERSION  := $(shell echo $(VERSION) | awk '{printf "%d.%d.%d.0", substr($$0,1,2), substr($$0,3,2), substr($$0,5,2)}')
 SETUPTXT    = build/setup/README.txt build/setup/setup.txt build/setup/procedure.txt \
               build/setup/THIRD-PARTY-NOTICES.txt $(patsubst lang/%,build/setup/lang/%,$(LANGS)) \
-              build/setup/protection-signatures.txt
+              build/setup/protection-signatures.txt build/setup/LICENSE.txt
 
 setup: $(BIN) check-imports $(SETUPTXT)
 	python3 -I installer/third_party.py installer/third-party.txt $(THIRDPARTY) build/third-party
@@ -144,6 +144,10 @@ build/setup/lang/%.lng: lang/%.lng
 
 # the copy protection signatures, editable with XP's Notepad: ASCII, CRLF
 build/setup/protection-signatures.txt: installer/protection-signatures.txt | build/setup
+	sed 's/\r*$$/\r/' $< > $@
+
+# RetroArchiver's license, the GPL text as the FSF publishes it: ASCII, CRLF
+build/setup/LICENSE.txt: LICENSE | build/setup
 	sed 's/\r*$$/\r/' $< > $@
 
 # in English and ASCII only: no BOM, also for the installer page

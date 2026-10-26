@@ -592,6 +592,7 @@ Section "RetroArchiver" SEC_RA
   File "${TEXTS}/THIRD-PARTY-NOTICES.txt"
   File "${THIRD_PARTY}/licenses/*.txt"
   SetOutPath "$INSTDIR"
+  File "${TEXTS}/LICENSE.txt"             ; RetroArchiver's own, opened by Help > About
   Call WriteIni
   Call CreateArchive
 
@@ -837,6 +838,7 @@ Section "Uninstall"
   Delete "$INSTDIR\README.txt"
   Delete "$INSTDIR\protection-signatures.txt"
   Delete "$INSTDIR\${CHECK_FILE}"
+  Delete "$INSTDIR\LICENSE.txt"
   Delete "$INSTDIR\docs\setup.txt"
   Delete "$INSTDIR\docs\procedure.txt"
   RMDir "$INSTDIR\docs"

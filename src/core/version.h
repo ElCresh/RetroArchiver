@@ -4,9 +4,8 @@
 #ifndef VERSION_H
 #define VERSION_H
 #define RA_VERSION "261026"
-/* RetroArchiver's own license as the About window names it ("MIT",
-   "GPL-3.0-or-later"...): empty while the author has not chosen it, and the
-   window says so. Its text goes in LICENSE.txt next to RetroArchiver.exe,
-   which the About window opens when it is there. */
-#define RA_LICENSE ""
+/* RetroArchiver's own license as the About window names it (SPDX); its text,
+   LICENSE in the repository, is installed as LICENSE.txt next to
+   RetroArchiver.exe, which the About window opens */
+#define RA_LICENSE "GPL-3.0-or-later"
 #endif
