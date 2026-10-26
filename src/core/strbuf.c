@@ -63,6 +63,14 @@ void sb_puts(strbuf *b, const char *s)
     b->len += n;
 }
 
+void sb_add(strbuf *b, const void *data, size_t n)
+{
+    grow(b, n);
+    memcpy(b->s + b->len, data, n);
+    b->len += n;
+    b->s[b->len] = 0;
+}
+
 void str_copy(char *dst, size_t n, const char *src)
 {
     size_t k;

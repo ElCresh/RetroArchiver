@@ -34,5 +34,6 @@ void test_session_edit(void);
 void test_optical(void);
 void test_lang(void);
 void test_arc_text(void);
+void test_https(void);
 
 #endif

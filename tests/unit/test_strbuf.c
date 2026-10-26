@@ -14,6 +14,10 @@ void test_strbuf(void)
     CHECK(b.len == 11 + 1000);
     sb_clear(&b);
     CHECK_STR(b.s, "");
+    /* bytes with a zero among them (a body from the network) */
+    sb_add(&b, "a\0b", 3);
+    for (i = 0; i < 300; i++) sb_add(&b, "cd", 2);
+    CHECK(b.len == 603 && b.s[1] == 0 && b.s[2] == 'b' && b.s[602] == 'd' && b.s[603] == 0);
     sb_free(&b);
 
     str_copy(big, sizeof(big), "Monkey");

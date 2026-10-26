@@ -23,6 +23,9 @@ void sb_clear(strbuf *b);
 void sb_vprintf(strbuf *b, const char *fmt, va_list ap);
 void sb_printf(strbuf *b, const char *fmt, ...) RA_PRINTF(2, 3);
 void sb_puts(strbuf *b, const char *s);
+/* n bytes, zeros included (a body received from the network): len
+ * counts them all, and a terminator still follows */
+void sb_add(strbuf *b, const void *data, size_t n);
 
 /* copy into dst (n bytes), truncating without splitting a UTF-8 character */
 void str_copy(char *dst, size_t n, const char *src);
