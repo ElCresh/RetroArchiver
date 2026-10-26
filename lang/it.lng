@@ -441,6 +441,33 @@ settings.filter.exe=Programmi (*.exe)
 settings.filter.dsk=Immagini EDSK (*.dsk)
 settings.filter.all=Tutti i file
 
+# the Archive.org tab of the Settings window
+settings.tab.ia=Archive.org
+settings.ia.intro=Le chiavi del tuo account Archive.org servono a caricare un cofanetto. Si salvano cifrate, solo per questo utente di Windows, e mai in chiaro.
+settings.ia.access=Chiave di accesso
+settings.ia.secret=Chiave segreta
+settings.ia.keyslink=Dove trovo le chiavi?
+settings.ia.test=Prova le chiavi
+settings.ia.forget=Dimentica le chiavi
+settings.ia.collection=Collezione
+settings.ia.collection.hint=open_source_software è «Community Software»; test_collection serve per le prove, i suoi item spariscono dopo 30 giorni.
+settings.ia.status.none=Nessuna chiave: senza, un cofanetto non si carica.
+settings.ia.status.saved=Chiavi impostate. Prova le chiavi chiede ad Archive.org se funzionano ancora.
+settings.ia.status.bad=Le chiavi salvate non si leggono più: inseriscile di nuovo. Succede quando le impostazioni arrivano da un altro utente di Windows o da un altro PC, dove non c'è ciò che le ha cifrate.
+settings.ia.status.empty=Scrivi prima entrambe le chiavi.
+settings.ia.status.testing=Lo chiedo ad Archive.org...
+settings.ia.status.ok=Le chiavi funzionano.
+settings.ia.status.okname=Le chiavi funzionano: account %ls.
+settings.ia.status.refused=Archive.org non accetta queste chiavi: controlla di averle copiate entrambe per intero da quella pagina.
+settings.ia.status.nocerts=Manca il file dei certificati: reinstalla RetroArchiver, oppure metti un cacert.pem in %ls.
+settings.ia.status.net=Archive.org non si raggiunge: controlla che questo PC sia su Internet, poi riprova.
+settings.ia.status.clock=Controlla la data e l'ora del PC: segna %ls, e il certificato di archive.org vale dal %ls al %ls.
+settings.ia.status.clock.old=Controlla la data e l'ora del PC: segna %ls, prima dell'uscita di questo RetroArchiver (%ls).
+settings.ia.status.root=Il file dei certificati è troppo vecchio per archive.org: aggiorna RetroArchiver, oppure metti un cacert.pem più nuovo in %ls.
+settings.ia.status.name=Qualcuno risponde al posto di archive.org: controlla la rete di questo PC.
+settings.ia.status.tls=Non è stato possibile aprire una connessione sicura verso archive.org.
+settings.ia.status.http=Archive.org ha risposto %d: non sono le chiavi, riprova più tardi.
+
 # the About window
 about.title=Informazioni su %ls
 about.tagline=Archivia cofanetti di software retro: floppy, CD e DVD.

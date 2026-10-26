@@ -12,9 +12,15 @@ tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
 for exe in "$@"; do
     [ -f "$exe" ] || { echo "  $exe is missing"; fail=1; continue; }
+    # binutils up to 2.41 prints "vma hint name", 2.45 "vma ordinal hint name"
+    # (with <none> for the ordinal): take the first field that is a name
     "$OBJDUMP" -p "$exe" | awk '
         /DLL Name:/ { dll = tolower($3); next }
-        dll && /^[[:space:]]+[0-9a-f]+[[:space:]]+[0-9]+[[:space:]]+[A-Za-z_]/ { print dll " " $3 }
+        /^[[:space:]]*$/ { dll = "" }           # the imports of a DLL end here
+        dll && $1 ~ /^[0-9a-f]+$/ {
+            for (i = 2; i <= NF; i++)
+                if ($i ~ /^[A-Za-z_?@][A-Za-z0-9_?@$.]*$/) { print dll " " $i; break }
+        }
     ' | sort -u > "$tmp"
     if [ ! -s "$tmp" ]; then
         echo "  $exe: no imported functions read (objdump missing or format changed?)"

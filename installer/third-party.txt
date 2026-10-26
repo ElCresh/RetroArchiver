@@ -30,9 +30,15 @@
 # at the repo root.
 #
 # The hashes are those of the files downloaded on 16-17/10/2026 and tested
-# on the XP VM.
+# on the XP VM; cacert.pem was downloaded on 26/10/2026.
+#
+# cacert.pem is the only line that ages: it is the list of certificate
+# authorities RetroArchiver trusts when it uploads to Archive.org, and it is
+# renewed at every release. Its version is the date written in the file; see
+# the cacert checks in third_party.py.
 
 samdisk|SAMdisk|3.8.12|SAMdisk3812.zip|1d55bb9307f48ce6288f75d6d9744ac2993898120cf3f7bcffaa6c7689387596|https://simonowen.com/samdisk/SAMdisk3812.zip|.|MIT (source at https://github.com/simonowen/samdisk); zlib, bzip2 and getopt_long have their own (ReadMe.txt)|samdisk-LICENSE.txt
 fdrawcmd|fdrawcmd.sys|1.0.1.11|FdInstall.exe|76ef73ffb9bca0f6ad3d196b1de02dfe0d9e2d0ff5c0db4bcf3f0c259bf6646e|https://simonowen.com/fdrawcmd/FdInstall.exe|-|MIT (https://github.com/simonowen/fdrawcmd, License.txt); installer signed by Simon Owen|fdrawcmd-LICENSE.txt
 dic|DiscImageCreator|20260101|DiscImageCreator_20260101.zip|f8e4814fca491f0f713b346fb406ed6807ae514507d494d1caea0718dea06ffc|https://github.com/user-attachments/files/24401506/DiscImageCreator_20260101.zip|Release_ANSI|Apache 2.0 (LICENSE in the zip); release page: https://github.com/saramibreak/DiscImageCreator/releases/tag/20260101|DiscImageCreator-LICENSE.txt
 vcredist|runtime di Visual C++ 2015-2019 x86|14.27.29114|VC_redist.x86.exe|d305baa965c9cd1b44ebcd53635ee9ecc6d85b54210e2764c8836f4e9defa345|https://download.visualstudio.microsoft.com/download/pr/56f631e5-4252-4f28-8ecc-257c7bf412b8/D305BAA965C9CD1B44EBCD53635EE9ECC6D85B54210E2764C8836F4E9DEFA345/VC_redist.x86.exe|-|Microsoft Visual C++ Redistributable: redistributable with the programs that use it (terms in its installer); signed by Microsoft Corporation. The last version that installs on XP|-
+cacert|Mozilla CA certificate list|2026-10-20|cacert.pem|796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe|https://curl.se/ca/cacert.pem|-|MPL 2.0 (the file says so; https://curl.se/docs/caextract.html). Mozilla's root list (NSS certdata.txt) extracted by the curl project, with its own SHA-256 published next to it|MPL-2.0.txt

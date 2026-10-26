@@ -15,8 +15,8 @@
 ; ---- pages ----
 !insertmacro TEXT L_WELCOME_TITLE "RetroArchiver setup" "Installazione di RetroArchiver"
 !insertmacro TEXT L_WELCOME_TEXT \
-  "Installs RetroArchiver and the programs needed to archive floppies, CDs and DVDs:$\r$\n$\r$\n  • SAMdisk ${T_samdisk_VERSION}$\r$\n  • the fdrawcmd.sys driver ${T_fdrawcmd_VERSION}$\r$\n  • DiscImageCreator ${T_dic_VERSION}$\r$\n  • the Visual C++ runtime ${T_vcredist_VERSION}, only if it is missing$\r$\n$\r$\nIf RetroArchiver is already installed it is updated: the settings and the archive stay as they are." \
-  "Installa RetroArchiver e i programmi che servono per archiviare floppy, CD e DVD:$\r$\n$\r$\n  • SAMdisk ${T_samdisk_VERSION}$\r$\n  • il driver fdrawcmd.sys ${T_fdrawcmd_VERSION}$\r$\n  • DiscImageCreator ${T_dic_VERSION}$\r$\n  • il runtime di Visual C++ ${T_vcredist_VERSION}, solo se manca$\r$\n$\r$\nSe RetroArchiver è già installato lo aggiorna: le impostazioni e l'archivio restano come sono."
+  "Installs RetroArchiver and the programs needed to archive floppies, CDs and DVDs:$\r$\n$\r$\n  • SAMdisk ${T_samdisk_VERSION}$\r$\n  • the fdrawcmd.sys driver ${T_fdrawcmd_VERSION}$\r$\n  • DiscImageCreator ${T_dic_VERSION}$\r$\n  • the Visual C++ runtime ${T_vcredist_VERSION}, only if it is missing$\r$\n  • Mozilla's certificate authority list of ${T_cacert_VERSION}, for the upload to Archive.org$\r$\n$\r$\nIf RetroArchiver is already installed it is updated: the settings and the archive stay as they are." \
+  "Installa RetroArchiver e i programmi che servono per archiviare floppy, CD e DVD:$\r$\n$\r$\n  • SAMdisk ${T_samdisk_VERSION}$\r$\n  • il driver fdrawcmd.sys ${T_fdrawcmd_VERSION}$\r$\n  • DiscImageCreator ${T_dic_VERSION}$\r$\n  • il runtime di Visual C++ ${T_vcredist_VERSION}, solo se manca$\r$\n  • l'elenco delle autorità di certificazione di Mozilla del ${T_cacert_VERSION}, per il caricamento su Archive.org$\r$\n$\r$\nSe RetroArchiver è già installato lo aggiorna: le impostazioni e l'archivio restano come sono."
 !insertmacro TEXT L_TP_HEADER "Third-party programs" "Programmi di terzi"
 !insertmacro TEXT L_TP_SUBTEXT "Credits and licences of the programs installed with RetroArchiver." \
   "Crediti e licenze dei programmi installati con RetroArchiver."
@@ -96,8 +96,8 @@
   "Runtime di Visual C++ ${T_vcredist_VERSION} (per i CD e DVD)"
 !insertmacro TEXT L_SEC_DIC "DiscImageCreator ${T_dic_VERSION} (CDs and DVDs)" "DiscImageCreator ${T_dic_VERSION} (CD e DVD)"
 !insertmacro TEXT L_DESC_RA \
-  "The RetroArchiver window, dskrun and dskdiff, the Read me, the guides and the licences of the third-party programs. Required." \
-  "La finestra di RetroArchiver, dskrun e dskdiff, il Leggimi, le guide e le licenze dei programmi di terzi. Obbligatorio."
+  "The RetroArchiver window, dskrun and dskdiff, the Read me, the guides, Mozilla's certificate authority list and the licences of the third-party programs. Required." \
+  "La finestra di RetroArchiver, dskrun e dskdiff, il Leggimi, le guide, l'elenco delle autorità di certificazione di Mozilla e le licenze dei programmi di terzi. Obbligatorio."
 !insertmacro TEXT L_DESC_SAMDISK "Reads floppies. In the RetroArchiver folder, in tools\samdisk." \
   "Legge i floppy. Nella cartella di RetroArchiver, in tools\samdisk."
 !insertmacro TEXT L_DESC_FDRAWCMD "The driver SAMdisk uses to talk to the floppy controller. It needs a restart after it is installed." \

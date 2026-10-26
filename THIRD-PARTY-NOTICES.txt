@@ -3,11 +3,14 @@ RetroArchiver - Third-party notices
 
 RetroArchiver archives retro software collections (3.5" floppy disks,
 CDs and DVDs) on a PC with Windows XP SP3. Its setup program,
-RetroArchiver-Setup.exe, includes and installs the third-party programs
-listed below. They are redistributed exactly as their authors publish
-them, without modifications: the setup only unpacks or runs the original
-files, whose SHA-256 checksums are listed in installer/third-party.txt in the
-source repository.
+RetroArchiver-Setup.exe, includes and installs the third-party work
+listed below. Items 1 to 4 and 6 are redistributed exactly as their
+authors publish them, without modifications: the setup only unpacks,
+copies or runs the original files, whose SHA-256 checksums are listed in
+installer/third-party.txt in the source repository. Item 5, BearSSL, is a
+source library compiled into RetroArchiver.exe, so it has no line in that
+list: its sources are in third_party/bearssl in the source repository,
+unmodified.
 
 The full license texts are installed in the "licenses" folder next to
 RetroArchiver.exe, and each program's license is also installed next to
@@ -80,3 +83,45 @@ Package:  VC_redist.x86.exe (signed by Microsoft Corporation), run
 Used for: the runtime libraries DiscImageCreator needs. RetroArchiver
           itself does not use them. It stays installed when RetroArchiver
           is uninstalled.
+
+
+5. BearSSL (built into RetroArchiver.exe)
+-----------------------------------------
+Author:   Thomas Pornin <pornin@bolet.org>
+Website:  https://www.bearssl.org/
+Version:  commit 7bea48e5e850ab4cafbe68d3765cdaba13a86d6f of the master
+          branch (2026-04-06), from https://www.bearssl.org/git/BearSSL
+License:  MIT License, see licenses\BearSSL-LICENSE.txt
+          ("Copyright (c) 2016 Thomas Pornin")
+Package:  none. Unlike the programs above, BearSSL is a C library: its
+          inc\ and src\ sources are in third_party\bearssl in the source
+          repository, unmodified, and the compiler links them into
+          RetroArchiver.exe. There is no BearSSL file to install, and no
+          line for it in installer/third-party.txt, which lists the files
+          the setup ships.
+Used for: the TLS of the HTTPS connection to Archive.org, when
+          RetroArchiver uploads a box set. It checks the server's
+          certificate against the certificate authority list below.
+          dskrun and dskdiff do not use it.
+
+
+6. Mozilla CA certificate list (cacert.pem) 2026-10-20
+------------------------------------------------------
+Author:   the certificate authority list of the Mozilla Foundation (the
+          certdata.txt of Network Security Services), extracted in PEM
+          form by the curl project
+Website:  https://curl.se/docs/caextract.html
+Version:  the certificate data of Mozilla as of 2026-10-20, the date
+          written at the top of the file
+License:  Mozilla Public License 2.0, see licenses\MPL-2.0.txt. The file
+          itself names that license. The MPL asks that the file stay
+          under it and that whoever receives it be told where its source
+          is: it is installed as a separate file, unmodified, and the
+          address above is where it and its newer versions are published.
+Package:  cacert.pem, installed unmodified in the "certs" folder next to
+          RetroArchiver.exe
+Used for: the certificate authorities RetroArchiver trusts when it
+          uploads to Archive.org over HTTPS. It is read at every upload
+          and not compiled in, so it can be renewed without a new
+          RetroArchiver: a cacert.pem in the user's own RetroArchiver
+          folder, under Application Data, is used instead of this one.

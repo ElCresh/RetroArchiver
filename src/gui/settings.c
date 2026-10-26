@@ -1,10 +1,15 @@
 /* Settings in two ini files: see settings.h */
 #include "settings.h"
+#include "core/b64.h"
 #include "core/meta.h"
 #include <shlobj.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 #include <wchar.h>
+#ifdef _WIN32
+#include <wincrypt.h>
+#endif
 
 #define SET_MAXVAL 1024
 
@@ -242,6 +247,186 @@ void set_default_archive(wchar_t *out, int n)
     out[n - 1] = 0;
 }
 
+/* ---- a secret value: DPAPI and base64 ---- */
+
+/* the base64 of the blob: DPAPI adds a couple of hundred bytes of header
+ * to the value, and base64 a third on top */
+#define SECRET_TEXT 2048
+#define SECRET_BLOB 1024
+
+#ifdef _WIN32
+/* The entropy is fixed and public: it does not add a secret, it keeps a
+ * blob of ours from being decrypted by another program of this user by
+ * mistake. UI_FORBIDDEN: DPAPI must never open a window of its own. */
+static const char secret_entropy[] = "RetroArchiver Archive.org keys";
+
+/* The two have the same shape, but the second argument is the description
+ * going in for CryptProtectData and a pointer coming out (which we do not
+ * want: NULL) for CryptUnprotectData. */
+typedef BOOL (WINAPI *protect_fn)(DATA_BLOB *, LPCWSTR, DATA_BLOB *, PVOID,
+                                  CRYPTPROTECT_PROMPTSTRUCT *, DWORD, DATA_BLOB *);
+typedef BOOL (WINAPI *unprotect_fn)(DATA_BLOB *, LPWSTR *, DATA_BLOB *, PVOID,
+                                    CRYPTPROTECT_PROMPTSTRUCT *, DWORD, DATA_BLOB *);
+
+/* crypt32.dll is loaded when it is needed, not linked: this way the
+ * window still starts where it is missing, and its functions stay out of
+ * the imports the XP check reads */
+static void dpapi(protect_fn *p, unprotect_fn *u)
+{
+    static protect_fn protect_f;
+    static unprotect_fn unprotect_f;
+    static int tried;
+    if (!tried) {
+        HMODULE m = LoadLibraryW(L"crypt32.dll");
+        tried = 1;
+        if (m) {
+            protect_f = (protect_fn)(void (*)(void))GetProcAddress(m, "CryptProtectData");
+            unprotect_f = (unprotect_fn)(void (*)(void))GetProcAddress(m, "CryptUnprotectData");
+        }
+    }
+    *p = protect_f;
+    *u = unprotect_f;
+}
+
+static DATA_BLOB entropy_blob(void)
+{
+    DATA_BLOB b;
+    b.pbData = (BYTE *)secret_entropy;
+    b.cbData = (DWORD)(sizeof(secret_entropy) - 1);
+    return b;
+}
+
+/* 1 and the result in out (cap bytes, *len written); the blob is freed */
+static int dpapi_call(int unprotect, const void *in, DWORD in_len, void *out, size_t cap, size_t *len)
+{
+    protect_fn p; unprotect_fn u;
+    DATA_BLOB src, ent = entropy_blob(), dst;
+    int ok;
+    dpapi(&p, &u);
+    if (!p || !u) return 0;
+    src.pbData = (BYTE *)in;
+    src.cbData = in_len;
+    memset(&dst, 0, sizeof(dst));
+    if (unprotect ? !u(&src, NULL, &ent, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &dst)
+                  : !p(&src, L"RetroArchiver", &ent, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &dst))
+        return 0;
+    ok = dst.pbData != NULL && dst.cbData <= cap;
+    if (ok) { memcpy(out, dst.pbData, dst.cbData); *len = dst.cbData; }
+    if (dst.pbData) {
+        SecureZeroMemory(dst.pbData, dst.cbData);
+        LocalFree(dst.pbData);
+    }
+    return ok;
+}
+#endif
+
+int set_put_secret(const settings *s, const wchar_t *sec, const wchar_t *key, const char *v)
+{
+#ifdef _WIN32
+    unsigned char blob[SECRET_BLOB];
+    char text[SECRET_TEXT];
+    wchar_t w[SECRET_TEXT];
+    size_t n = 0, k;
+    int ok;
+    if (!v || !v[0]) return set_put(s, sec, key, NULL);
+    if (strlen(v) > SET_SECRET_MAX) return 0;
+    if (!dpapi_call(0, v, (DWORD)strlen(v), blob, sizeof(blob), &n)) return 0;
+    k = b64_encode(blob, n, text, sizeof(text));
+    SecureZeroMemory(blob, sizeof(blob));
+    if (!k) return 0;
+    for (n = 0; n <= k; n++) w[n] = (wchar_t)(unsigned char)text[n];   /* base64 is ASCII */
+    ok = set_put(s, sec, key, w);
+    SecureZeroMemory(text, sizeof(text));
+    SecureZeroMemory(w, sizeof(w));
+    return ok;
+#else
+    (void)s; (void)sec; (void)key; (void)v;
+    return 0;
+#endif
+}
+
+int set_get_secret(const settings *s, const wchar_t *sec, const wchar_t *key, char *out, int n)
+{
+#ifdef _WIN32
+    wchar_t w[SECRET_TEXT];
+    char text[SECRET_TEXT];
+    unsigned char blob[SECRET_BLOB], clear[SET_SECRET_MAX + 1];
+    size_t len = 0, i;
+    long raw;
+    int r = SET_SECRET_BAD;
+    if (n > 0) out[0] = 0;
+    /* only the user's ini: the installer does not know the keys */
+    if (!read_raw(s->user, sec, key, w, SECRET_TEXT)) return SET_SECRET_NONE;
+    if (!w[0]) return SET_SECRET_NONE;
+    for (i = 0; w[i] && i + 1 < sizeof(text); i++) text[i] = w[i] < 128 ? (char)w[i] : '?';
+    text[i] = 0;
+    raw = b64_decode(text, blob, sizeof(blob));
+    if (raw > 0 && dpapi_call(1, blob, (DWORD)raw, clear, SET_SECRET_MAX, &len) &&
+        (int)len < n) {
+        memcpy(out, clear, len);
+        out[len] = 0;
+        r = SET_SECRET_OK;
+    }
+    SecureZeroMemory(clear, sizeof(clear));
+    SecureZeroMemory(blob, sizeof(blob));
+    SecureZeroMemory(text, sizeof(text));
+    SecureZeroMemory(w, sizeof(w));
+    return r;
+#else
+    (void)s; (void)sec; (void)key;
+    if (n > 0) out[0] = 0;
+    return SET_SECRET_NONE;
+#endif
+}
+
+/* ---- the Archive.org keys ---- */
+
+void ia_keys_wipe(ia_keys *k)
+{
+#ifdef _WIN32
+    SecureZeroMemory(k, sizeof(*k));
+#else
+    memset(k, 0, sizeof(*k));
+#endif
+}
+
+int set_ia_keys_get(const settings *s, ia_keys *k)
+{
+    char both[SET_SECRET_MAX + 1], *nl;
+    int r;
+    ia_keys_wipe(k);
+    r = set_get_secret(s, SEC_IA, KEY_IAKEYS, both, sizeof(both));
+    if (r == SET_SECRET_OK) {
+        /* "access\nsecret": without the newline the value is not ours */
+        if ((nl = strchr(both, '\n')) == NULL || nl - both >= IA_KEY_MAX ||
+            strlen(nl + 1) >= IA_KEY_MAX) {
+            r = SET_SECRET_BAD;
+        } else {
+            memcpy(k->access, both, (size_t)(nl - both));
+            strcpy(k->secret, nl + 1);
+        }
+    }
+#ifdef _WIN32
+    SecureZeroMemory(both, sizeof(both));
+#endif
+    if (r != SET_SECRET_OK) ia_keys_wipe(k);
+    return r;
+}
+
+int set_ia_keys_put(const settings *s, const ia_keys *k)
+{
+    char both[2 * IA_KEY_MAX + 2];
+    int ok;
+    if (!k->access[0] && !k->secret[0]) return set_put(s, SEC_IA, KEY_IAKEYS, NULL);
+    snprintf(both, sizeof(both), "%s\n%s", k->access, k->secret);
+    both[sizeof(both) - 1] = 0;
+    ok = set_put_secret(s, SEC_IA, KEY_IAKEYS, both);
+#ifdef _WIN32
+    SecureZeroMemory(both, sizeof(both));
+#endif
+    return ok;
+}
+
 /* ---- what the Settings window edits ---- */
 
 /* the text settings, with the code's default ("" for the archive folder:
@@ -260,6 +445,8 @@ static const struct { const wchar_t *sec, *key, *def; size_t off; int n; } text_
     TP(SEC_OPTICAL, KEY_DATDIR,     L"",                  datdir),
     TP(SEC_OPTICAL, KEY_DRIVEOFFSET, L"",                 offset),
     TP(SEC_OPTICAL, KEY_NOLEADIN,   L"",                  noleadin),
+    TP(SEC_IA,      KEY_IACOLL,     IA_COLLECTION_DEF,    ia_collection),
+    TP(SEC_IA,      KEY_IAPREFIX,   L"",                  ia_prefix),
 #undef TP
     { NULL, NULL, NULL, 0, 0 }
 };

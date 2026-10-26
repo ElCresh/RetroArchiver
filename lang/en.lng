@@ -445,6 +445,33 @@ settings.filter.exe=Programs (*.exe)
 settings.filter.dsk=EDSK images (*.dsk)
 settings.filter.all=All files
 
+# the Archive.org tab of the Settings window
+settings.tab.ia=Archive.org
+settings.ia.intro=The keys of your Archive.org account let RetroArchiver upload a box. They are kept encrypted, for this Windows user only, and never in clear text.
+settings.ia.access=Access key
+settings.ia.secret=Secret key
+settings.ia.keyslink=Where do I find the keys?
+settings.ia.test=Test the keys
+settings.ia.forget=Forget the keys
+settings.ia.collection=Collection
+settings.ia.collection.hint=open_source_software is “Community Software”; test_collection is for trying, its items go after 30 days.
+settings.ia.status.none=No keys yet: without them a box cannot be uploaded.
+settings.ia.status.saved=Keys set. Test the keys asks Archive.org whether they still work.
+settings.ia.status.bad=The saved keys cannot be read any more: write them again. It happens when the settings come from another Windows user or another PC, where what encrypted them is not.
+settings.ia.status.empty=Write both keys first.
+settings.ia.status.testing=Asking Archive.org...
+settings.ia.status.ok=The keys work.
+settings.ia.status.okname=The keys work: account %ls.
+settings.ia.status.refused=Archive.org does not accept these keys: check that both are copied whole from that page.
+settings.ia.status.nocerts=The certificate file is missing: reinstall RetroArchiver, or put a cacert.pem in %ls.
+settings.ia.status.net=Archive.org cannot be reached: check that this PC is on the Internet, then try again.
+settings.ia.status.clock=Check this PC's date and time: it says %ls, and the certificate of archive.org is valid from %ls to %ls.
+settings.ia.status.clock.old=Check this PC's date and time: it says %ls, before this RetroArchiver was released (%ls).
+settings.ia.status.root=The certificate file is too old for archive.org: update RetroArchiver, or put a newer cacert.pem in %ls.
+settings.ia.status.name=Something answers in place of archive.org: check the network of this PC.
+settings.ia.status.tls=No secure connection to archive.org could be made.
+settings.ia.status.http=Archive.org answered %d: it is not the keys, try again later.
+
 # the About window
 about.title=About %ls
 about.tagline=Archives retro software boxes: floppies, CDs and DVDs.

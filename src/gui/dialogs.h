@@ -9,7 +9,7 @@
 
 /* ---- Settings ---- */
 
-enum { PAGE_GENERAL, PAGE_FLOPPY, PAGE_OPTICAL, PAGE_AUTO, PAGE_COUNT };
+enum { PAGE_GENERAL, PAGE_FLOPPY, PAGE_OPTICAL, PAGE_AUTO, PAGE_IA, PAGE_COUNT };
 
 /* a language of the menu: its code ("" = Windows' one) and its own name */
 #define UI_LANG_MAX 17
@@ -17,8 +17,11 @@ typedef struct { wchar_t code[16], name[64]; } ui_lang;
 
 /* Edits p, starting from the tab page. 1 if the user pressed OK (p then
  * holds the new values, already checked), 0 if Cancel. Saving them is the
- * caller's: the dialog only edits */
-int settings_dialog(HWND owner, prefs *p, const ui_lang *langs, int nlangs, int page);
+ * caller's: the dialog only edits. s is there for the Archive.org keys,
+ * which are not a setting like the others: they are a secret the dialog
+ * reads and, on OK, writes itself */
+int settings_dialog(HWND owner, const settings *s, prefs *p,
+                    const ui_lang *langs, int nlangs, int page);
 
 /* ---- About ---- */
 

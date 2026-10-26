@@ -587,10 +587,19 @@ Section "RetroArchiver" SEC_RA
   SetOutPath "$INSTDIR\docs"
   File "${TEXTS}/setup.txt"
   File "${TEXTS}/procedure.txt"
+  ; the certificate authorities RetroArchiver trusts when it uploads to
+  ; Archive.org: Mozilla's list as the curl project extracts it, a data file
+  ; read at every upload. A cacert.pem of the user's own, in their
+  ; Application Data folder, wins over this one
+  SetOutPath "$INSTDIR\certs"
+  File "${THIRD_PARTY}/cacert/${T_cacert_FILE}"
   ; credits and licence texts of the third-party programs
   SetOutPath "$INSTDIR\licenses"
   File "${TEXTS}/THIRD-PARTY-NOTICES.txt"
   File "${THIRD_PARTY}/licenses/*.txt"
+  ; BearSSL is compiled into RetroArchiver.exe, so it is not in
+  ; third-party.txt: its licence comes straight from the repo
+  File "${TEXTS}/BearSSL-LICENSE.txt"
   SetOutPath "$INSTDIR"
   File "${TEXTS}/LICENSE.txt"             ; RetroArchiver's own, opened by Help > About
   Call WriteIni
@@ -848,7 +857,10 @@ Section "Uninstall"
   RMDir "$INSTDIR\lang"
   Delete "$INSTDIR\licenses\THIRD-PARTY-NOTICES.txt"
   Delete "$INSTDIR\licenses\*-LICENSE.txt"
+  Delete "$INSTDIR\licenses\${T_cacert_LICENSE_FILE}"
   RMDir "$INSTDIR\licenses"
+  ; the CA bundle and its folder; a cacert.pem of the user's own is elsewhere
+  !insertmacro T_cacert_REMOVE "$INSTDIR\certs"
   ; the defaults belong to the installation; the user's choices do not
   Delete "$INSTDIR\${INI}"
   Call un.RemoveSettings

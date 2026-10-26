@@ -17,9 +17,9 @@ INC       = -Isrc
 WINDEFS   = -D_WIN32_WINNT=0x0501 -DWINVER=0x0501 -D__USE_MINGW_ANSI_STDIO=1
 WINFLAGS  = $(CFLAGS) $(INC) $(WINDEFS) -ffunction-sections -Wl,--gc-sections -s -static
 
-# the network (net, tls, https, over BearSSL): for now only in the tests,
-# the programs do not use it yet
-NET_C  = src/core/net.c src/core/tls.c src/core/https.c
+# the network (net, tls, https over BearSSL, and iakeys on top of them):
+# the window uses it, dskrun and dskdiff do not
+NET_C  = src/core/net.c src/core/tls.c src/core/https.c src/core/iakeys.c
 CORE   = $(filter-out $(NET_C),$(wildcard src/core/*.c))
 CORE_H = $(wildcard src/core/*.h)
 UNIT   = $(wildcard tests/unit/*.c)
@@ -68,13 +68,17 @@ dskrun.exe: src/dskrun.c $(CORE) $(CORE_H)
 # the window: Windows only
 GUI_C   = src/gui/settings.c src/gui/settings_dlg.c src/gui/about.c src/gui/winutil.c src/gui/box_edit_dlg.c
 GUI     = $(GUI_C) src/gui/settings.h src/gui/dialogs.h src/gui/winutil.h src/gui/resource.h $(LANG_C) $(LANG_H)
-GUILIBS = -lcomctl32 -lcomdlg32 -lshell32 -lole32 -lgdi32 -luser32 -ladvapi32
+# the network too (Test the keys of the Archive.org tab); crypt32.dll, for
+# the DPAPI of the keys, is not linked: settings.c loads it with
+# LoadLibrary, so it stays out of the imports check_imports.sh reads
+GUILIBS = -lcomctl32 -lcomdlg32 -lshell32 -lole32 -lgdi32 -luser32 -ladvapi32 -lws2_32
 
 build/retroarchiver_res.o: src/gui/retroarchiver.rc src/gui/resource.h src/gui/retroarchiver.manifest src/gui/retroarchiver.ico | build
 	i686-w64-mingw32-windres -I src/gui -O coff -o $@ src/gui/retroarchiver.rc
 
-RetroArchiver.exe: src/gui/main.c $(GUI) build/retroarchiver_res.o $(CORE) $(CORE_H)
-	$(WINCC) $(WINFLAGS) -municode -mwindows -o $@ src/gui/main.c $(GUI_C) $(LANG_C) build/retroarchiver_res.o $(CORE) $(GUILIBS)
+RetroArchiver.exe: src/gui/main.c $(GUI) build/retroarchiver_res.o $(CORE) $(CORE_H) $(NET_C) build/libbearssl.a
+	$(WINCC) $(WINFLAGS) $(BR_INC) -municode -mwindows -o $@ src/gui/main.c $(GUI_C) $(LANG_C) \
+		build/retroarchiver_res.o $(CORE) $(NET_C) build/libbearssl.a $(GUILIBS)
 
 native: $(NAT)
 
@@ -128,14 +132,16 @@ build/fake_https.exe: tests/fake_https.c build/libbearssl.a | build
 
 # the network tests alone: on the XP VM they need only fake_https.exe and
 # tests/tls, not the fixtures of the whole unit.exe
-build/https_test.exe: tests/xp/test_https_main.c tests/unit/test_https.c $(NET_C) src/core/strbuf.c src/core/fsu8.c src/core/sha256.c build/libbearssl.a | build
+NET_DEPS = src/core/strbuf.c src/core/fsu8.c src/core/sha256.c src/core/json.c
+
+build/https_test.exe: tests/xp/test_https_main.c tests/unit/test_https.c $(NET_C) $(NET_DEPS) build/libbearssl.a | build
 	$(WINCC) $(WINFLAGS) $(BR_INC) -DRA_TEST_BUILD -Itests/unit -o $@ \
-		tests/xp/test_https_main.c tests/unit/test_https.c $(NET_C) src/core/strbuf.c src/core/fsu8.c src/core/sha256.c \
+		tests/xp/test_https_main.c tests/unit/test_https.c $(NET_C) $(NET_DEPS) \
 		build/libbearssl.a $(NETLIBS)
 
 # the window settings in two ini files: Windows only (host or XP VM)
-build/settings_test.exe: tests/xp/test_settings.c $(GUI) | build
-	$(WINCC) $(WINFLAGS) -o $@ tests/xp/test_settings.c src/gui/settings.c -lshell32
+build/settings_test.exe: tests/xp/test_settings.c $(GUI) src/core/b64.c | build
+	$(WINCC) $(WINFLAGS) -o $@ tests/xp/test_settings.c src/gui/settings.c src/core/b64.c -lshell32
 
 # the hidden console of runner_run_tty: the test detaches from the console, like the GUI
 build/tty_test.exe: tests/xp/test_tty.c src/core/runner.c src/core/runner.h src/core/strbuf.c | build
@@ -176,10 +182,13 @@ VERSION    := $(shell sed -n 's/^.define RA_VERSION "\(.*\)"/\1/p' src/core/vers
 VIVERSION  := $(shell echo $(VERSION) | awk '{printf "%d.%d.%d.0", substr($$0,1,2), substr($$0,3,2), substr($$0,5,2)}')
 SETUPTXT    = build/setup/README.txt build/setup/setup.txt build/setup/procedure.txt \
               build/setup/THIRD-PARTY-NOTICES.txt $(patsubst lang/%,build/setup/lang/%,$(LANGS)) \
-              build/setup/protection-signatures.txt build/setup/LICENSE.txt
+              build/setup/protection-signatures.txt build/setup/LICENSE.txt \
+              build/setup/BearSSL-LICENSE.txt
 
+# --version lets third_party.py say if the CA bundle (cacert.pem) has grown
+# old next to this release; publish/publish.sh release makes it an error
 setup: $(BIN) check-imports $(SETUPTXT)
-	python3 -I installer/third_party.py installer/third-party.txt $(THIRDPARTY) build/third-party
+	python3 -I installer/third_party.py installer/third-party.txt $(THIRDPARTY) build/third-party --version $(VERSION)
 	mkdir -p dist
 	$(MAKENSIS) -V2 -INPUTCHARSET UTF8 -DROOT=$(CURDIR) -DVERSION=$(VERSION) -DVIVERSION=$(VIVERSION) \
 		-DOUTFILE=$(CURDIR)/dist/RetroArchiver-Setup.exe installer/retroarchiver.nsi
@@ -209,6 +218,11 @@ build/setup/protection-signatures.txt: installer/protection-signatures.txt | bui
 
 # RetroArchiver's license, the GPL text as the FSF publishes it: ASCII, CRLF
 build/setup/LICENSE.txt: LICENSE | build/setup
+	sed 's/\r*$$/\r/' $< > $@
+
+# BearSSL is compiled into RetroArchiver.exe, so it has no line in
+# installer/third-party.txt: its licence goes to the setup from here
+build/setup/BearSSL-LICENSE.txt: installer/licenses/BearSSL-LICENSE.txt | build/setup
 	sed 's/\r*$$/\r/' $< > $@
 
 # in English and ASCII only: no BOM, also for the installer page

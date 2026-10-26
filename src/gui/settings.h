@@ -29,6 +29,7 @@
 #define SEC_AUTO      L"Automatic"
 #define SEC_BOX       L"Box"
 #define SEC_WINDOW    L"Window"
+#define SEC_IA        L"ArchiveOrg"
 
 #define KEY_FOLDER     L"ArchiveFolder"    /* General: where the boxes go */
 #define KEY_MAXREADS   L"MaxReads"         /* General */
@@ -55,6 +56,14 @@
 #define KEY_LANGUAGE   L"Language"         /* Box: the box's language, not the program's */
 #define KEY_COPYPROT   L"CopyProtection"   /* Box: the CD copy protection scan, auto on off */
 #define KEY_CONVERTASK L"ConvertAsk"       /* General: 0 = never ask again to convert the boxes of 261017 */
+/* ArchiveOrg: the IA-S3 keys of the user, protected with DPAPI and base64
+ * (set_get_secret below); only in the user's ini, never in the defaults */
+#define KEY_IAKEYS     L"Keys"
+#define KEY_IACOLL     L"Collection"       /* ArchiveOrg: the collection of the new items */
+/* ArchiveOrg: before every identifier; "" = none, which is what the user
+ * chose (the identifiers say nothing about who made them): only in the ini,
+ * the window has no field for it */
+#define KEY_IAPREFIX   L"IdentifierPrefix"
 
 #define SET_FILE        L"RetroArchiver.ini"
 #define SET_USER_DIR    L"RetroArchiver"     /* inside Application Data */
@@ -91,6 +100,39 @@ int  set_convert(const wchar_t *file);
 /* "C:\RetroArchive": the archive folder on the system drive */
 void set_default_archive(wchar_t *out, int n);
 
+/* ---- a secret value in the user's ini ----
+ * The value never touches the file in clear text: CryptProtectData
+ * (DPAPI, this Windows user) protects it and the blob goes in base64.
+ * An ini copied to another user or another PC cannot be decrypted there,
+ * and neither can one whose value was written by hand: both answer
+ * SET_SECRET_BAD, which means "ask for the value again", not an error of
+ * the program. */
+
+#define SET_SECRET_MAX  512                /* the longest value, terminator apart */
+
+enum { SET_SECRET_NONE, SET_SECRET_OK, SET_SECRET_BAD };
+
+/* out (n bytes) gets the value, UTF-8; it is left empty unless the answer
+ * is SET_SECRET_OK. Without DPAPI (not Windows) always SET_SECRET_NONE */
+int set_get_secret(const settings *s, const wchar_t *sec, const wchar_t *key, char *out, int n);
+/* v NULL or empty removes the key. 0 if it cannot be written or protected */
+int set_put_secret(const settings *s, const wchar_t *sec, const wchar_t *key, const char *v);
+
+/* ---- the Archive.org keys ----
+ * The two IA-S3 keys of https://archive.org/account/s3.php, 16 characters
+ * each today; they go in one secret as "access\nsecret". */
+
+#define IA_KEY_MAX 128
+
+typedef struct { char access[IA_KEY_MAX], secret[IA_KEY_MAX]; } ia_keys;
+
+/* SET_SECRET_*: OK with the two keys in k, NONE never set, BAD unreadable */
+int  set_ia_keys_get(const settings *s, ia_keys *k);
+/* both keys empty forgets them. 0 if the user's ini cannot be written */
+int  set_ia_keys_put(const settings *s, const ia_keys *k);
+/* zeroes them where the compiler cannot drop the writing */
+void ia_keys_wipe(ia_keys *k);
+
 /* ---- what the Settings window edits ----
  * One struct with every setting as the program uses it: the window loads
  * it at startup, the Settings window edits a copy and saves it with
@@ -118,7 +160,12 @@ typedef struct {
     int     cd_speed;                    /* x, given to DiscImageCreator */
     /* Automatic */
     int     countdown, floppy_poll;      /* seconds */
+    /* Archive.org: the keys are not here, they are a secret of their own */
+    wchar_t ia_collection[64], ia_prefix[64];
 } prefs;
+
+#define IA_COLLECTION_DEF L"open_source_software"   /* "Community Software" */
+#define IA_KEYS_URL       L"https://archive.org/account/s3.php"
 
 /* the defaults alone: the installer's ini, else the code's values */
 void prefs_defaults(const settings *s, prefs *p);

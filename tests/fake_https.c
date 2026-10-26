@@ -23,6 +23,12 @@
  *   /stall          nothing at all, until the client goes
  *   /drop           "dropped" as if the connection stayed open, then closes it
  *                   (a keep-alive the server ended while the client was idle)
+ *   .../services/tasks.php
+ *                   Archive.org's tasks API, as "test the keys" asks it:
+ *                   200 with a screenname for "Authorization: LOW
+ *                   goodaccess:goodsecret", 401 for anything else. With
+ *                   /softfail before it, 200 but "success": false; with
+ *                   /http500, a server error
  *   /redirect       307 to /hello;  /redirect-put: 307 to /upload
  *   /redirect-away  307 to https://example.com/hello
  *   /redirect-loop  307 to itself
@@ -238,7 +244,8 @@ static int respond(conn *c, int status, const char *extra, const char *body, siz
     char head[1024];
     snprintf(head, sizeof(head), "HTTP/1.1 %d %s\r\nContent-Length: %lu\r\n%s\r\n", status,
              status == 200 ? "OK" : status == 307 ? "Temporary Redirect" :
-             status == 403 ? "Forbidden" : "Not Found",
+             status == 401 ? "Unauthorized" : status == 403 ? "Forbidden" :
+             status == 500 ? "Internal Server Error" : "Not Found",
              (unsigned long)len, extra ? extra : "");
     if (c_write(c, head, strlen(head)) < 0) return -1;
     return len ? c_write(c, body, len) : 0;
@@ -287,6 +294,23 @@ static void stall(conn *c)
     while (c_getc(c) >= 0) { }
 }
 
+/* Archive.org's tasks API: the keys are in the Authorization header, the
+ * only thing this request can fail on */
+static int serve_tasks(conn *c, const request *rq)
+{
+    static const char ok[] = "{\"success\":true,\"value\":{\"summary\":{\"queued\":0,"
+                             "\"running\":0},\"screenname\":\"tester\"}}";
+    static const char refused[] = "{\"success\":false,\"error\":\"authentication failed\"}";
+    static const char soft[] = "{\"success\":false,\"error\":\"no access to this account\"}";
+    static const char oops[] = "{\"error\":\"we are having a bad day\"}";
+    const char *json = "Content-Type: application/json\r\n";
+    if (!strncmp(rq->path, "/softfail/", 10)) return respond(c, 200, json, soft, sizeof(soft) - 1);
+    if (!strncmp(rq->path, "/http500/", 9)) return respond(c, 500, json, oops, sizeof(oops) - 1);
+    if (strstr(rq->head, "\r\nAuthorization: LOW goodaccess:goodsecret\r\n"))
+        return respond(c, 200, json, ok, sizeof(ok) - 1);
+    return respond(c, 401, json, refused, sizeof(refused) - 1);
+}
+
 /* one request: 0 to go on with the connection, -1 to close it */
 static int serve_one(conn *c, int req_no)
 {
@@ -309,6 +333,7 @@ static int serve_one(conn *c, int req_no)
         if (!out[0]) snprintf(out, sizeof(out), "len=0");
         return respond(c, 200, NULL, out, strlen(out));
     }
+    if (strstr(rq.path, "/services/tasks.php")) return serve_tasks(c, &rq);
     if (!strcmp(rq.path, "/echo")) return respond(c, 200, NULL, rq.head, strlen(rq.head));
     if (!strcmp(rq.path, "/chunked")) return send_chunked(c);
     if (!strcmp(rq.path, "/close")) {

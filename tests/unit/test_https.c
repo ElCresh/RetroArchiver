@@ -2,6 +2,7 @@
  * certificates in tests/tls), on 127.0.0.1 only: no network needed */
 #include "unit.h"
 #include "core/https.h"
+#include "core/iakeys.h"
 #include "core/sha256.h"
 #include "core/fsu8.h"
 #include <stdlib.h>
@@ -558,6 +559,55 @@ static void test_timeouts(void)
     https_response_free(&rs);
 }
 
+/* ---- "test the keys" (core/iakeys.c) ---- */
+
+static void test_ia_keys(void)
+{
+    ia_test t;
+    char base[128];
+
+    /* plain http on 127.0.0.1 (the test mode): no certificates needed */
+    snprintf(base, sizeof(base), "http://127.0.0.1:%d", port_of("plain"));
+    CHECK(ia_test_keys(base, NULL, "goodaccess", "goodsecret", &t) == IA_TEST_OK);
+    CHECK(t.status == 200);
+    CHECK_STR(t.screenname, "tester");                   /* nested under "value" */
+    CHECK(ia_test_keys(base, NULL, "wrong", "keys", &t) == IA_TEST_REFUSED);
+    CHECK(t.status == 401 && !t.screenname[0]);
+
+    /* 200 but "success": false, and an answer we do not understand */
+    snprintf(base, sizeof(base), "http://127.0.0.1:%d/softfail", port_of("plain"));
+    CHECK(ia_test_keys(base, NULL, "goodaccess", "goodsecret", &t) == IA_TEST_REFUSED);
+    snprintf(base, sizeof(base), "http://127.0.0.1:%d/http500", port_of("plain"));
+    CHECK(ia_test_keys(base, NULL, "goodaccess", "goodsecret", &t) == IA_TEST_HTTP);
+    CHECK(t.status == 500);
+
+    /* over TLS, with the test CA as the bundle */
+    snprintf(base, sizeof(base), "https://localhost:%d", port_of("good"));
+    CHECK(ia_test_keys(base, "tls/ca.pem", "goodaccess", "goodsecret", &t) == IA_TEST_OK);
+    CHECK_STR(t.screenname, "tester");
+
+    /* the CA bundle missing (the setup did not install it): said so, and
+     * nothing is sent */
+    CHECK(ia_test_keys(base, "tls/missing.pem", "goodaccess", "goodsecret", &t) == IA_TEST_NO_CERTS);
+    CHECK(ia_test_keys(base, NULL, "goodaccess", "goodsecret", &t) == IA_TEST_NO_CERTS);
+    CHECK(ia_test_keys(base, "", "goodaccess", "goodsecret", &t) == IA_TEST_NO_CERTS);
+
+    /* a root we do not know: the TLS reason reaches the window */
+    snprintf(base, sizeof(base), "https://localhost:%d", port_of("unknown"));
+    CHECK(ia_test_keys(base, "tls/ca.pem", "goodaccess", "goodsecret", &t) == IA_TEST_TLS);
+    CHECK(t.tls.why == TLS_ERR_UNKNOWN_ROOT);
+    /* a certificate refused for its dates: the clock, with the dates */
+    snprintf(base, sizeof(base), "https://localhost:%d", port_of("expired"));
+    CHECK(ia_test_keys(base, "tls/ca.pem", "goodaccess", "goodsecret", &t) == IA_TEST_TLS);
+    CHECK(t.tls.why == TLS_ERR_CLOCK && t.tls.not_before == T2001 && t.tls.not_after == T2002);
+
+    /* nobody answering, and a base that is not a URL we may go to */
+    CHECK(ia_test_keys("http://127.0.0.1:1", NULL, "a", "b", &t) == IA_TEST_NET);
+    CHECK(t.net_err == NET_ERR_CONNECT);
+    CHECK(ia_test_keys("ftp://archive.org", NULL, "a", "b", &t) == IA_TEST_NET);
+    CHECK(ia_test_keys("http://archive.org", NULL, "a", "b", &t) == IA_TEST_NET);
+}
+
 void test_https(void)
 {
     remove(PORTS);
@@ -576,6 +626,7 @@ void test_https(void)
     test_redirects();
     test_trust();
     test_timeouts();
+    test_ia_keys();
     tls_anchors_free(anchors);
     server_stop();
 }

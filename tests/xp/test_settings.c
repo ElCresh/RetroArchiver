@@ -178,6 +178,108 @@ static void test_prefs(const wchar_t *root)
     DeleteFileW(def); DeleteFileW(user);
 }
 
+/* the whole user ini as bytes, to look for a key in clear text in it */
+static int ini_has_text(const wchar_t *file, const char *needle)
+{
+    static char buf[65536];
+    HANDLE h = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    DWORD got = 0;
+    size_t i, k = strlen(needle);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    ReadFile(h, buf, sizeof(buf) - 1, &got, NULL);
+    CloseHandle(h);
+    /* the ini is UTF-16 LE: the ASCII of a key is there every other byte */
+    for (i = 0; i + 2 * k <= got; i++) {
+        size_t j;
+        for (j = 0; j < k && buf[i + 2 * j] == needle[j] && !buf[i + 2 * j + 1]; j++) { }
+        if (j == k) return 1;
+    }
+    return 0;
+}
+
+/* the secrets: DPAPI and base64, nothing in clear text in the ini */
+static void test_secrets(const wchar_t *root)
+{
+    wchar_t def[MAX_PATH], user[MAX_PATH], v[512];
+    settings s;
+    ia_keys k, back;
+    char got[600], longv[600];
+    int i;
+    _snwprintf(def, MAX_PATH, L"%ls\\tmp_secret_def.ini", root);
+    _snwprintf(user, MAX_PATH, L"%ls\\tmp_secret_user.ini", root);
+    DeleteFileW(def); DeleteFileW(user);
+    set_init_paths(&s, def, user);
+
+    /* no ini at all: no keys, and nothing was created to say so */
+    check(set_ia_keys_get(&s, &k) == SET_SECRET_NONE, "secret: no ini, no keys");
+    check(!k.access[0] && !k.secret[0], "secret: nothing read, nothing left behind");
+    check(!exists(user), "secret: reading does not create the user ini");
+
+    /* a value there and back, whatever is in it */
+    check(set_put_secret(&s, SEC_IA, L"Probe", "a value with spaces, accents (e') and = signs"),
+          "secret: written");
+    check(set_get_secret(&s, SEC_IA, L"Probe", got, sizeof(got)) == SET_SECRET_OK, "secret: read back");
+    check(!strcmp(got, "a value with spaces, accents (e') and = signs"), "secret: the same value");
+    check(!ini_has_text(user, "a value with spaces"), "secret: not in clear text in the ini");
+
+    /* a value too long is refused, the longest one allowed is not */
+    for (i = 0; i < 599; i++) longv[i] = 'x';
+    longv[599] = 0;
+    check(!set_put_secret(&s, SEC_IA, L"Probe2", longv), "secret: over the limit is refused");
+    longv[SET_SECRET_MAX] = 0;
+    check(set_put_secret(&s, SEC_IA, L"Probe2", longv), "secret: the longest value allowed");
+    check(set_get_secret(&s, SEC_IA, L"Probe2", got, sizeof(got)) == SET_SECRET_OK &&
+          strlen(got) == SET_SECRET_MAX, "secret: the longest value read back");
+    /* a buffer too small is not a half value */
+    check(set_get_secret(&s, SEC_IA, L"Probe2", got, 10) == SET_SECRET_BAD && !got[0],
+          "secret: it does not fit, nothing written");
+
+    /* the two keys together */
+    memset(&k, 0, sizeof(k));
+    strcpy(k.access, "AbCdEfGh12345678");
+    strcpy(k.secret, "ZyXwVuTs87654321");
+    check(set_ia_keys_put(&s, &k), "keys: written");
+    check(set_ia_keys_get(&s, &back) == SET_SECRET_OK, "keys: read back");
+    check(!strcmp(back.access, k.access) && !strcmp(back.secret, k.secret), "keys: the same two keys");
+    check(!ini_has_text(user, "AbCdEfGh12345678") && !ini_has_text(user, "ZyXwVuTs87654321"),
+          "keys: neither key is in the ini in clear text");
+    check(has_key(user, SEC_IA, KEY_IAKEYS), "keys: the key is in [ArchiveOrg]");
+    check(!has_key(def, SEC_IA, KEY_IAKEYS), "keys: nothing in the defaults ini");
+
+    /* a value written by hand, in clear text: refused, not read as a key */
+    WritePrivateProfileStringW(SEC_IA, KEY_IAKEYS, L"myaccess:mysecret", user);
+    check(set_ia_keys_get(&s, &back) == SET_SECRET_BAD, "keys: a hand-written value is refused");
+    check(!back.access[0] && !back.secret[0], "keys: refused, nothing read");
+    /* valid base64 that DPAPI cannot decrypt (an ini from another PC) */
+    WritePrivateProfileStringW(SEC_IA, KEY_IAKEYS, L"AAAAAAAAAAAAAAAAAAAAAA==", user);
+    check(set_ia_keys_get(&s, &back) == SET_SECRET_BAD, "keys: a blob of another user is refused");
+    /* an empty value counts as no keys */
+    WritePrivateProfileStringW(SEC_IA, KEY_IAKEYS, L"", user);
+    check(set_ia_keys_get(&s, &back) == SET_SECRET_NONE, "keys: an empty value means none");
+
+    /* Forget the keys: the key goes */
+    check(set_ia_keys_put(&s, &k), "keys: written again");
+    ia_keys_wipe(&k);
+    check(set_ia_keys_put(&s, &k), "keys: forgotten");
+    check(!has_key(user, SEC_IA, KEY_IAKEYS), "keys: forgetting removes the key");
+    check(set_ia_keys_get(&s, &back) == SET_SECRET_NONE, "keys: none after forgetting");
+
+    /* the collection and the prefix are plain settings */
+    {
+        prefs p;
+        prefs_load(&s, &p);
+        check_str(p.ia_collection, IA_COLLECTION_DEF, "prefs: the collection by default");
+        check(!p.ia_prefix[0], "prefs: no identifier prefix by default");
+        wcscpy(p.ia_collection, L"test_collection");
+        check(prefs_save(&s, &p), "prefs: collection saved");
+        GetPrivateProfileStringW(SEC_IA, KEY_IACOLL, L"", v, 512, user);
+        check_str(v, L"test_collection", "prefs: the collection in [ArchiveOrg]");
+        prefs_load(&s, &p);
+        check_str(p.ia_collection, L"test_collection", "prefs: the collection read back");
+    }
+    DeleteFileW(def); DeleteFileW(user);
+}
+
 static void file_time(const wchar_t *p, FILETIME *t)
 {
     WIN32_FILE_ATTRIBUTE_DATA d;
@@ -294,6 +396,7 @@ int main(void)
     DeleteFileW(def); DeleteFileW(user); RemoveDirectoryW(dir);
     test_old_ini(root);
     test_prefs(root);
+    test_secrets(root);
     printf("settings: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

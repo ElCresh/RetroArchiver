@@ -205,10 +205,17 @@ EDSK images (including a real FAT12 file system) that reproduce real
 scenarios, and fake SAMdisk and DiscImageCreator programs replay
 recorded behaviour for full archiving sessions.
 
-Third-party programs bundled by the installer are not stored in this
+Third-party files bundled by the installer are not stored in this
 repository. They are listed in [`installer/third-party.txt`](installer/third-party.txt)
 with version, download URL, SHA-256 and license; download them into
 `installer/third-party/` and `make setup` verifies them before building.
+
+One of them, Mozilla's CA certificate list (`cacert.pem`), ages: its
+version must be the Mozilla date written in the file, the roots needed
+today must be in it, and `make setup` warns when the date is more than 6
+months older than the release version. BearSSL is different: it is a
+source library in [`third_party/bearssl/`](third_party/bearssl/),
+compiled into `RetroArchiver.exe`, so it has no line in the manifest.
 
 ## Project layout
 
@@ -220,6 +227,7 @@ lang/         the window's languages, one key=text file each
 src/dskrun.c  console archiver
 src/dskdiff.c read comparison tool
 installer/    NSIS installer and third-party manifest
+third_party/  BearSSL, unmodified, compiled into RetroArchiver.exe
 tests/        unit tests, dskdiff cases, golden outputs, session tests
 docs/         setup guide, archiving procedure, BagIt profiles
 ```
@@ -232,7 +240,14 @@ them under their own licenses:
 - SAMdisk and fdrawcmd.sys by Simon Owen: MIT License;
 - DiscImageCreator by sarami: Apache License 2.0;
 - Microsoft Visual C++ Redistributable: Microsoft redistributable
-  license terms.
+  license terms;
+- Mozilla's CA certificate list, extracted by the curl project
+  (`cacert.pem`): Mozilla Public License 2.0, installed unmodified as a
+  separate file in `certs\` and read at every upload to Archive.org.
+
+BearSSL by Thomas Pornin (MIT License) is compiled into
+`RetroArchiver.exe` for the TLS of that upload; its unmodified sources
+are in [`third_party/bearssl/`](third_party/bearssl/).
 
 Details are in [`THIRD-PARTY-NOTICES.txt`](THIRD-PARTY-NOTICES.txt),
 the license texts in [`installer/licenses/`](installer/licenses/). The

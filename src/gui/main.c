@@ -5489,7 +5489,7 @@ static void settings_open(int page)
     GetDlgItemTextW(g_wnd, ID_DIR, g_prefs.folder, MAX_PATH);     /* also changed in the archive view */
     p = g_prefs;
     n = lang_menu(langs, UI_LANG_MAX);
-    if (!settings_dialog(g_wnd, &p, langs, n, page)) return;
+    if (!settings_dialog(g_wnd, &g_set, &p, langs, n, page)) return;
     old = g_prefs;
     g_prefs = p;
     if (!prefs_save(&g_set, &g_prefs)) {

@@ -12,6 +12,7 @@
 #define IDD_PG_FLOPPY    102
 #define IDD_PG_OPTICAL   103
 #define IDD_PG_AUTO      104
+#define IDD_PG_IA        105
 #define IDD_ABOUT        110
 
 #define IDC_TABS         1000
@@ -78,6 +79,20 @@
 #define IDC_POLL_U       1407
 #define IDC_POLL_H       1408
 #define IDC_AUTO_NOTE    1409
+
+/* Archive.org */
+#define IDC_IA_INTRO     1420
+#define IDC_IA_ACCESS_L  1421
+#define IDC_IA_ACCESS    1422
+#define IDC_IA_SECRET_L  1423
+#define IDC_IA_SECRET    1424
+#define IDC_IA_LINK      1425
+#define IDC_IA_TEST      1427
+#define IDC_IA_FORGET    1428
+#define IDC_IA_STATUS    1429
+#define IDC_IA_COLL_L    1430
+#define IDC_IA_COLL      1431
+#define IDC_IA_COLL_H    1432
 
 /* About */
 #define IDC_AB_ICON      1500

@@ -1,36 +1,61 @@
-/* The Settings window: four tabs (General, Floppy, CD and DVD, Automatic)
- * over a copy of the settings. The layout is in retroarchiver.rc, one child
- * dialog per tab; the texts come from tr(). OK checks every value and only
- * then hands them back: saving them is main.c's job (prefs_save). */
+/* The Settings window: five tabs (General, Floppy, CD and DVD, Automatic,
+ * Archive.org) over a copy of the settings. The layout is in
+ * retroarchiver.rc, one child dialog per tab; the texts come from tr(). OK
+ * checks every value and only then hands them back: saving them is main.c's
+ * job (prefs_save).
+ *
+ * The Archive.org keys are the one exception: they are not a pref but a
+ * secret of the user's ini (settings.c), so the dialog reads them when it
+ * opens and writes them itself on OK, only if they were touched. "Test the
+ * keys" asks Archive.org in a thread, as About asks the programs' versions. */
 #include "gui/dialogs.h"
 #include "gui/resource.h"
 #include "gui/lang.h"
 #include "gui/winutil.h"
+#include "core/iakeys.h"
 #include "core/media.h"
 #include "core/meta.h"
 #include "core/strbuf.h"
+#include "core/version.h"
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shlobj.h>
 #include <shellapi.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <wchar.h>
 
 /* where the drives' read offsets are listed (the redump one has no fixed address) */
 #define OFFSET_URL L"http://www.accuraterip.com/driveoffsets.htm"
 
+/* the CA bundle: the setup puts Mozilla's roots here, next to the exe, and
+ * a copy in the user's folder wins over it (tls.c reads the file) */
+#define CACERT_REL L"certs\\cacert.pem"
+#define CACERT_NAME L"cacert.pem"
+
+#define WM_APP_IA_TEST (WM_APP + 2)      /* lParam: ia_test*, the thread's */
+
 typedef struct {
     prefs *p;                            /* the values being edited */
+    const settings *set;
     const ui_lang *langs;
     int nlangs, page;
     HWND tabs, pages[PAGE_COUNT];
     char noleadin[PREFS_LIST];           /* the list, with the drives forgotten so far */
+    int keys_state;                      /* SET_SECRET_* of the keys found in the ini */
+    int keys_touched;                    /* the user changed them: write them on OK */
+    int testing;                         /* a test is on its way */
 } sdlg;
 
-static const int page_dlg[PAGE_COUNT] = { IDD_PG_GENERAL, IDD_PG_FLOPPY, IDD_PG_OPTICAL, IDD_PG_AUTO };
-static const int page_title[PAGE_COUNT] = { T_SET_TAB_GENERAL, T_SET_TAB_FLOPPY, T_SET_TAB_OPTICAL, T_SET_TAB_AUTO };
+static const int page_dlg[PAGE_COUNT] = {
+    IDD_PG_GENERAL, IDD_PG_FLOPPY, IDD_PG_OPTICAL, IDD_PG_AUTO, IDD_PG_IA
+};
+static const int page_title[PAGE_COUNT] = {
+    T_SET_TAB_GENERAL, T_SET_TAB_FLOPPY, T_SET_TAB_OPTICAL, T_SET_TAB_AUTO, T_SET_TAB_IA
+};
 
 /* every text of the tabs; the programs' names are the same in every language */
 static const struct { int page, id, text; } texts[] = {
@@ -65,6 +90,13 @@ static const struct { int page, id, text; } texts[] = {
     { PAGE_AUTO,    IDC_POLL_U,     T_SET_SECONDS },
     { PAGE_AUTO,    IDC_POLL_H,     T_SET_POLL_H },
     { PAGE_AUTO,    IDC_AUTO_NOTE,  T_SET_AUTO_NOTE },
+    { PAGE_IA,      IDC_IA_INTRO,   T_IA_INTRO },
+    { PAGE_IA,      IDC_IA_ACCESS_L, T_IA_ACCESS },
+    { PAGE_IA,      IDC_IA_SECRET_L, T_IA_SECRET },
+    { PAGE_IA,      IDC_IA_TEST,    T_IA_TEST },
+    { PAGE_IA,      IDC_IA_FORGET,  T_IA_FORGET },
+    { PAGE_IA,      IDC_IA_COLL_L,  T_IA_COLL },
+    { PAGE_IA,      IDC_IA_COLL_H,  T_IA_COLL_H },
     { -1, 0, 0 }
 };
 
@@ -81,6 +113,7 @@ static const struct { int page, id; size_t off; int n; } fields[] = {
     { PAGE_OPTICAL, IDC_DVDNAME,  OFF(dvd_name) },
     { PAGE_OPTICAL, IDC_DAT,      OFF(datdir) },
     { PAGE_OPTICAL, IDC_OFFSET,   OFF(offset) },
+    { PAGE_IA,      IDC_IA_COLL,  OFF(ia_collection) },
     { -1, 0, 0, 0 }
 };
 #undef OFF
@@ -196,6 +229,204 @@ static void noleadin_forget(HWND page, sdlg *d)
     noleadin_fill(page, d);
 }
 
+static void trim(wchar_t *s)
+{
+    size_t k = wcslen(s), i = 0;
+    while (k && (s[k - 1] == L' ' || s[k - 1] == L'\t')) s[--k] = 0;
+    while (s[i] == L' ' || s[i] == L'\t') i++;
+    if (i) memmove(s, s + i, (wcslen(s + i) + 1) * sizeof(wchar_t));
+}
+
+static void put_w(wchar_t *out, int n, const wchar_t *s)
+{
+    wcsncpy(out, s, n);
+    out[n - 1] = 0;
+}
+
+/* ---- the Archive.org keys ---- */
+
+/* the folder of the user's ini: where a cacert.pem of theirs goes, and
+ * what the messages name. The literal if its place is unknown */
+static void user_dir(const sdlg *d, wchar_t *out, int n)
+{
+    wchar_t *p;
+    if (!d->set || !d->set->user[0]) { put_w(out, n, L"%APPDATA%\\RetroArchiver"); return; }
+    put_w(out, n, d->set->user);
+    if ((p = wcsrchr(out, L'\\')) != NULL) *p = 0;
+}
+
+/* the CA bundle for tls.c: the user's copy wins over the setup's; "" if
+ * neither is there, and then the window says to reinstall */
+static void cacert_file(const sdlg *d, char *out, int n)
+{
+    wchar_t dir[MAX_PATH], w[MAX_PATH];
+    out[0] = 0;
+    user_dir(d, dir, MAX_PATH);
+    if ((int)(wcslen(dir) + wcslen(CACERT_NAME) + 2) < MAX_PATH) {
+        _snwprintf(w, MAX_PATH, L"%ls\\%ls", dir, CACERT_NAME);
+        w[MAX_PATH - 1] = 0;
+        if (file_exists(w)) { to_u8(w, out, n); return; }
+    }
+    exe_path(CACERT_REL, w, MAX_PATH);
+    if (w[0] && file_exists(w)) to_u8(w, out, n);
+}
+
+/* a Unix time as the language writes dates */
+static void when_text(long long t, wchar_t *out, int n)
+{
+    time_t tt = (time_t)t;
+    struct tm *g = gmtime(&tt);
+    char iso[40] = "";
+    if (g) snprintf(iso, sizeof(iso), "%04d-%02d-%02dT%02d:%02d:%02d", g->tm_year + 1900,
+                    g->tm_mon + 1, g->tm_mday, g->tm_hour, g->tm_min, g->tm_sec);
+    lang_date(iso, out, (size_t)n);
+}
+
+static void ia_status(HWND page, const wchar_t *s) { SetDlgItemTextW(page, IDC_IA_STATUS, s); }
+
+/* what the keys found in the ini say, before any test */
+static void ia_status_stored(HWND page, const sdlg *d)
+{
+    ia_status(page, tr(d->keys_state == SET_SECRET_BAD ? T_IA_ST_BAD :
+                       d->keys_state == SET_SECRET_OK ? T_IA_ST_SAVED : T_IA_ST_NONE));
+}
+
+/* a TLS failure: its own text, with the dates when it is the clock */
+static void ia_tls_text(const sdlg *d, const tls_info *ti, wchar_t *out, int n)
+{
+    wchar_t a[64], b[64], c[64], dir[MAX_PATH];
+    switch (ti->why) {
+    case TLS_ERR_CLOCK:
+        when_text(ti->now, a, 64);
+        when_text(ti->not_before, b, 64);
+        if (!ti->not_after) {
+            _snwprintf(out, n, tr(T_IA_ST_CLOCK_OLD), a, b);
+        } else {
+            when_text(ti->not_after, c, 64);
+            _snwprintf(out, n, tr(T_IA_ST_CLOCK), a, b, c);
+        }
+        break;
+    case TLS_ERR_UNKNOWN_ROOT:
+        user_dir(d, dir, MAX_PATH);
+        _snwprintf(out, n, tr(T_IA_ST_ROOT), dir);
+        break;
+    case TLS_ERR_BAD_NAME: put_w(out, n, tr(T_IA_ST_NAME)); break;
+    case TLS_ERR_NET:      put_w(out, n, tr(T_IA_ST_NET)); break;
+    default:               put_w(out, n, tr(T_IA_ST_TLS)); break;
+    }
+    out[n - 1] = 0;
+}
+
+static void ia_result_text(const sdlg *d, const ia_test *t, wchar_t *out, int n)
+{
+    wchar_t name[128], dir[MAX_PATH];
+    switch (t->why) {
+    case IA_TEST_OK:
+        if (!t->screenname[0]) { put_w(out, n, tr(T_IA_ST_OK)); break; }
+        to_w(t->screenname, name, 128);
+        _snwprintf(out, n, tr(T_IA_ST_OKNAME), name);
+        break;
+    case IA_TEST_REFUSED: put_w(out, n, tr(T_IA_ST_REFUSED)); break;
+    case IA_TEST_NO_CERTS:
+        user_dir(d, dir, MAX_PATH);
+        _snwprintf(out, n, tr(T_IA_ST_NOCERTS), dir);
+        break;
+    case IA_TEST_TLS: ia_tls_text(d, &t->tls, out, n); break;
+    case IA_TEST_HTTP: _snwprintf(out, n, tr(T_IA_ST_HTTP), t->status); break;
+    default: put_w(out, n, tr(T_IA_ST_NET)); break;
+    }
+    out[n - 1] = 0;
+}
+
+/* the test, in a thread of its own: the keys live in the job and nowhere
+ * else, and go when it ends */
+typedef struct { HWND page; char cacert[3 * MAX_PATH]; ia_keys k; } ia_job;
+
+static DWORD WINAPI ia_worker(LPVOID p)
+{
+    ia_job *job = (ia_job *)p;
+    ia_test *t = (ia_test *)calloc(1, sizeof(ia_test));
+    if (t) {
+        /* the fake Archive.org of the tests answers at this address */
+        const char *base = getenv("RETROARCHIVER_IA_URL");
+        ia_test_keys(base && base[0] ? base : NULL, job->cacert, job->k.access, job->k.secret, t);
+        if (!PostMessageW(job->page, WM_APP_IA_TEST, 0, (LPARAM)t)) free(t);
+    }
+    SecureZeroMemory(job, sizeof(*job));
+    free(job);
+    return 0;
+}
+
+static void ia_test_start(HWND page, sdlg *d)
+{
+    wchar_t a[IA_KEY_MAX], s[IA_KEY_MAX];
+    ia_job *job;
+    HANDLE th;
+    if (d->testing) return;
+    GetDlgItemTextW(page, IDC_IA_ACCESS, a, IA_KEY_MAX);
+    GetDlgItemTextW(page, IDC_IA_SECRET, s, IA_KEY_MAX);
+    trim(a);
+    trim(s);
+    if (!a[0] || !s[0]) { ia_status(page, tr(T_IA_ST_EMPTY)); return; }
+    if ((job = (ia_job *)calloc(1, sizeof(ia_job))) == NULL) return;
+    job->page = page;
+    to_u8(a, job->k.access, IA_KEY_MAX);
+    to_u8(s, job->k.secret, IA_KEY_MAX);
+    cacert_file(d, job->cacert, (int)sizeof(job->cacert));
+    SecureZeroMemory(a, sizeof(a));
+    SecureZeroMemory(s, sizeof(s));
+    if ((th = CreateThread(NULL, 0, ia_worker, job, 0, NULL)) == NULL) {
+        SecureZeroMemory(job, sizeof(*job));
+        free(job);
+        return;
+    }
+    CloseHandle(th);
+    d->testing = 1;
+    EnableWindow(GetDlgItem(page, IDC_IA_TEST), 0);
+    ia_status(page, tr(T_IA_ST_TESTING));
+}
+
+static void ia_test_done(HWND page, sdlg *d, ia_test *t)
+{
+    wchar_t w[800];
+    d->testing = 0;
+    EnableWindow(GetDlgItem(page, IDC_IA_TEST), 1);
+    ia_result_text(d, t, w, 800);
+    ia_status(page, w);
+    free(t);
+}
+
+static void ia_forget(HWND page, sdlg *d)
+{
+    SetDlgItemTextW(page, IDC_IA_ACCESS, L"");
+    SetDlgItemTextW(page, IDC_IA_SECRET, L"");
+    d->keys_touched = 1;
+    ia_status(page, tr(T_IA_ST_NONE));
+}
+
+/* the keys the ini has, so that OK does not lose them */
+static void ia_page_values(HWND page, sdlg *d)
+{
+    ia_keys k;
+    wchar_t w[400], v[IA_KEY_MAX];
+    SendDlgItemMessageW(page, IDC_IA_ACCESS, EM_LIMITTEXT, IA_KEY_MAX - 1, 0);
+    SendDlgItemMessageW(page, IDC_IA_SECRET, EM_LIMITTEXT, IA_KEY_MAX - 1, 0);
+    _snwprintf(w, 400, L"<a href=\"%ls\">%ls</a>", IA_KEYS_URL, tr(T_IA_KEYSLINK));
+    w[399] = 0;
+    SetDlgItemTextW(page, IDC_IA_LINK, w);
+    d->keys_state = d->set ? set_ia_keys_get(d->set, &k) : SET_SECRET_NONE;
+    if (d->keys_state == SET_SECRET_OK) {
+        to_w(k.access, v, IA_KEY_MAX);
+        SetDlgItemTextW(page, IDC_IA_ACCESS, v);
+        to_w(k.secret, v, IA_KEY_MAX);
+        SetDlgItemTextW(page, IDC_IA_SECRET, v);
+    }
+    ia_keys_wipe(&k);
+    SecureZeroMemory(v, sizeof(v));
+    ia_status_stored(page, d);
+    d->keys_touched = 0;                 /* filling the fields is not the user typing */
+}
+
 /* ---- one tab ---- */
 
 static void page_texts(HWND page, int pg)
@@ -245,6 +476,7 @@ static void page_values(HWND page, int pg, sdlg *d)
         drives_fill(page, d->p->drive);
         noleadin_fill(page, d);
     }
+    if (pg == PAGE_IA) ia_page_values(page, d);
 }
 
 static void link_open(const NMHDR *h)
@@ -263,6 +495,12 @@ static int page_command(HWND page, sdlg *d, WPARAM wp)
     case IDC_DIC_B:      browse_file(page, IDC_DIC, T_SET_FILTER_EXE, L"*.exe"); return 1;
     case IDC_READFROM_B: browse_file(page, IDC_READFROM, T_SET_FILTER_DSK, L"*.dsk"); return 1;
     case IDC_FORGET:     noleadin_forget(page, d); return 1;
+    case IDC_IA_TEST:    ia_test_start(page, d); return 1;
+    case IDC_IA_FORGET:  ia_forget(page, d); return 1;
+    case IDC_IA_ACCESS:
+    case IDC_IA_SECRET:
+        if (HIWORD(wp) == EN_CHANGE) d->keys_touched = 1;
+        return 1;
     case IDC_NOLEADIN:
         if (HIWORD(wp) == LBN_SELCHANGE)
             EnableWindow(GetDlgItem(page, IDC_FORGET),
@@ -281,22 +519,19 @@ static INT_PTR CALLBACK page_proc(HWND page, UINT m, WPARAM wp, LPARAM lp)
         return FALSE;
     case WM_COMMAND:
         return d && page_command(page, d, wp);
-    case WM_NOTIFY:
-        if (((NMHDR *)lp)->idFrom == IDC_OFFSET_LINK) link_open((NMHDR *)lp);
+    case WM_APP_IA_TEST:
+        if (d) ia_test_done(page, d, (ia_test *)lp); else free((void *)lp);
         return TRUE;
+    case WM_NOTIFY: {
+        UINT_PTR id = ((NMHDR *)lp)->idFrom;
+        if (id == IDC_OFFSET_LINK || id == IDC_IA_LINK) link_open((NMHDR *)lp);
+        return TRUE;
+    }
     }
     return FALSE;
 }
 
 /* ---- reading the values back, with the checks ---- */
-
-static void trim(wchar_t *s)
-{
-    size_t k = wcslen(s), i = 0;
-    while (k && (s[k - 1] == L' ' || s[k - 1] == L'\t')) s[--k] = 0;
-    while (s[i] == L' ' || s[i] == L'\t') i++;
-    if (i) memmove(s, s + i, (wcslen(s + i) + 1) * sizeof(wchar_t));
-}
 
 static void show_page(sdlg *d, int pg)
 {
@@ -387,6 +622,32 @@ static int read_all(sdlg *d, prefs *p)
     return 1;
 }
 
+/* On OK: the keys, only if the user touched them. One of the two alone is
+ * no use, so it is refused like a bad value */
+static int ia_commit(sdlg *d)
+{
+    ia_keys k;
+    wchar_t a[IA_KEY_MAX], s[IA_KEY_MAX];
+    if (!d->keys_touched || !d->set || !d->pages[PAGE_IA]) return 1;
+    GetDlgItemTextW(d->pages[PAGE_IA], IDC_IA_ACCESS, a, IA_KEY_MAX);
+    GetDlgItemTextW(d->pages[PAGE_IA], IDC_IA_SECRET, s, IA_KEY_MAX);
+    trim(a);
+    trim(s);
+    if (!a[0] != !s[0]) {
+        SecureZeroMemory(s, sizeof(s));
+        return refuse(d, PAGE_IA, a[0] ? IDC_IA_SECRET : IDC_IA_ACCESS, tr(T_IA_ST_EMPTY));
+    }
+    memset(&k, 0, sizeof(k));
+    to_u8(a, k.access, IA_KEY_MAX);
+    to_u8(s, k.secret, IA_KEY_MAX);
+    /* an ini that cannot be written is said once, by main.c after prefs_save */
+    set_ia_keys_put(d->set, &k);
+    ia_keys_wipe(&k);
+    SecureZeroMemory(a, sizeof(a));
+    SecureZeroMemory(s, sizeof(s));
+    return 1;
+}
+
 /* ---- the dialog with the tabs ---- */
 
 /* the tabs as child dialogs over the tab control's display area, right
@@ -440,7 +701,7 @@ static INT_PTR CALLBACK dlg_proc(HWND dlg, UINT m, WPARAM wp, LPARAM lp)
             show_page(d, TabCtrl_GetCurSel(d->tabs));
         return TRUE;
     case WM_COMMAND:
-        if (LOWORD(wp) == IDOK && d && read_all(d, &out)) {
+        if (LOWORD(wp) == IDOK && d && read_all(d, &out) && ia_commit(d)) {
             *d->p = out;
             EndDialog(dlg, 1);
         } else if (LOWORD(wp) == IDCANCEL) {
@@ -451,11 +712,13 @@ static INT_PTR CALLBACK dlg_proc(HWND dlg, UINT m, WPARAM wp, LPARAM lp)
     return FALSE;
 }
 
-int settings_dialog(HWND owner, prefs *p, const ui_lang *langs, int nlangs, int page)
+int settings_dialog(HWND owner, const settings *s, prefs *p,
+                    const ui_lang *langs, int nlangs, int page)
 {
     sdlg d;
     memset(&d, 0, sizeof(d));
     d.p = p;
+    d.set = s;
     d.langs = langs;
     d.nlangs = nlangs;
     d.page = page >= 0 && page < PAGE_COUNT ? page : PAGE_GENERAL;
