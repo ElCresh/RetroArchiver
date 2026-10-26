@@ -800,7 +800,7 @@ static void build_work(void)
     make_t(L"STATIC", T_BAG_ASIDE, 0, 0, 0, 80, 18, ID_BAGASIDE + LBL);
     make(L"STATIC", L"", SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_BAGASIDE);
 
-    g_sbar = CreateWindowExW(0, STATUSCLASSNAMEW, L"", WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
+    g_sbar = CreateWindowExW(0, STATUSCLASSNAMEW, L"", WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP | SBARS_TOOLTIPS,
                              0, 0, 0, 0, g_wnd, (HMENU)(INT_PTR)ID_SBAR, GetModuleHandleW(NULL), NULL);
     SendMessageW(g_sbar, WM_SETFONT, (WPARAM)g_font, TRUE);
 }
@@ -2719,6 +2719,18 @@ static const wchar_t *ready_text(void)
     return tr(T_READY_OK);
 }
 
+/* how wide a part must be to hold t */
+static int sbar_width(const wchar_t *t)
+{
+    HDC dc = GetDC(g_sbar);
+    HGDIOBJ o = SelectObject(dc, (HFONT)SendMessageW(g_sbar, WM_GETFONT, 0, 0));
+    SIZE sz;
+    if (!GetTextExtentPoint32W(dc, t, (int)wcslen(t), &sz)) sz.cx = 0;
+    SelectObject(dc, o);
+    ReleaseDC(g_sbar, dc);
+    return sz.cx + 24;                                  /* the part's margins and borders */
+}
+
 /* the right part is as wide as the longest text it can hold */
 static int ready_width(void)
 {
@@ -2768,13 +2780,20 @@ static void sbar_parts(void)
     if (g_view == V_SETUP) {
         /* left | make-up | "Pronto" right-aligned | empty space for the
          * size grip, which would otherwise cover the end of the text */
-        int grip = GetSystemMetrics(SM_CXVSCROLL) + 4;
-        p[2] = r.right - grip; p[1] = p[2] - ready_width(); p[0] = p[1] - 170; p[3] = -1;
+        int grip = GetSystemMetrics(SM_CXVSCROLL) + 4, c[MEDIA_KINDS], cw = 60;
+        wchar_t t[200];
+        if (!setup_counts(c)) { comp_text(c, t, 200); if (sbar_width(t) > cw) cw = sbar_width(t); }
+        p[2] = r.right - grip; p[1] = p[2] - ready_width(); p[0] = p[1] - cw; p[3] = -1;
         SendMessageW(g_sbar, SB_SETPARTS, 4, (LPARAM)p);
     } else if (g_view == V_ARCHIVE) {
-        /* SAMdisk | "N cofanetti letti da ..." | Pronto | grip */
-        int grip = GetSystemMetrics(SM_CXVSCROLL) + 4;
-        p[2] = r.right - grip; p[1] = p[2] - ready_width(); p[0] = p[1] / 2; p[3] = -1;
+        /* SAMdisk | "N cofanetti letti da ..." | Pronto | grip: the programs
+         * take what their text needs, up to two thirds (half cut the DIC
+         * text short on XP); a text still cut shows whole in its tooltip */
+        int grip = GetSystemMetrics(SM_CXVSCROLL) + 4, tw;
+        wchar_t t[420];
+        tools_text(t, 420);
+        tw = sbar_width(t);
+        p[2] = r.right - grip; p[1] = p[2] - ready_width(); p[0] = tw < p[1] * 2 / 3 ? tw : p[1] * 2 / 3; p[3] = -1;
         SendMessageW(g_sbar, SB_SETPARTS, 4, (LPARAM)p);
     } else if (g_view == V_WAIT) {
         /* while waiting the first part may show the magnifier's outcome: it stretches */
@@ -2789,14 +2808,17 @@ static void sbar_parts(void)
     }
 }
 
+/* a text cut short by its part shows whole in a tooltip */
 static void sbar_text(int part, const wchar_t *t)
 {
     SendMessageW(g_sbar, SB_SETTEXTW, part, (LPARAM)t);
+    SendMessageW(g_sbar, SB_SETTIPTEXTW, part, (LPARAM)t);
 }
 
 static void sbar_setup(void)
 {
     wchar_t w[420]; int c[MEDIA_KINDS];
+    if (g_view == V_SETUP) sbar_parts();        /* the parts follow their texts */
     tools_text(w, 420);
     sbar_text(0, w);
     if (setup_counts(c)) w[0] = 0; else comp_text(c, w, 200);
@@ -2811,6 +2833,7 @@ static void sbar_archive(void)
 {
     wchar_t w[700], dir[512], n[64];
     const wchar_t *ready = tr(T_READY_OK);
+    if (g_view == V_ARCHIVE) sbar_parts();      /* the programs' text may have changed length */
     tools_text(w, 420);
     sbar_text(0, w);
     to_w(g_arc_root, dir, 512);
@@ -5292,10 +5315,34 @@ static int lang_menu(ui_lang *out, int n)
     return k;
 }
 
+/* the grey placeholder text of the search field, drawn by the window: XP's
+ * own (EM_SETCUEBANNER) cuts its first letter, "itolo, editore..." */
+static WNDPROC g_search_proc;
+
+static LRESULT CALLBACK search_wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    LRESULT rc = CallWindowProcW(g_search_proc, h, m, wp, lp);
+    if (m == WM_SETFOCUS || m == WM_KILLFOCUS) InvalidateRect(h, NULL, TRUE);
+    if (m == WM_PAINT && GetWindowTextLengthW(h) == 0 && GetFocus() != h) {
+        HDC dc = GetDC(h);
+        HGDIOBJ o = SelectObject(dc, (HFONT)SendMessageW(h, WM_GETFONT, 0, 0));
+        RECT r;
+        SendMessageW(h, EM_GETRECT, 0, (LPARAM)&r);
+        SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
+        SetBkMode(dc, TRANSPARENT);
+        DrawTextW(dc, tr(T_ARC_SEARCH_CUE), -1, &r, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        SelectObject(dc, o);
+        ReleaseDC(h, dc);
+    }
+    return rc;
+}
+
 static void search_cue(void)
 {
-    /* with the comctl32 6 manifest the grey placeholder text works on XP too */
-    SendDlgItemMessageW(g_wnd, ID_ASEARCH, EM_SETCUEBANNER, 0, (LPARAM)tr(T_ARC_SEARCH_CUE));
+    HWND e = GetDlgItem(g_wnd, ID_ASEARCH);
+    if (!g_search_proc)
+        g_search_proc = (WNDPROC)SetWindowLongPtrW(e, GWLP_WNDPROC, (LONG_PTR)search_wndproc);
+    InvalidateRect(e, NULL, TRUE);                      /* the language may have changed */
 }
 
 static void menu_set(void);
@@ -5808,6 +5855,22 @@ static int wait_key(const MSG *m)
     return 0;
 }
 
+/* the log, a multi-line EDIT, keeps Tab for itself (IsDialogMessage gives it
+ * every key): from the log Tab and Shift+Tab move on to Interrompi and the
+ * other controls, as everywhere else. 1 if the key was used */
+static int log_key(const MSG *m)
+{
+    HWND next;
+    if (m->message != WM_KEYDOWN || m->wParam != VK_TAB || m->hwnd != g_log) return 0;
+    /* WM_NEXTDLGCTL is for dialogs only: the window is not one */
+    if ((next = GetNextDlgTabItem(g_wnd, g_log, GetKeyState(VK_SHIFT) < 0)) != NULL) {
+        SetFocus(next);
+        /* the dotted focus frame, as IsDialogMessage shows it after a Tab */
+        SendMessageW(g_wnd, WM_CHANGEUISTATE, MAKEWPARAM(UIS_CLEAR, UISF_HIDEFOCUS), 0);
+    }
+    return 1;
+}
+
 /* "RetroArchiver.exe --tty PROGRAM ARG...": the program launched by itself
  * as runner_run_tty's intermediary, with no window. -1 if the command line
  * is not that, otherwise the program's exit code */
@@ -5902,7 +5965,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show_cmd)
     if (!place_load(show_cmd)) ShowWindow(g_wnd, show_cmd);
     SetFocus(g_alist);
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
-        if (wait_key(&msg)) continue;
+        if (wait_key(&msg) || log_key(&msg)) continue;
         if (IsDialogMessageW(g_wnd, &msg)) continue;
         TranslateMessage(&msg);
         DispatchMessageW(&msg);

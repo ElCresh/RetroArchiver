@@ -298,6 +298,8 @@ ok("changed hash: the file set aside outside data/, not deleted",
    str(data_files(b)) + "\n" + out)
 ok("changed hash: disk 1 goes back to unread",
    d1["status"] == "to-read" and d1["reads"] == [] and d1["master"] is None, json.dumps(d1))
+ok("changed hash: the host is told that disk 1 is to be read (the window's table)",
+   ">>> floppy 1: to-read" in out, out)
 # a .danneggiato left in data/ by the previous version: it is moved too
 old_aside = os.path.join(b, "data", "disco02.dsk.danneggiato")
 with open(old_aside, "w") as f:

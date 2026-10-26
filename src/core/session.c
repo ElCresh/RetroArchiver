@@ -1362,9 +1362,11 @@ int session_run(const session_cfg *cfg, const session_host *host)
     } else {
         box->closed[0] = 0;
         if (bad > 0) {
-            set_aside(&r, bad);
             char who[32];
+            set_aside(&r, bad);
             ev(&r, EV_ERROR, bad, M_SES_CLOSE_FAILED, r.msg.s, name_of(box, bad, who, sizeof(who)));
+            /* the window's table showed it clean: it is to be read again */
+            host->event(host->ctx, EV_DISK_DONE, bad, ST_TO_READ);
         } else if (r.msg.len) {
             ev(&r, EV_ERROR, 0, "%s", r.msg.s);
         }
