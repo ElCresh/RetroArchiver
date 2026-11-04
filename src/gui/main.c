@@ -5560,6 +5560,7 @@ static void about_open(void)
     about_tools t;
     wcscpy(t.samdisk, g_prefs.samdisk[0] ? g_prefs.samdisk : L"samdisk");
     wcscpy(t.dic, g_prefs.dic[0] ? g_prefs.dic : L"DiscImageCreator");
+    wcscpy(t.userini, g_set.user);
     about_dialog(g_wnd, &t);
 }
 

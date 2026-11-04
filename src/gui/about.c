@@ -26,7 +26,12 @@
 
 #define VCRT_KEY L"SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x86"
 
-enum { AB_SAMDISK, AB_FDRAW, AB_DIC, AB_VCRT, AB_DAT, AB_ROWS };
+/* BearSSL has had no release since 0.6: third_party/bearssl/ is a commit of
+ * its master branch, the one THIRD-PARTY-NOTICES.txt names (make test
+ * checks that the two agree) */
+#define BEARSSL_VERSION L"0.6+ git 7bea48e5 (2026-04-06)"
+
+enum { AB_SAMDISK, AB_FDRAW, AB_DIC, AB_BEARSSL, AB_CACERT, AB_VCRT, AB_DAT, AB_ROWS };
 
 /* the rows: name (a text id if 0), license (literal, or a text id), the
  * license file in licenses\ next to the exe */
@@ -34,6 +39,8 @@ static const struct { const wchar_t *name; int name_id; const wchar_t *lic; int 
     { L"SAMdisk",          0,             L"MIT",        0,                L"samdisk-LICENSE.txt" },
     { L"fdrawcmd.sys",     0,             L"MIT",        0,                L"fdrawcmd-LICENSE.txt" },
     { L"DiscImageCreator", 0,             L"Apache 2.0", 0,                L"DiscImageCreator-LICENSE.txt" },
+    { L"BearSSL",          0,             L"MIT",        0,                L"BearSSL-LICENSE.txt" },
+    { NULL,                T_AB_CACERT,   L"MPL 2.0",    0,                L"MPL-2.0.txt" },
     { NULL,                T_AB_VCRT,     NULL,          T_AB_LIC_MS,      NULL },
     { NULL,                T_AB_DAT,      NULL,          T_AB_LIC_REDUMP,  NULL },
 };
@@ -156,6 +163,45 @@ static void probe_dat(ab_row *r)
     to_w(path, r->where, MAX_PATH);
 }
 
+static void probe_bearssl(ab_row *r)
+{
+    _snwprintf(r->ver, 200, tr(T_AB_BUILTIN), BEARSSL_VERSION);
+    r->ver[199] = 0;
+    GetModuleFileNameW(NULL, r->where, MAX_PATH);
+    r->where[MAX_PATH - 1] = 0;
+}
+
+/* "## Certificate data from Mozilla as of: Tue Oct 20 13:32:40 2026 GMT"
+ * -> "2026-10-20"; 0 if the line is not in the first lines */
+static int cacert_date(FILE *f, wchar_t *out, int n)
+{
+    static const char *mon = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    char line[256], m[4], *p;
+    int day, year, i;
+    for (i = 0; i < 40 && fgets(line, sizeof(line), f); i++) {
+        if ((p = strstr(line, "as of:")) == NULL) continue;
+        if (sscanf(p + 6, " %*3s %3s %d %*d:%*d:%*d %d", m, &day, &year) != 3) return 0;
+        if ((p = strstr(mon, m)) == NULL || (p - mon) % 3) return 0;
+        _snwprintf(out, n, L"%04d-%02d-%02d", year, (int)(p - mon) / 3 + 1, day);
+        out[n - 1] = 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* the CA bundle an upload would use: the user's copy or the setup's */
+static void probe_cacert(const wchar_t *userini, ab_row *r)
+{
+    char path[MAX_PATH * 3];
+    FILE *f;
+    cacert_path(userini, path, (int)sizeof(path));
+    if (!path[0]) { put(r->ver, 200, tr(T_AB_NOTFOUND)); return; }
+    to_w(path, r->where, MAX_PATH);
+    if ((f = _wfopen(r->where, L"rb")) == NULL) { put(r->ver, 200, tr(T_AB_NOTFOUND)); return; }
+    if (!cacert_date(f, r->ver, 200)) put(r->ver, 200, tr(T_AB_UNKNOWN));
+    fclose(f);
+}
+
 static DWORD WINAPI probe_worker(LPVOID p)
 {
     ab_job *job = (ab_job *)p;
@@ -164,6 +210,8 @@ static DWORD WINAPI probe_worker(LPVOID p)
         probe_samdisk(job->t.samdisk, &r->row[AB_SAMDISK]);
         probe_fdraw(&r->row[AB_FDRAW]);
         probe_dic(job->t.dic, &r->row[AB_DIC]);
+        probe_bearssl(&r->row[AB_BEARSSL]);
+        probe_cacert(job->t.userini, &r->row[AB_CACERT]);
         probe_vcrt(&r->row[AB_VCRT]);
         probe_dat(&r->row[AB_DAT]);
         /* the window may have been closed in the meantime */

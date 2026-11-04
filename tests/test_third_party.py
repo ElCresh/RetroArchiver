@@ -5,6 +5,7 @@
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -190,6 +191,12 @@ def main():
     copy = os.path.join(ROOT, "installer", "licenses", "BearSSL-LICENSE.txt")
     ok(os.path.isfile(copy) and open(copy, "rb").read() == open(vendored, "rb").read(),
        "BearSSL: the licence in installer/licenses is the vendored one")
+    # the About window names the vendored commit: it must be the notices' one
+    about = open(os.path.join(ROOT, "src", "gui", "about.c"), encoding="utf-8").read()
+    notices = open(os.path.join(ROOT, "THIRD-PARTY-NOTICES.txt"), encoding="utf-8").read()
+    m = re.search(r'BEARSSL_VERSION L"0\.6\+ git ([0-9a-f]{8}) \((\d{4}-\d\d-\d\d)\)"', about)
+    ok(m is not None and ("commit " + m.group(1)) in notices and ("(" + m.group(2) + ")") in notices,
+       "BearSSL: the About window names the commit of THIRD-PARTY-NOTICES.txt")
     if os.path.isfile(os.path.join(REAL_DOWNLOADS, "cacert.pem")):
         code, out = run_age(REAL_LIST, REAL_DOWNLOADS, 12, real_version())
         ok(code == 0, "the downloaded cacert.pem is still good for a release")

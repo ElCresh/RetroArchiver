@@ -28,8 +28,9 @@ int settings_dialog(HWND owner, const settings *s, prefs *p,
 #define RA_REPO_URL     L"https://github.com/ElCresh/RetroArchiver"
 #define RA_LICENSE_FILE L"LICENSE.txt"     /* RetroArchiver's own license, next to the exe */
 
-/* the programs to ask for their version: the paths of the settings */
-typedef struct { wchar_t samdisk[MAX_PATH], dic[MAX_PATH]; } about_tools;
+/* the programs to ask for their version: the paths of the settings; the
+ * user's ini says where a cacert.pem of theirs would be */
+typedef struct { wchar_t samdisk[MAX_PATH], dic[MAX_PATH], userini[MAX_PATH]; } about_tools;
 
 void about_dialog(HWND owner, const about_tools *t);
 
