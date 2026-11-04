@@ -552,7 +552,7 @@ choose.keep.old=Tieni quella di prima
 edit.wait=Aspetta: si sta salvando il cofanetto. Chiudendo adesso, la modifica andrebbe rimessa in ordine la prossima volta.
 
 # conversione dei cofanetti della 261017
-menu.convert=&Converti i cofanetti della 261017...
+menu.convert=&Converti i cofanetti...
 convert.title=Cofanetti della 261017
 convert.text=%d cofanetti di questo archivio sono stati fatti con RetroArchiver 261017. Si leggono come sono; per modificarli vanno convertiti al formato di oggi.\n\nOgni pacchetto si controlla prima: uno danneggiato non si tocca. Il metadata.json vecchio resta in set-aside, in data/ non cambia niente. Non è mai obbligatorio.
 convert.go=Converti

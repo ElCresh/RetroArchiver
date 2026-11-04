@@ -550,7 +550,7 @@ T(T_CHOOSE_KEEP_OLD,     "choose.keep.old",        L"Keep the old one")
 T(T_EDIT_WAIT,           "edit.wait",              L"Wait: the box is being saved. Closing now would leave the change to be put in order the next time.")
 
 /* converting the boxes of 261017 (main.c, box_edit_dlg.c) */
-T(T_MENU_CONVERT,        "menu.convert",           L"&Convert the boxes of 261017...")
+T(T_MENU_CONVERT,        "menu.convert",           L"&Convert the boxes...")
 T(T_CONV_TITLE,          "convert.title",          L"Boxes made by RetroArchiver 261017")
 T(T_CONV_TEXT,           "convert.text",           L"%d boxes of this archive were made by RetroArchiver 261017. They can be read as they are; to edit them they must be converted to the current format.\n\nEach package is checked first: a damaged one is not touched. The old metadata.json stays in set-aside, nothing in data/ changes. It is never required.")
 T(T_CONV_GO,             "convert.go",             L"Convert")

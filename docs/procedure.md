@@ -129,7 +129,7 @@ From the console: `dskrun --reread cd1,cd2 -t "Windows 2000 Server"`
 Boxes closed by the first release (261017) are read as they are, but they
 must be converted before they can be edited. When the archive holds some,
 the window asks once at start: **Convert**, **Later** (asked again at the
-next start) or **Don't ask again**. Tools > Convert the boxes of 261017...
+next start) or **Don't ask again**. Tools > Convert the boxes...
 does it at any time, and Edit on an old box offers to convert it first.
 
 Each box is checked against its manifests first: a damaged one is not

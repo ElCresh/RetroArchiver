@@ -556,7 +556,7 @@ choose.keep.old=Keep the old one
 edit.wait=Wait: the box is being saved. Closing now would leave the change to be put in order the next time.
 
 # converting the boxes of 261017
-menu.convert=&Convert the boxes of 261017...
+menu.convert=&Convert the boxes...
 convert.title=Boxes made by RetroArchiver 261017
 convert.text=%d boxes of this archive were made by RetroArchiver 261017. They can be read as they are; to edit them they must be converted to the current format.\n\nEach package is checked first: a damaged one is not touched. The old metadata.json stays in set-aside, nothing in data/ changes. It is never required.
 convert.go=Convert
