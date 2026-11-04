@@ -66,7 +66,8 @@ enum { IA_BOX_OK, IA_BOX_NOTBOX, IA_BOX_OPEN, IA_BOX_BROKEN, IA_BOX_EDITING, IA_
 int ia_box_can_upload(const char *bagdir);
 
 /* what the upload is doing */
-enum { IA_PH_PREPARE, IA_PH_HASH, IA_PH_PUT, IA_PH_META, IA_PH_TASKS, IA_PH_VERIFY, IA_PH_RETRY };
+enum { IA_PH_PREPARE, IA_PH_HASH, IA_PH_PUT, IA_PH_META, IA_PH_TASKS, IA_PH_VERIFY, IA_PH_RETRY,
+       IA_PH_DELETE };
 
 typedef struct {
     int phase;
@@ -93,6 +94,7 @@ typedef struct {
     const char *access, *secret;
     const char *identifier;
     const ia_meta *meta;        /* the fields as the user confirmed them */
+    unsigned kept;              /* an update: the IA_FD_* fields left to Archive.org's value */
     int connect_ms, io_ms;      /* 0: the defaults of net.c */
     int task_wait_s, task_poll_s;   /* 0: IA_TASK_WAIT_S, IA_TASK_POLL_S */
     int put_tries;              /* 0: IA_PUT_TRIES */
@@ -112,6 +114,8 @@ typedef struct {
     char file[320];             /* the file the trouble is about, "" if none */
     char detail[400];           /* English: what the server said, or a core message */
     int  files_sent, mismatch;
+    int  update;                /* the item was there: an update */
+    int  files_removed, fields_changed;
     long long bytes_sent;
     char identifier[IA_ID_MAX], url[320];
 } ia_result;
@@ -142,6 +146,14 @@ int  ia_meta_from_box(const char *bagdir, const char *collection, ia_meta *out, 
  * unknown; several names separated by commas give several codes */
 const char *ia_lang_marc(const char *name);
 
+/* the fields of an item as GET /metadata/ID reports them (the whole
+ * answer): a field written several times is a list, the description goes
+ * back from HTML to plain text. 0 ok, -1 if it is not an item */
+int  ia_meta_from_item(const char *json, ia_meta *out);
+/* asks Archive.org for the item's fields now, for an update. IA_OK, and
+ * out->ident IA_ID_FREE if the item is not there */
+int  ia_item_read(const ia_config *cfg, const char *id, ia_meta *live, ia_result *out);
+
 /* ---- the files ---- */
 
 /* the files of the package in the order they go up: bagit.txt first (it
@@ -153,6 +165,12 @@ int  ia_plan(const char *bagdir, const ia_record *prev, ia_files *out, strbuf *e
 
 /* ---- the upload ---- */
 
+/* A box whose record says the item was made (ia_record_made) is an
+ * update: only the new and changed files go up, with
+ * x-archive-keep-old-version so the old ones stay in the item's history;
+ * the files the box no longer has are deleted the same way; the fields
+ * that differ from the item are written with one JSON Patch; then the same
+ * wait and verification as the first time. */
 int  ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out);
 
 /* the journal of an upload under way: one line per finished file. A

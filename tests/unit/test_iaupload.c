@@ -295,7 +295,7 @@ static void test_ia_history(void)
     CHECK(meta_history_add(b, "{\"at\": \"2026-10-24T09:00:00\", \"action\": \"convert\", "
                               "\"software\": \"261024\"}") == 0);
     CHECK(meta_history_add(b, "{\"at\": \"2026-10-26T09:00:00\", \"action\": \"edit\", "
-                              "\"software\": \"261026\", \"reason\": \"titolo\"}") == 0);
+                              "\"software\": \"RetroArchiver 261026\", \"reason\": \"titolo\"}") == 0);
     CHECK(meta_save(b, data, NULL, NULL, &err) == 0);
     {
         int bad;
@@ -766,6 +766,177 @@ static void test_resume(void)
     sb_free(&err);
 }
 
+static int count(const char *path, const char *needle)
+{
+    const char *s = slurp(path), *p;
+    int n = 0;
+    for (p = s; p && (p = strstr(p, needle)) != NULL; p += strlen(needle)) n++;
+    return n;
+}
+
+/* the item's fields as Archive.org reports them, and the merge of an update */
+static void test_item_fields(void)
+{
+    ia_meta live, sent, proposed, out;
+    unsigned site;
+    CHECK(ia_meta_from_item("{}", &live) == -1);
+    CHECK(ia_meta_from_item("{\"metadata\":{\"title\":\"T\",\"description\":\"a<br />b &amp; c<br>d\","
+                            "\"subject\":\"one\",\"creator\":[\"x\",\"y\"],\"collection\":"
+                            "[\"test_collection\",\"other\"]}}", &live) == 0);
+    CHECK_STR(live.description, "a\nb & c\nd");
+    CHECK(live.nsubj == 1 && !strcmp(live.subject[0], "one"));
+    CHECK_STR(live.creator, "x; y");
+    CHECK_STR(live.collection, "test_collection");
+
+    memset(&sent, 0, sizeof(sent));
+    strcpy(sent.title, "Old");
+    strcpy(sent.creator, "Microsoft");
+    sent.nsubj = 2; strcpy(sent.subject[0], "a"); strcpy(sent.subject[1], "b");
+    proposed = sent;
+    strcpy(proposed.title, "New");                    /* changed in the box */
+    live = sent;
+    strcpy(live.creator, "Microsoft Corporation");    /* changed on the site */
+    strcpy(live.subject[0], "b"); strcpy(live.subject[1], "a");   /* same, other order */
+    site = ia_meta_merge(&proposed, &sent, &live, 0, &out);
+    CHECK(site == (1u << IA_FD_CREATOR));
+    CHECK_STR(out.title, "New");
+    CHECK_STR(out.creator, "Microsoft Corporation");
+    CHECK(ia_meta_diff(&out, &live) == (1u << IA_FD_TITLE));
+    /* left to the site last time: it stays the site's even now that the
+     * site has what we sent */
+    site = ia_meta_merge(&proposed, &live, &live, 1u << IA_FD_CREATOR, &out);
+    CHECK(site == (1u << IA_FD_CREATOR));
+    CHECK_STR(out.creator, "Microsoft Corporation");
+    /* unless the box now says the same */
+    strcpy(proposed.creator, "Microsoft Corporation");
+    CHECK(ia_meta_merge(&proposed, &live, &live, 1u << IA_FD_CREATOR, &out) == 0);
+    /* a description that came back with spaces where the line breaks were
+     * (a header carried it, before the <br>; seen on the VM) is not a change
+     * made on the site: the box's goes up, with its line breaks */
+    strcpy(sent.description, "floppy 1: clean\nRead with: SAMdisk");
+    proposed = sent;
+    strcpy(proposed.description, "floppy 1: clean\nRead with: SAMdisk\nNote: new");
+    live = sent;
+    strcpy(live.description, "floppy 1: clean Read with: SAMdisk");
+    CHECK(ia_meta_merge(&proposed, &sent, &live, 0, &out) == 0);
+    CHECK_STR(out.description, proposed.description);
+    CHECK(ia_meta_diff(&out, &live) == (1u << IA_FD_DESC));
+    strcpy(live.description, "floppy 1: clean Read with: SAMdisk!");
+    CHECK(ia_meta_merge(&proposed, &sent, &live, 0, &out) == (1u << IA_FD_DESC));
+}
+
+/* the box changes after the upload: an update sends only what changed,
+ * keeps the old versions in the item's history, deletes what the box no
+ * longer has, and writes only the fields that differ, leaving to
+ * Archive.org the one changed there */
+static void test_update(void)
+{
+    char bag[400], md[200], s3[200], path[700], saved[700], *rec_text;
+    ia_meta m, live, final;
+    ia_config cfg;
+    ia_result res;
+    ia_host host;
+    hostctx h;
+    strbuf err;
+    ia_record rec;
+    unsigned site;
+    FILE *f;
+
+    sb_init(&err);
+    item_reset();
+    meta_delete(make_box("Aggiorna", "Aggiorna", "", 2, 0, "261026", NULL));
+    bag_of("Aggiorna", bag, sizeof(bag));
+    memset(&h, 0, sizeof(h));
+    upload_case("Aggiorna", NULL, "aggiorna-ms-dos-ita", IA_OK, &h, &res);
+    CHECK(!res.update);
+
+    /* an edit: the second floppy is gone, a CD came, the title changed. The
+     * record lives outside the package and stays */
+    ia_record_path(bag, path, sizeof(path));
+    rec_text = strdup(slurp(path));
+    snprintf(saved, sizeof(saved), "%s", path);
+    u8_rmtree(bag);
+    meta_delete(make_box("Aggiorna", "Aggiorna di nuovo", "", 1, 1, "261104", NULL));
+    {
+        char dir[700];
+        ia_upload_dir(bag, dir, sizeof(dir));
+        u8_mkdirs(dir);
+    }
+    if (rec_text) put(saved, rec_text);
+    free(rec_text);
+    CHECK(ia_box_state(bag, NULL) == IA_ST_OUTDATED);
+
+    /* meanwhile somebody added a publisher on the site */
+    if ((f = u8_fopen("tmp_unit/fake_ia/meta.txt", "ab")) != NULL) {
+        fputs("publisher\tSomeone Else\n", f);
+        fclose(f);
+    }
+    CHECK(ia_meta_from_box(bag, NULL, &m, &err) == 0);
+    cfg = make_cfg(bag, &m, "aggiorna-ms-dos-ita", md, s3, NULL);
+    CHECK(ia_item_read(&cfg, "aggiorna-ms-dos-ita", &live, &res) == IA_OK);
+    CHECK(res.ident == IA_ID_OURS);
+    CHECK_STR(live.publisher, "Microsoft; Someone Else");
+    CHECK(ia_record_load(bag, &rec) == 1);
+    CHECK(ia_record_made(&rec));
+    site = ia_meta_merge(&m, &rec.meta, &live, rec.kept, &final);
+    CHECK(site == (1u << IA_FD_PUBLISHER));
+    CHECK_STR(final.title, "Aggiorna di nuovo");
+    ia_record_free(&rec);
+    cfg.meta = &final;
+    cfg.kept = ia_meta_diff(&final, &m) & ~ia_meta_diff(&final, &live);
+    CHECK(cfg.kept == (1u << IA_FD_PUBLISHER));
+
+    /* stopped partway: the record still describes the item as it was made */
+    memset(&h, 0, sizeof(h));
+    host = make_host(&h);
+    h.cancel_after = 2;
+    CHECK(ia_upload(&cfg, &host, &res) == IA_ERR_CANCELED);
+    CHECK(res.update);
+    CHECK(ia_box_state(bag, NULL) == IA_ST_INTERRUPTED);
+    CHECK(ia_record_load(bag, &rec) == 1);
+    CHECK(ia_files_find(&rec.files, "data/FLOPPY02.dsk") != NULL);
+    ia_record_free(&rec);
+
+    /* taken up again */
+    memset(&h, 0, sizeof(h));
+    host = make_host(&h);
+    CHECK(ia_upload(&cfg, &host, &res) == IA_OK);
+    CHECK(res.update && res.mismatch == 0);
+    CHECK(res.files_removed == 1);
+    CHECK(res.fields_changed >= 1);
+    /* the floppy that did not change went up once, the old versions are
+     * in the item's history, the floppy no longer in the box is deleted */
+    CHECK(count("tmp_unit/fake_ia/puts.txt", "data/FLOPPY01.dsk") == 1);
+    CHECK(has("tmp_unit/fake_ia/puts.txt", "data/CD01/x.bin"));
+    CHECK(has("tmp_unit/fake_ia/keep.txt", "data/metadata.json"));
+    CHECK(has("tmp_unit/fake_ia/keep.txt", "data/FLOPPY02.dsk"));
+    CHECK(has("tmp_unit/fake_ia/deletes.txt", "data/FLOPPY02.dsk"));
+    CHECK(has("tmp_unit/fake_ia/files.txt", "history/files/data/metadata.json.~1~"));
+    CHECK(has("tmp_unit/fake_ia/files.txt", "history/files/data/FLOPPY02.dsk.~1~"));
+    /* the new title is on the item, the site's publisher too */
+    CHECK(has("tmp_unit/fake_ia/meta.txt", "title\tAggiorna di nuovo"));
+    CHECK(has("tmp_unit/fake_ia/meta.txt", "publisher\tSomeone Else"));
+    CHECK(!has("tmp_unit/fake_ia/patches.txt", "/publisher"));
+
+    ia_record_path(bag, path, sizeof(path));
+    CHECK(has(path, "\"action\": \"update\""));
+    CHECK(has(path, "\"kept_from_archive_org\""));
+    CHECK(ia_box_state(bag, NULL) == IA_ST_VERIFIED);
+    CHECK(ia_record_load(bag, &rec) == 1);
+    CHECK(rec.kept == (1u << IA_FD_PUBLISHER));
+    CHECK(ia_files_find(&rec.files, "data/FLOPPY02.dsk") == NULL);
+    CHECK(ia_files_find(&rec.files, "data/CD01/x.bin") != NULL);
+    CHECK_STR(rec.meta.title, "Aggiorna di nuovo");
+    ia_record_free(&rec);
+
+    /* nothing changed since: an update sends no file and no field */
+    memset(&h, 0, sizeof(h));
+    host = make_host(&h);
+    CHECK(ia_upload(&cfg, &host, &res) == IA_OK);
+    CHECK(res.files_sent == 0 && res.files_removed == 0 && res.fields_changed == 0);
+    sb_free(&err);
+}
+
 /* the CA bundle the setup has not installed yet, and TLS when it is there */
 static void test_certs(void)
 {
@@ -820,6 +991,7 @@ void test_iaupload(void)
     test_ia_history();
     test_plan();
     test_can_upload();
+    test_item_fields();
     if (!server_start() || !read_ports()) {
         CHECK(!"fake_https did not start");
         server_stop();
@@ -830,6 +1002,7 @@ void test_iaupload(void)
     test_upload_problems();
     test_changed_file();
     test_resume();
+    test_update();
     test_certs();
     item_reset();
     server_stop();

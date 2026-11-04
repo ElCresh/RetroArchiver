@@ -41,7 +41,13 @@
  *                   BadDigest. Without the good keys: 403
  *   GET  [/ia-SCENARIO]/services/check_identifier.php?identifier=ID
  *   GET  [/ia-SCENARIO]/metadata/ID      the item, or {} if there is none
- *   POST [/ia-SCENARIO]/metadata/ID      a metadata write (the long fields)
+ *   POST [/ia-SCENARIO]/metadata/ID      a metadata write: the JSON Patch is
+ *                   applied to the fields (meta.txt), and kept in patches.txt
+ *   PUT of a name the item has: the old one goes to history/files/NAME.~N~
+ *                   if x-archive-keep-old-version is there (keep.txt: one line
+ *                   per PUT or DELETE that had it), otherwise it is replaced
+ *   DELETE /s3[-SCENARIO]/ID/NAME        out of the item, the same way;
+ *                   deletes.txt: one line per name
  *   GET  [/ia-SCENARIO]/services/tasks.php?identifier=ID&summary=1
  * SCENARIO, in the path, decides what goes wrong: taken (the identifier
  * is not free), slowdown (the first PUT answers 503 SlowDown), spam (503
@@ -116,8 +122,9 @@ typedef struct {
     int expect;
 } request;
 
-/* what a body was: its length and its three digests */
-typedef struct { long long len; char sha256[65], md5[33], sha1[41]; } bodyinfo;
+/* what a body was: its length, its three digests, and its first bytes (a
+ * metadata write is read from them) */
+typedef struct { long long len; char sha256[65], md5[33], sha1[41]; char text[32768]; size_t text_len; } bodyinfo;
 
 #define FAKE_IA_DIR "tmp_unit/fake_ia"
 
@@ -299,6 +306,11 @@ static int read_body(conn *c, const request *rq, bodyinfo *bi, char *out, size_t
         br_sha256_update(&h, buf, k);
         br_md5_update(&m, buf, k);
         br_sha1_update(&s, buf, k);
+        if (bi->text_len + k < sizeof(bi->text)) {
+            memcpy(bi->text + bi->text_len, buf, k);
+            bi->text_len += k;
+            bi->text[bi->text_len] = 0;
+        }
         left -= (long long)k;
     }
     bi->len = rq->length;
@@ -434,6 +446,8 @@ static void json_escaped(const char *s, char *out, size_t n)
     out[k] = 0;
 }
 
+static void form_decode(char *s);
+
 /* the fields of the first PUT, one "name<TAB>value" line each */
 static void ia_store_meta(const request *rq)
 {
@@ -455,10 +469,84 @@ static void ia_store_meta(const request *rq)
         while (*val == ' ') val++;
         end = strstr(val, "\r\n");
         if (!end) break;
-        fprintf(f, "%s\t%.*s\n", nm, (int)(end - val), val);
+        if (!strncmp(val, "uri(", 4) && end > val + 4 && end[-1] == ')') {
+            /* Archive.org keeps the text, not its encoding */
+            char dec[8192];
+            size_t len = (size_t)(end - val) - 5;
+            if (len >= sizeof(dec)) len = sizeof(dec) - 1;
+            memcpy(dec, val + 4, len);
+            dec[len] = 0;
+            form_decode(dec);
+            fprintf(f, "%s\t%s\n", nm, dec);
+        } else {
+            fprintf(f, "%s\t%.*s\n", nm, (int)(end - val), val);
+        }
         p = end;
     }
     fclose(f);
+}
+
+/* the name out of files.txt; with keep, its line comes back as
+ * history/files/NAME.~N~, as Archive.org keeps an old version. 1 if the
+ * item had it */
+static int files_drop(const char *name, int keep)
+{
+    char path[256], tmp[260], line[1200], hname[700];
+    FILE *in, *out;
+    int had = 0, n = 1;
+    ia_path("files.txt", path, sizeof(path));
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    if (!(in = fopen(path, "rb"))) return 0;
+    if (!(out = fopen(tmp, "wb"))) { fclose(in); return 0; }
+    snprintf(hname, sizeof(hname), "history/files/%s.~", name);
+    while (fgets(line, sizeof(line), in)) {
+        long long size; char md5[48], sha1[64], nm[700];
+        if (sscanf(line, "%lld %47s %63s %699[^\r\n]", &size, md5, sha1, nm) == 4) {
+            if (!strncmp(nm, hname, strlen(hname))) n++;
+            if (!strcmp(nm, name)) {
+                had = 1;
+                if (keep) fprintf(out, "%lld %s %s %s%d~\n", size, md5, sha1, hname, n);
+                continue;
+            }
+        }
+        fputs(line, out);
+    }
+    fclose(in);
+    fclose(out);
+    remove(path);
+    rename(tmp, path);
+    return had;
+}
+
+static void log_line(const char *file, const char *text)
+{
+    char path[256]; FILE *f;
+    ia_path(file, path, sizeof(path));
+    if ((f = fopen(path, "ab")) != NULL) { fprintf(f, "%s\n", text); fclose(f); }
+}
+
+static int has_keep(const request *rq)
+{
+    char v[16];
+    req_header(rq, "x-archive-keep-old-version", v, sizeof(v));
+    return !strcmp(v, "1");
+}
+
+/* DELETE /s3[-SCENARIO]/ID/NAME */
+static int serve_s3_delete(conn *c, const request *rq)
+{
+    const char *p = rq->path, *name;
+    while (*p == '/') p++;
+    while (*p && *p != '/') p++;               /* "s3" */
+    if (*p == '/') p++;
+    while (*p && *p != '/') p++;               /* the identifier */
+    name = *p == '/' ? p + 1 : p;
+    if (!good_keys(rq) || is_scenario(rq, "forbidden"))
+        return respond(c, 403, NULL, "AccessDenied", 12);
+    if (has_keep(rq)) log_line("keep.txt", name);
+    log_line("deletes.txt", name);
+    if (!files_drop(name, has_keep(rq))) return respond(c, 404, NULL, "NoSuchKey", 9);
+    return respond(c, 204, NULL, NULL, 0);
 }
 
 /* PUT /s3[-SCENARIO]/ID/NAME */
@@ -513,6 +601,8 @@ static int serve_s3(conn *c, const request *rq, const bodyinfo *bi)
     }
     ia_path("puts.txt", path, sizeof(path));
     if ((f = fopen(path, "ab")) != NULL) { fprintf(f, "%s\n", name); fclose(f); }
+    if (has_keep(rq)) log_line("keep.txt", name);
+    files_drop(name, has_keep(rq));
     ia_path("files.txt", path, sizeof(path));
     if ((f = fopen(path, "ab")) != NULL) {
         fprintf(f, "%lld %s %s %s\n", bi->len, bi->md5, bi->sha1, name);
@@ -648,17 +738,136 @@ static int serve_item(conn *c, const request *rq)
     return rc;
 }
 
-/* POST /metadata/ID: a metadata write, the fields a header could not carry */
-static int serve_md_write(conn *c, const request *rq)
+/* %XX and + of a form value, in place */
+static void form_decode(char *s)
+{
+    char *o = s;
+    for (; *s; s++) {
+        if (*s == '+') *o++ = ' ';
+        else if (*s == '%' && s[1] && s[2]) {
+            char h[3] = { s[1], s[2], 0 };
+            *o++ = (char)strtol(h, NULL, 16);
+            s += 2;
+        } else *o++ = *s;
+    }
+    *o = 0;
+}
+
+/* a JSON string at *p (just past its quote) into out; *p after it */
+static void json_string(const char **p, char *out, size_t n)
+{
+    size_t k = 0;
+    const char *s = *p;
+    while (*s && *s != '"') {
+        char ch = *s++;
+        if (ch == '\\' && *s) {
+            ch = *s++;
+            if (ch == 'n') ch = '\n';
+            else if (ch == 't') ch = '\t';
+            else if (ch == 'r') ch = '\r';
+            else if (ch == 'u') { s += 4; ch = '?'; }
+        }
+        if (k + 1 < n) out[k++] = ch;
+    }
+    out[k] = 0;
+    *p = *s ? s + 1 : s;
+}
+
+/* meta.txt without the lines of a field */
+static void meta_drop(const char *field)
+{
+    char path[256], tmp[260], line[12000];
+    FILE *in, *out;
+    size_t n = strlen(field);
+    ia_path("meta.txt", path, sizeof(path));
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    if (!(in = fopen(path, "rb"))) return;
+    if (!(out = fopen(tmp, "wb"))) { fclose(in); return; }
+    while (fgets(line, sizeof(line), in))
+        if (strncmp(line, field, n) || line[n] != '\t') fputs(line, out);
+    fclose(in);
+    fclose(out);
+    remove(path);
+    rename(tmp, path);
+}
+
+static void meta_add(const char *field, const char *value)
+{
+    char path[256]; FILE *f;
+    ia_path("meta.txt", path, sizeof(path));
+    if ((f = fopen(path, "ab")) != NULL) { fprintf(f, "%s\t%s\n", field, value); fclose(f); }
+}
+
+/* the operations of our JSON Patch: {"op":..,"path":"/F","value":"V" or ["V",..]} */
+static void apply_patch(const char *patch)
+{
+    const char *p = patch;
+    static char val[12000];
+    while ((p = strchr(p, '{')) != NULL) {
+        char op[16] = "", field[64] = "", key[16];
+        const char *end = strchr(p, '}');
+        int any = 0;
+        p++;
+        while (end && p < end && (p = strchr(p, '"')) != NULL && p < end) {
+            p++;
+            json_string(&p, key, sizeof(key));
+            while (*p == ':' || *p == ' ') p++;
+            if (!strcmp(key, "op") && *p == '"') { p++; json_string(&p, op, sizeof(op)); }
+            else if (!strcmp(key, "path") && *p == '"') {
+                p++;
+                json_string(&p, field, sizeof(field));
+                memmove(field, field + (field[0] == '/'), strlen(field));
+            } else if (!strcmp(key, "value")) {
+                if (!any && field[0]) { meta_drop(field); any = 1; }
+                if (*p == '"') {
+                    p++;
+                    json_string(&p, val, sizeof(val));
+                    meta_add(field, val);
+                    end = strchr(p, '}');       /* a value may hold a brace */
+                } else if (*p == '[') {
+                    p++;
+                    while (*p && *p != ']') {
+                        if (*p == '"') { p++; json_string(&p, val, sizeof(val)); meta_add(field, val); }
+                        else p++;
+                    }
+                    end = strchr(p, '}');
+                }
+            }
+            while (*p == ',' || *p == ' ') p++;
+            if (*p == '}') break;
+        }
+        if (!strcmp(op, "remove") && field[0]) meta_drop(field);
+        if (end) p = end + 1; else break;
+    }
+}
+
+/* POST /metadata/ID: a metadata write, applied to the fields */
+static int serve_md_write(conn *c, const request *rq, const bodyinfo *bi)
 {
     static const char ok[] = "{\"success\":true,\"task_id\":1,\"log\":\"-\"}";
     const char *json = "Content-Type: application/json\r\n";
-    char id[200];
-    (void)rq;
+    char id[200], *body, *patch, type[80];
+    /* Archive.org reads the form only when it says it is one */
+    req_header(rq, "Content-Type", type, sizeof(type));
+    if (strcmp(type, "application/x-www-form-urlencoded")) {
+        static const char bad[] = "<!DOCTYPE html><html>400 Bad Request</html>";
+        return respond(c, 400, "Content-Type: text/html\r\n", bad, sizeof(bad) - 1);
+    }
     ia_identifier(id, sizeof(id));
     if (!id[0]) {
         static const char no[] = "{\"success\":false,\"error\":\"no such item\"}";
         return respond(c, 404, json, no, sizeof(no) - 1);
+    }
+    if ((body = strdup(bi->text)) != NULL) {
+        if ((patch = strstr(body, "-patch=")) != NULL) {
+            char *amp = strchr(patch, '&');
+            if (amp) *amp = 0;
+            patch += 7;
+            form_decode(patch);
+            log_line("patches.txt", patch);
+            apply_patch(patch);
+        }
+        free(body);
     }
     return respond(c, 200, json, ok, sizeof(ok) - 1);
 }
@@ -693,10 +902,11 @@ static int serve_one(conn *c, int req_no)
     memset(&bi, 0, sizeof(bi));
     if (rq.length > 0 && read_body(c, &rq, &bi, out, sizeof(out)) < 0) return -1;
     /* Archive.org: the item of the upload tests */
-    if (!strncmp(rq.path, "/s3", 3)) return serve_s3(c, &rq, &bi);
+    if (!strncmp(rq.path, "/s3", 3))
+        return strcmp(rq.method, "DELETE") ? serve_s3(c, &rq, &bi) : serve_s3_delete(c, &rq);
     if (strstr(rq.path, "/services/check_identifier.php")) return serve_ident(c, &rq);
     if (strstr(rq.path, "/metadata/"))
-        return strcmp(rq.method, "POST") ? serve_item(c, &rq) : serve_md_write(c, &rq);
+        return strcmp(rq.method, "POST") ? serve_item(c, &rq) : serve_md_write(c, &rq, &bi);
     if (strstr(rq.path, "/services/tasks.php") && strstr(rq.path, "identifier="))
         return serve_item_tasks(c, &rq);
     if (!strcmp(rq.path, "/hello")) return respond(c, 200, NULL, "hello", 5);

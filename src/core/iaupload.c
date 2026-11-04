@@ -286,6 +286,15 @@ static const char *disk_version(const meta_disk *d)
 /* the last "convert" of the history, and the "edit" entries after it */
 typedef struct { char convert[16], convert_at[20]; } ia_history;
 
+/* the version alone: boxedit writes "RetroArchiver 261026" in the history,
+ * the reads only "261026" (seen on the first real update: the name twice) */
+static const char *sw_version(const char *sw)
+{
+    static const char name[] = "RetroArchiver ";
+    if (sw && !strncmp(sw, name, sizeof(name) - 1)) return sw + sizeof(name) - 1;
+    return sw ? sw : "";
+}
+
 static void history_scan(const meta_box *b, ia_history *h, strbuf *edits)
 {
     jval *root; const jval *e;
@@ -294,11 +303,11 @@ static void history_scan(const meta_box *b, ia_history *h, strbuf *edits)
     for (e = root->t == J_ARR ? root->child : NULL; e; e = e->next) {
         const char *act = json_str(e, "action");
         if (act && !strcmp(act, "convert")) {
-            CP(h->convert, json_str(e, "software"));
+            CP(h->convert, sw_version(json_str(e, "software")));
             CP(h->convert_at, json_str(e, "at"));
             sb_clear(edits);                 /* only the edits after the conversion count */
         } else if (act && !strcmp(act, "edit")) {
-            const char *sw = json_str(e, "software"), *at = json_str(e, "at");
+            const char *sw = sw_version(json_str(e, "software")), *at = json_str(e, "at");
             sb_printf(edits, "%sRetroArchiver %s (%.10s)", edits->len ? ", " : "",
                       sw && sw[0] ? sw : "version unknown", at ? at : "");
         }
@@ -796,6 +805,56 @@ int ia_ident_check(const ia_config *cfg, const char *id, const char *mine, ia_re
     return rc;
 }
 
+int ia_item_read(const ia_config *cfg, const char *id, ia_meta *live, ia_result *out)
+{
+    ia_run r;
+    https_response rs;
+    https_url u;
+    tls_config tc;
+    char url[700];
+    int rc;
+
+    memset(out, 0, sizeof(*out));
+    memset(live, 0, sizeof(*live));
+    memset(&r, 0, sizeof(r));
+    r.cfg = cfg; r.res = out;
+    CP(out->identifier, id ? id : "");
+    if (!ia_ident_ok(id)) return out->why = IA_ERR_IDENT;
+    r.md_base = cfg->md_base && cfg->md_base[0] ? cfg->md_base : IA_MD_BASE;
+    snprintf(url, sizeof(url), "%s/metadata/%s", r.md_base, id);
+    if (!https_parse_url(url, &u) || !https_url_allowed(&u)) {
+        out->net_err = NET_ERR_RESOLVE;
+        return out->why = IA_ERR_NET;
+    }
+    if (u.tls && (!cfg->cacert || !cfg->cacert[0] ||
+                  (r.anchors = tls_anchors_load(cfg->cacert, NULL)) == NULL))
+        return out->why = IA_ERR_NO_CERTS;
+    memset(&tc, 0, sizeof(tc));
+    tc.anchors = r.anchors;
+    tc.connect_ms = cfg->connect_ms;
+    tc.io_ms = cfg->io_ms;
+    tc.now = cfg->now;
+    if ((r.c = https_new(&tc)) == NULL) {
+        tls_anchors_free(r.anchors);
+        return out->why = IA_ERR_MEM;
+    }
+    snprintf(r.auth, sizeof(r.auth), "Authorization: LOW %s:%s\r\nAccept: application/json\r\n",
+             cfg->access ? cfg->access : "", cfg->secret ? cfg->secret : "");
+    https_response_init(&rs);
+    rc = ia_get(&r, url, &rs);
+    if (rc == IA_OK) {
+        /* {} : there is no such item */
+        if (rs.status == 200 && ia_meta_from_item(rs.body.s, live) == 0) out->ident = IA_ID_OURS;
+        else if (rs.status == 200) out->ident = IA_ID_FREE;
+        else { detail_of(out, &rs); rc = out->why = IA_ERR_HTTP; }
+    }
+    memset(r.auth, 0, sizeof(r.auth));
+    https_response_free(&rs);
+    https_free(r.c);
+    tls_anchors_free(r.anchors);
+    return rc;
+}
+
 int ia_ident_free(const ia_config *cfg, const char *base, char *out, size_t n,
                   ia_result *res)
 {
@@ -964,6 +1023,82 @@ static void meta_headers(ia_run *r, const ia_meta *m, long long total, strbuf *h
         meta_header(r, h, "subject", m->subject[i], m->nsubj > 1 ? i : -1);
 }
 
+/* back from what html_lines wrote, and from the <br /> Archive.org may
+ * write itself, to the plain text the box and the window have */
+static void html_plain(const char *s, char *out, size_t n)
+{
+    static const struct { const char *from; char to; } ent[] = {
+        { "&amp;", '&' }, { "&lt;", '<' }, { "&gt;", '>' }, { "&quot;", '"' }, { "&#39;", '\'' },
+        { "<br>", '\n' }, { "<br/>", '\n' }, { "<br />", '\n' }, { "<BR>", '\n' }, { NULL, 0 }
+    };
+    size_t k = 0;
+    while (*s && k + 1 < n) {
+        int i;
+        for (i = 0; ent[i].from && strncmp(s, ent[i].from, strlen(ent[i].from)); i++) ;
+        if (ent[i].from) { out[k++] = ent[i].to; s += strlen(ent[i].from); }
+        else out[k++] = *s++;
+    }
+    out[k] = 0;
+}
+
+/* a single-valued field: a list (two creators, added on the site) is read
+ * as its values joined, so that it is shown, and kept, as it is */
+static void item_text(const jval *m, const char *key, char *out, size_t n)
+{
+    const jval *v = json_get(m, key), *e;
+    out[0] = 0;
+    if (!v) return;
+    if (v->t == J_STR) { str_copy(out, n, v->s); return; }
+    if (v->t != J_ARR) return;
+    for (e = v->child; e; e = e->next) {
+        if (e->t != J_STR) continue;
+        if (out[0] && strlen(out) + 2 < n) strcat(out, "; ");
+        if (strlen(out) + strlen(e->s) < n) strcat(out, e->s);
+    }
+}
+
+static int item_list(const jval *m, const char *key, char *dst, size_t stride, int max)
+{
+    const jval *v = json_get(m, key), *e;
+    int k = 0;
+    if (v && v->t == J_STR) { str_copy(dst, stride, v->s); return 1; }
+    for (e = v && v->t == J_ARR ? v->child : NULL; e && k < max; e = e->next)
+        if (e->t == J_STR) str_copy(dst + (size_t)k++ * stride, stride, e->s);
+    return k;
+}
+
+int ia_meta_from_item(const char *json, ia_meta *out)
+{
+    jval *root = json ? json_parse(json, NULL, 0) : NULL;
+    const jval *m = root ? json_get(root, "metadata") : NULL;
+    char *desc;
+    memset(out, 0, sizeof(*out));
+    if (!m || m->t != J_OBJ) { json_free(root); return -1; }
+    item_text(m, "mediatype", out->mediatype, sizeof(out->mediatype));
+    /* an item in several collections: the first is the one it was made in */
+    if (item_list(m, "collection", out->collection, sizeof(out->collection), 1) < 1)
+        out->collection[0] = 0;
+    item_text(m, "title", out->title, sizeof(out->title));
+    item_text(m, "creator", out->creator, sizeof(out->creator));
+    item_text(m, "publisher", out->publisher, sizeof(out->publisher));
+    item_text(m, "date", out->date, sizeof(out->date));
+    item_text(m, "platform", out->platform, sizeof(out->platform));
+    item_text(m, "edition", out->edition, sizeof(out->edition));
+    item_text(m, "media", out->media, sizeof(out->media));
+    item_text(m, "rights", out->rights, sizeof(out->rights));
+    item_text(m, "scanner", out->scanner, sizeof(out->scanner));
+    item_text(m, "bagit-profile", out->profile, sizeof(out->profile));
+    if ((desc = (char *)malloc(IA_DESC_MAX)) != NULL) {
+        item_text(m, "description", desc, IA_DESC_MAX);
+        html_plain(desc, out->description, sizeof(out->description));
+        free(desc);
+    }
+    out->nlang = item_list(m, "language", out->language[0], sizeof(out->language[0]), IA_MAX_LANG);
+    out->nsubj = item_list(m, "subject", out->subject[0], sizeof(out->subject[0]), IA_MAX_SUBJECT);
+    json_free(root);
+    return 0;
+}
+
 /* the value of one field, for the deferred metadata write */
 static const char *meta_field(const ia_meta *m, const char *name)
 {
@@ -975,9 +1110,11 @@ static const char *meta_field(const ia_meta *m, const char *name)
 }
 
 /* the fields a header could not carry, with a JSON Patch on the metadata */
+static int post_patch(ia_run *r, const char *id, const char *patch, int fields);
+
 static int write_long_fields(ia_run *r, const char *id)
 {
-    https_request rq; https_response rs; strbuf patch, body; char url[700];
+    strbuf patch;
     int i, rc;
     if (!r->deferred) return IA_OK;
     tell(r, IA_PH_META);
@@ -1004,23 +1141,37 @@ static int write_long_fields(ia_run *r, const char *id)
         sb_puts(&patch, "}");
     }
     sb_puts(&patch, "]");
+    rc = post_patch(r, id, patch.s ? patch.s : "[]", r->deferred);
+    sb_free(&patch);
+    return rc;
+}
+
+/* one JSON Patch on the item's metadata: a patch that changes nothing is
+ * refused by Archive.org, and for us the fields were already right */
+static int post_patch(ia_run *r, const char *id, const char *patch, int fields)
+{
+    https_request rq; https_response rs; strbuf body, head; char url[700];
+    int rc;
     sb_init(&body);
     https_form(&body, "-target", "metadata");
-    https_form(&body, "-patch", patch.s ? patch.s : "[]");
+    https_form(&body, "-patch", patch);
     snprintf(url, sizeof(url), "%s/metadata/%s", r->md_base, id);
+    /* without its type Archive.org does not read the form: a 400 with an
+     * HTML page (seen on the first real update) */
+    sb_init(&head);
+    sb_puts(&head, r->auth);
+    sb_puts(&head, "Content-Type: application/x-www-form-urlencoded\r\n");
     memset(&rq, 0, sizeof(rq));
     rq.method = "POST";
     rq.url = url;
-    rq.headers = r->auth;
+    rq.headers = head.s;
     rq.body = body.s;
     rq.body_len = body.len;
     https_response_init(&rs);
     rc = https_do(r->c, &rq, &rs);
     if (rc == HTTPS_OK) {
         r->res->status = rs.status;
-        ia_log(r, "POST /metadata/%s %d fields -> %d", id, r->deferred, rs.status);
-        /* a patch that changes nothing is refused: for us the field was
-         * already right */
+        ia_log(r, "POST /metadata/%s %d fields -> %d", id, fields, rs.status);
         if (rs.status != 200 && !says(&rs, "No changes")) {
             detail_of(r->res, &rs);
             rc = r->res->why = IA_ERR_HTTP;
@@ -1032,7 +1183,92 @@ static int write_long_fields(ia_run *r, const char *id)
     }
     https_response_free(&rs);
     sb_free(&body);
+    memset(head.s, 0, head.len);         /* it carries the keys */
+    sb_free(&head);
+    return rc;
+}
+
+/* one operation of an update's patch: add a field the item has not,
+ * remove one the box has emptied, replace one that changed */
+static void patch_op(strbuf *patch, const ia_meta *live, const ia_meta *want, int i)
+{
+    static const ia_meta empty;
+    json_writer v;
+    const char *op = !ia_field_differs(live, &empty, i) ? "add" :
+                     !ia_field_differs(want, &empty, i) ? "remove" : "replace";
+    sb_printf(patch, "%s{\"op\":\"%s\",\"path\":\"/%s\"", patch->len > 1 ? "," : "", op,
+              ia_field_name(i));
+    if (strcmp(op, "remove")) {
+        int k;
+        jw_init(&v);
+        if (i == IA_FD_LANG || i == IA_FD_SUBJ) {
+            jw_begin_arr(&v, NULL);
+            for (k = 0; k < (i == IA_FD_LANG ? want->nlang : want->nsubj); k++)
+                jw_str(&v, NULL, i == IA_FD_LANG ? want->language[k] : want->subject[k]);
+            jw_end_arr(&v);
+        } else if (i == IA_FD_DESC) {
+            strbuf d;
+            sb_init(&d);
+            html_lines(&d, want->description);
+            jw_str(&v, NULL, d.s ? d.s : "");
+            sb_free(&d);
+        } else {
+            jw_str(&v, NULL, ia_field_text(want, i));
+        }
+        sb_puts(patch, ",\"value\":");
+        if (v.out.s) sb_puts(patch, v.out.s);
+        jw_free(&v);
+    }
+    sb_puts(patch, "}");
+}
+
+/* 1 if the item is on Archive.org, 0 if not ({}), -1 and res->why if the
+ * question failed */
+static int item_there(ia_run *r, const char *id)
+{
+    https_response rs; char url[700]; ia_meta *m; int rc, there = -1;
+    snprintf(url, sizeof(url), "%s/metadata/%s", r->md_base, id);
+    if ((m = (ia_meta *)malloc(sizeof(*m))) == NULL) { r->res->why = IA_ERR_MEM; return -1; }
+    https_response_init(&rs);
+    rc = ia_get(r, url, &rs);
+    if (rc == IA_OK && rs.status == 200) there = ia_meta_from_item(rs.body.s, m) == 0;
+    else if (rc == IA_OK) { detail_of(r->res, &rs); r->res->why = IA_ERR_HTTP; }
+    https_response_free(&rs);
+    free(m);
+    return there;
+}
+
+/* an update: the fields as the item has them now against those confirmed
+ * in the window; only the ones that differ are written */
+static int update_fields(ia_run *r, const char *id)
+{
+    https_response rs; char url[700]; ia_meta *live; strbuf patch;
+    unsigned bits;
+    int rc, i;
+    tell(r, IA_PH_META);
+    if ((live = (ia_meta *)malloc(sizeof(*live))) == NULL) return r->res->why = IA_ERR_MEM;
+    snprintf(url, sizeof(url), "%s/metadata/%s", r->md_base, id);
+    https_response_init(&rs);
+    rc = ia_get(r, url, &rs);
+    if (rc == IA_OK && (rs.status != 200 || ia_meta_from_item(rs.body.s, live))) {
+        detail_of(r->res, &rs);
+        rc = r->res->why = IA_ERR_HTTP;
+    }
+    https_response_free(&rs);
+    if (rc != IA_OK) { free(live); return rc; }
+    bits = ia_meta_diff(live, r->cfg->meta);
+    sb_init(&patch);
+    sb_puts(&patch, "[");
+    for (i = 0; i < IA_NFIELDS; i++)
+        if (bits & (1u << i)) {
+            patch_op(&patch, live, r->cfg->meta, i);
+            r->res->fields_changed++;
+        }
+    sb_puts(&patch, "]");
+    rc = r->res->fields_changed ? post_patch(r, id, patch.s, r->res->fields_changed) : IA_OK;
+    if (!r->res->fields_changed) ia_log(r, "The fields of %s are already right", id);
     sb_free(&patch);
+    free(live);
     return rc;
 }
 
@@ -1135,6 +1371,44 @@ static int put_file(ia_run *r, const char *id, const ia_file *f, const strbuf *e
         }
         tries++;
         r->res->why = IA_OK;
+    }
+    https_response_free(&rs);
+    sb_free(&head);
+    return rc;
+}
+
+/* a file the box no longer has: out of the item, with the old version kept
+ * in its history (nothing is ever thrown away, as in set-aside/). Already
+ * gone (404) is what we wanted */
+static int delete_file(ia_run *r, const char *id, const ia_file *f)
+{
+    char url[1400];
+    strbuf path, head;
+    https_request rq;
+    https_response rs;
+    int rc;
+    sb_init(&path);
+    https_pct(&path, f->name, "/");
+    snprintf(url, sizeof(url), "%s/%s/%s", r->s3_base, id, path.s ? path.s : "");
+    sb_free(&path);
+    sb_init(&head);
+    sb_puts(&head, r->auth);
+    sb_puts(&head, "x-archive-keep-old-version: 1\r\nx-archive-cascade-delete: 1\r\n");
+    memset(&rq, 0, sizeof(rq));
+    rq.method = "DELETE";
+    rq.url = url;
+    rq.headers = head.s;
+    https_response_init(&rs);
+    rc = https_do(r->c, &rq, &rs);
+    if (rc == HTTPS_OK) {
+        r->res->status = rs.status;
+        ia_log(r, "DELETE %s -> %d", f->name, rs.status);
+        if (rs.status == 200 || rs.status == 204 || rs.status == 404) rc = IA_OK;
+        else if (rs.status == 403) { rc = why_403(r, id); detail_of(r->res, &rs); }
+        else { detail_of(r->res, &rs); CP(r->res->file, f->name); rc = r->res->why = IA_ERR_HTTP; }
+    } else {
+        rc = from_https(r, rc);
+        CP(r->res->file, f->name);
     }
     https_response_free(&rs);
     sb_free(&head);
@@ -1311,7 +1585,7 @@ int ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out)
     https_url u;
     strbuf err, extra;
     char tagmanifest[65], url0[700];
-    int rc = IA_OK, i = 0, state = IA_ST_INTERRUPTED, box;
+    int rc = IA_OK, i = 0, k, state = IA_ST_INTERRUPTED, box, upd, finished = 0;
     long long total = 0;
 
     memset(out, 0, sizeof(*out));
@@ -1332,18 +1606,21 @@ int ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out)
     if (!ia_ident_ok(cfg->identifier)) return out->why = IA_ERR_IDENT;
     if (!cfg->meta) return out->why = IA_ERR_MEM;
 
+    /* the item was made by an upload of this box: this one is an update */
+    ia_record_load(cfg->bagdir, &rec);
+    upd = ia_record_made(&rec) && !strcmp(rec.identifier, cfg->identifier);
+    out->update = upd;
     sb_init(&err);
-    if (ia_plan(cfg->bagdir, NULL, &plan, &err)) {
+    if (ia_plan(cfg->bagdir, upd ? &rec : NULL, &plan, &err)) {
         CP(out->detail, err.s ? err.s : "");
         sb_free(&err);
+        ia_record_free(&rec);
         return out->why = IA_ERR_BOX;
     }
     sb_free(&err);
     ia_tagmanifest_digest(cfg->bagdir, tagmanifest);
-    ia_record_load(cfg->bagdir, &rec);
     /* what a stopped upload already sent: taken up again */
     ia_journal_read(cfg->bagdir, tagmanifest, &done);
-    for (i = 0; i < plan.n; i++) total += plan.f[i].size;
 
     snprintf(url0, sizeof(url0), "%s/", r.s3_base);
     if (!https_parse_url(url0, &u) || !https_url_allowed(&u)) {
@@ -1365,10 +1642,40 @@ int ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out)
     snprintf(r.auth, sizeof(r.auth), "Authorization: LOW %s:%s\r\n",
              cfg->access ? cfg->access : "", cfg->secret ? cfg->secret : "");
 
+    /* the item is gone (test_collection forgets its items after 30 days):
+     * the box goes up again from the start, as the first time */
+    if (upd) {
+        int there = item_there(&r, cfg->identifier);
+        if (there < 0) { rc = out->why; goto out; }
+        if (!there) {
+            ia_log(&r, "%s is no longer on Archive.org: uploading it again", out->identifier);
+            upd = out->update = 0;
+            ia_files_free(&plan);
+            ia_files_free(&done);
+            ia_journal_path(cfg->bagdir, url0, sizeof(url0));
+            u8_remove(url0);
+            ia_record_free(&rec);
+            ia_record_init(&rec);
+            sb_init(&err);
+            if (ia_plan(cfg->bagdir, NULL, &plan, &err)) {
+                CP(out->detail, err.s ? err.s : "");
+                sb_free(&err);
+                rc = out->why = IA_ERR_BOX;
+                goto out;
+            }
+            sb_free(&err);
+        }
+    }
+    for (i = 0; i < plan.n; i++)
+        if (!upd || plan.f[i].what == IA_F_NEW || plan.f[i].what == IA_F_CHANGED) total += plan.f[i].size;
+
     r.pr.files = plan.n;
     r.pr.total = total;
     tell(&r, IA_PH_PREPARE);
-    ia_log(&r, "Uploading %d files (%lld bytes) to %s", plan.n, total, out->identifier);
+    if (upd)
+        ia_log(&r, "Updating %s: %lld bytes of new and changed files", out->identifier, total);
+    else
+        ia_log(&r, "Uploading %d files (%lld bytes) to %s", plan.n, total, out->identifier);
     if (journal_begin(cfg->bagdir, tagmanifest)) {
         rc = out->why = IA_ERR_RECORD;
         goto out;
@@ -1380,6 +1687,12 @@ int ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out)
         const ia_file *was = ia_files_find(&done, f->name);
         r.pr.file = i + 1;
         r.pr.name = f->name;
+        if (f->what == IA_F_REMOVED) continue;      /* deleted after the uploads */
+        if (upd && f->what == IA_F_SAME) {          /* in the item already, as it is */
+            const ia_file *old = ia_files_find(&rec.files, f->name);
+            if (old) { CP(f->md5, old->md5); CP(f->sha1, old->sha1); CP(f->at, old->at); }
+            continue;
+        }
         if (was) {                      /* already sent before the interruption */
             CP(f->md5, was->md5);
             CP(f->sha1, was->sha1);
@@ -1391,8 +1704,10 @@ int ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out)
         if (stopped(&r)) { rc = out->why = IA_ERR_CANCELED; break; }
         if ((rc = hash_one(&r, cfg->bagdir, f)) != IA_OK) break;
         sb_clear(&extra);
-        /* the first file creates the item, with the fields */
-        if (i == 0) meta_headers(&r, cfg->meta, total, &extra);
+        /* the first file creates the item, with the fields; in an update
+         * the version a file replaces stays in the item's history */
+        if (upd) sb_puts(&extra, "x-archive-keep-old-version: 1\r\n");
+        else if (i == 0) meta_headers(&r, cfg->meta, total, &extra);
         if ((rc = put_file(&r, cfg->identifier, f, &extra)) != IA_OK) break;
         meta_now(f->at);
         journal_file(cfg->bagdir, f);
@@ -1401,19 +1716,39 @@ int ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out)
         r.pr.total_done += f->size;
     }
     sb_free(&extra);
-    if (i < plan.n) {                   /* stopped partway: resumable */
+    /* an update: then the files the box no longer has */
+    for (k = 0; upd && rc == IA_OK && i == plan.n && k < plan.n; k++) {
+        ia_file *f = &plan.f[k];
+        if (f->what != IA_F_REMOVED || ia_files_find(&done, f->name)) continue;
+        if (stopped(&r)) { rc = out->why = IA_ERR_CANCELED; break; }
+        r.pr.file = k + 1;
+        r.pr.name = f->name;
+        tell(&r, IA_PH_DELETE);
+        if ((rc = delete_file(&r, cfg->identifier, f)) != IA_OK) break;
+        journal_file(cfg->bagdir, f);
+        out->files_removed++;
+    }
+    if (i < plan.n || rc != IA_OK) {    /* stopped partway: resumable */
         state = IA_ST_INTERRUPTED;
         record_event(&rec, "interrupt", NULL);
-    } else if ((rc = write_long_fields(&r, cfg->identifier)) != IA_OK) {
+    } else if ((rc = upd ? update_fields(&r, cfg->identifier)
+                         : write_long_fields(&r, cfg->identifier)) != IA_OK) {
         state = IA_ST_INTERRUPTED;
     } else {
         int bad = 0, left = cfg->task_wait_s > 0 ? cfg->task_wait_s : IA_TASK_WAIT_S;
         int poll = cfg->task_poll_s > 0 ? cfg->task_poll_s : IA_TASK_POLL_S;
         int grc = IA_OK, ok;
-        char extra_ev[80];
+        char extra_ev[120];
+        finished = 1;
         journal_remove(cfg->bagdir);
-        snprintf(extra_ev, sizeof(extra_ev), ", \"files\": %d", plan.n);
-        record_event(&rec, "create", extra_ev);
+        if (upd) {
+            snprintf(extra_ev, sizeof(extra_ev), ", \"files\": %d, \"removed\": %d, \"fields\": %d",
+                     out->files_sent, out->files_removed, out->fields_changed);
+            record_event(&rec, "update", extra_ev);
+        } else {
+            snprintf(extra_ev, sizeof(extra_ev), ", \"files\": %d", plan.n);
+            record_event(&rec, "create", extra_ev);
+        }
         tell(&r, IA_PH_TASKS);
         for (;;) {
             ok = tasks_done(&r, cfg->identifier, &bad, &grc);
@@ -1439,7 +1774,15 @@ int ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out)
             state = IA_ST_PENDING;
         }
     }
-    record_fill(&rec, cfg, &plan, tagmanifest, state);
+    /* an update left halfway keeps the record of the item as it was made:
+     * the plan of the resume is again against it, the journal says what is
+     * done, and the files still to delete are not forgotten */
+    if (upd && !finished) {
+        rec.state = state;
+    } else {
+        record_fill(&rec, cfg, &plan, tagmanifest, state);
+        if (upd) rec.kept = cfg->kept;
+    }
     sb_init(&err);
     if (ia_record_save(cfg->bagdir, &rec, &err) && rc == IA_OK) {
         CP(out->detail, err.s ? err.s : "");

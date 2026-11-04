@@ -45,6 +45,30 @@ typedef struct {
     char description[IA_DESC_MAX];
 } ia_meta;
 
+/* The fields an update compares and patches, one bit each. mediatype and
+ * collection are chosen when the item is made and never touched again:
+ * Archive.org's curators may move an item, and that is theirs. */
+enum { IA_FD_TITLE, IA_FD_CREATOR, IA_FD_PUBLISHER, IA_FD_DATE, IA_FD_PLATFORM,
+       IA_FD_EDITION, IA_FD_MEDIA, IA_FD_RIGHTS, IA_FD_SCANNER, IA_FD_PROFILE,
+       IA_FD_DESC, IA_FD_LANG, IA_FD_SUBJ, IA_NFIELDS };
+/* its name on Archive.org ("bagit-profile" for IA_FD_PROFILE) */
+const char *ia_field_name(int i);
+/* the text of a single-valued field; "" for the lists (language, subject) */
+const char *ia_field_text(const ia_meta *m, int i);
+/* 1 if field i is not the same in a and b (lists: the same values, in any order) */
+int  ia_field_differs(const ia_meta *a, const ia_meta *b, int i);
+void ia_field_copy(ia_meta *dst, const ia_meta *src, int i);
+/* the bits (1u << IA_FD_*) of the fields that differ */
+unsigned ia_meta_diff(const ia_meta *a, const ia_meta *b);
+/* The fields an update proposes. Each one is what the box proposes now,
+ * unless Archive.org has it different from what we sent last time (a
+ * curator, or the user on the site, changed it there): then Archive.org's
+ * value stays (the user's decision). kept are the fields an earlier update
+ * already left to Archive.org: they stay its own while they differ from
+ * the box. Returns the bits of the fields taken from Archive.org. */
+unsigned ia_meta_merge(const ia_meta *proposed, const ia_meta *sent, const ia_meta *live,
+                       unsigned kept, ia_meta *out);
+
 /* what each file of the package is, in an update */
 enum { IA_F_SAME, IA_F_NEW, IA_F_CHANGED, IA_F_REMOVED };
 const char *ia_what_key(int what);
@@ -71,6 +95,7 @@ typedef struct {
     int  state;                  /* IA_ST_* */
     char tagmanifest[65];        /* SHA-256 of tagmanifest-sha256.txt when it was sent */
     ia_meta meta;
+    unsigned kept;               /* IA_FD_* bits left to Archive.org's value by an update */
     ia_files files;
     /* the events, as JSON objects already written, in order: kept as text
      * so that a record written by a newer version keeps its own */
@@ -81,6 +106,9 @@ void ia_record_init(ia_record *r);
 void ia_record_free(ia_record *r);
 /* adds one JSON object to the events; -1 if it does not fit */
 int  ia_record_event(ia_record *r, const char *entry);
+/* 1 if the record's item was made: every file of a first upload went up
+ * (an "create" event). Then the next upload is an update */
+int  ia_record_made(const ia_record *r);
 
 /* uploads/ of a bag, and the two files in it */
 void ia_upload_dir(const char *bagdir, char *out, size_t n);

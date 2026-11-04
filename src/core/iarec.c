@@ -98,6 +98,137 @@ int ia_record_event(ia_record *r, const char *entry)
     return 0;
 }
 
+int ia_record_made(const ia_record *r)
+{
+    /* the events are kept as text: the action's value is enough */
+    return strstr(r->events, "\"create\"") != NULL;
+}
+
+/* ---- the fields ---- */
+
+static const char *const field_names[IA_NFIELDS] = {
+    "title", "creator", "publisher", "date", "platform", "edition", "media",
+    "rights", "scanner", "bagit-profile", "description", "language", "subject"
+};
+
+const char *ia_field_name(int i)
+{
+    return i >= 0 && i < IA_NFIELDS ? field_names[i] : "";
+}
+
+/* the text of a single-valued field, and its size */
+static char *field_text(ia_meta *m, int i, size_t *n)
+{
+    switch (i) {
+    case IA_FD_TITLE:     *n = sizeof(m->title); return m->title;
+    case IA_FD_CREATOR:   *n = sizeof(m->creator); return m->creator;
+    case IA_FD_PUBLISHER: *n = sizeof(m->publisher); return m->publisher;
+    case IA_FD_DATE:      *n = sizeof(m->date); return m->date;
+    case IA_FD_PLATFORM:  *n = sizeof(m->platform); return m->platform;
+    case IA_FD_EDITION:   *n = sizeof(m->edition); return m->edition;
+    case IA_FD_MEDIA:     *n = sizeof(m->media); return m->media;
+    case IA_FD_RIGHTS:    *n = sizeof(m->rights); return m->rights;
+    case IA_FD_SCANNER:   *n = sizeof(m->scanner); return m->scanner;
+    case IA_FD_PROFILE:   *n = sizeof(m->profile); return m->profile;
+    case IA_FD_DESC:      *n = sizeof(m->description); return m->description;
+    }
+    *n = 0;
+    return NULL;
+}
+
+const char *ia_field_text(const ia_meta *m, int i)
+{
+    size_t n;
+    const char *s = field_text((ia_meta *)m, i, &n);
+    return s ? s : "";
+}
+
+/* each value of a is among b's, and as many */
+static int same_set(const char *a, int na, const char *b, int nb, size_t stride)
+{
+    int i, k;
+    if (na != nb) return 0;
+    for (i = 0; i < na; i++) {
+        for (k = 0; k < nb && strcmp(a + (size_t)i * stride, b + (size_t)k * stride); k++) ;
+        if (k == nb) return 0;
+    }
+    return 1;
+}
+
+int ia_field_differs(const ia_meta *a, const ia_meta *b, int i)
+{
+    size_t n;
+    if (i == IA_FD_LANG)
+        return !same_set(a->language[0], a->nlang, b->language[0], b->nlang, sizeof(a->language[0]));
+    if (i == IA_FD_SUBJ)
+        return !same_set(a->subject[0], a->nsubj, b->subject[0], b->nsubj, sizeof(a->subject[0]));
+    if (i < 0 || i >= IA_NFIELDS) return 0;
+    return strcmp(field_text((ia_meta *)a, i, &n), field_text((ia_meta *)b, i, &n)) != 0;
+}
+
+void ia_field_copy(ia_meta *dst, const ia_meta *src, int i)
+{
+    size_t n;
+    char *d;
+    if (i == IA_FD_LANG) {
+        dst->nlang = src->nlang;
+        memcpy(dst->language, src->language, sizeof(dst->language));
+    } else if (i == IA_FD_SUBJ) {
+        dst->nsubj = src->nsubj;
+        memcpy(dst->subject, src->subject, sizeof(dst->subject));
+    } else if ((d = field_text(dst, i, &n)) != NULL) {
+        str_copy(d, n, field_text((ia_meta *)src, i, &n));
+    }
+}
+
+unsigned ia_meta_diff(const ia_meta *a, const ia_meta *b)
+{
+    unsigned bits = 0;
+    int i;
+    for (i = 0; i < IA_NFIELDS; i++) if (ia_field_differs(a, b, i)) bits |= 1u << i;
+    return bits;
+}
+
+static int is_space(char c) { return c == ' ' || c == '\n' || c == '\r' || c == '\t'; }
+
+/* the same words, whatever the spaces and line breaks between them */
+static int same_words(const char *a, const char *b)
+{
+    for (;;) {
+        while (is_space(*a)) a++;
+        while (is_space(*b)) b++;
+        if (!*a || !*b) return !*a && !*b;
+        while (*a && !is_space(*a) && *a == *b) { a++; b++; }
+        /* a word that goes on on one side only */
+        if ((*a && !is_space(*a)) || (*b && !is_space(*b))) return 0;
+    }
+}
+
+/* changed on Archive.org: a text with only its spaces or line breaks
+ * different is ours as it arrived (a header turned the line breaks of the
+ * first uploads into spaces) */
+static int site_changed(const ia_meta *live, const ia_meta *sent, int i)
+{
+    if (i == IA_FD_LANG || i == IA_FD_SUBJ) return ia_field_differs(live, sent, i);
+    return !same_words(ia_field_text(live, i), ia_field_text(sent, i));
+}
+
+unsigned ia_meta_merge(const ia_meta *proposed, const ia_meta *sent, const ia_meta *live,
+                       unsigned kept, ia_meta *out)
+{
+    unsigned site = 0;
+    int i;
+    *out = *proposed;
+    for (i = 0; i < IA_NFIELDS; i++) {
+        int theirs = site_changed(live, sent, i) ||
+                     ((kept & (1u << i)) && ia_field_differs(live, proposed, i));
+        if (!theirs || !ia_field_differs(live, proposed, i)) continue;
+        ia_field_copy(out, live, i);
+        site |= 1u << i;
+    }
+    return site;
+}
+
 void ia_upload_dir(const char *bagdir, char *out, size_t n)
 {
     u8_join(out, n, bagdir, IA_UPLOAD_DIR);
@@ -188,6 +319,11 @@ int ia_record_save(const char *bagdir, const ia_record *r, strbuf *err)
     jw_str(&w, "verified", r->verified[0] ? r->verified : NULL);
     jw_str(&w, "tagmanifest_sha256", r->tagmanifest);
     write_meta(&w, &r->meta);
+    if (r->kept) {
+        jw_begin_arr(&w, "kept_from_archive_org");
+        for (i = 0; i < IA_NFIELDS; i++) if (r->kept & (1u << i)) jw_str(&w, NULL, field_names[i]);
+        jw_end_arr(&w);
+    }
     jw_begin_arr(&w, "files");
     for (i = 0; i < r->files.n; i++) {
         const ia_file *fl = &r->files.f[i];
@@ -259,6 +395,12 @@ int ia_record_load(const char *bagdir, ia_record *r)
     CP(r->tagmanifest, json_str(root, "tagmanifest_sha256"));
     r->state = ia_state_parse(json_str(root, "state"));
     read_meta(json_get(root, "metadata"), &r->meta);
+    a = json_get(root, "kept_from_archive_org");
+    for (e = a && a->t == J_ARR ? a->child : NULL; e; e = e->next) {
+        int i;
+        for (i = 0; i < IA_NFIELDS; i++)
+            if (e->t == J_STR && !strcmp(e->s, field_names[i])) r->kept |= 1u << i;
+    }
     a = json_get(root, "files");
     for (e = a && a->t == J_ARR ? a->child : NULL; e; e = e->next) {
         ia_file fl;

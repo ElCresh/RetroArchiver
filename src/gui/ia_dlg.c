@@ -23,6 +23,7 @@
 #define WM_APP_IU_PROG (WM_APP + 1)      /* lParam: ia_progress* (a copy) */
 #define WM_APP_IU_DONE (WM_APP + 2)      /* lParam: ia_result* */
 #define WM_APP_IU_ID   (WM_APP + 3)      /* lParam: ia_result* of the identifier check */
+#define WM_APP_IU_ITEM (WM_APP + 4)      /* lParam: itemres* , the item read for an update */
 
 enum { IU_ITEM, IU_FILES, IU_PAGES };
 
@@ -34,7 +35,12 @@ typedef struct {
     UINT logmsg, donemsg;
     HWND dlg, tabs, pages[IU_PAGES], list;
     ia_meta proposed;                    /* what the box proposes: Restore goes back to it */
+    ia_meta base;                        /* the fields the window starts from: the box's,
+                                          * or in an update with Archive.org's changes kept */
     ia_meta sent;                        /* what the upload is given */
+    ia_meta live;                        /* an update: the item's fields when the window opened */
+    int update, reading, have_live;
+    unsigned site;                       /* the fields kept as Archive.org has them */
     ia_files plan;
     ia_record rec;
     int has_rec;
@@ -202,7 +208,7 @@ static void fields_set(iudlg *d, const ia_meta *m)
 static void fields_get(iudlg *d, ia_meta *m)
 {
     HWND p = d->pages[IU_ITEM];
-    *m = d->proposed;                    /* mediatype, collection and the rest stay */
+    *m = d->base;                        /* mediatype, collection and the rest stay */
     if (!p) return;
     get_u8(p, IDC_IU_TITLE, m->title, (int)sizeof(m->title));
     get_u8(p, IDC_IU_CREATOR, m->creator, (int)sizeof(m->creator));
@@ -227,10 +233,75 @@ static void id_changed(iudlg *d)
     char id[IA_ID_MAX];
     get_u8(d->pages[IU_ITEM], IDC_IU_ID, id, (int)sizeof(id));
     str_copy(d->id, sizeof(d->id), id);
-    id_status(d, ia_ident_ok(id) ? L"" : tr(T_IAUP_ID_BAD));
+    if (!d->update) id_status(d, ia_ident_ok(id) ? L"" : tr(T_IAUP_ID_BAD));
+    /* an update waits for the item's fields: without them a field changed
+     * on Archive.org would be overwritten */
     EnableWindow(GetDlgItem(d->dlg, IDC_IU_UPLOAD),
-                 ia_ident_ok(id) && !d->running &&
+                 ia_ident_ok(id) && !d->running && !d->reading && (!d->update || d->have_live) &&
                  IsDlgButtonChecked(d->dlg, IDC_IU_UNDERSTOOD) == BST_CHECKED);
+}
+
+/* ---- an update ---- */
+
+/* "title, description", in the window's language */
+static void field_names(unsigned bits, wchar_t *out, int n)
+{
+    static const int k[IA_NFIELDS] = {
+        T_IAUP_F_TITLE, T_IAUP_F_CREATOR, T_IAUP_F_PUBLISHER, T_IAUP_F_DATE, T_IAUP_F_PLATFORM,
+        T_IAUP_F_EDITION, T_IAUP_F_MEDIA, T_IAUP_F_RIGHTS, T_IAUP_F_SCANNER, T_IAUP_F_PROFILE,
+        T_IAUP_F_DESC, T_IAUP_F_LANG, T_IAUP_F_SUBJ
+    };
+    int i;
+    out[0] = 0;
+    for (i = 0; i < IA_NFIELDS; i++) {
+        if (!(bits & (1u << i))) continue;
+        if (out[0] && (int)wcslen(out) + 2 < n) wcscat(out, L", ");
+        if ((int)(wcslen(out) + wcslen(tr(k[i]))) < n) wcscat(out, tr(k[i]));
+    }
+}
+
+/* the ocra box of an update: what changes, and the fields left to the site */
+static void update_summary(iudlg *d)
+{
+    ia_meta *now;
+    unsigned bits;
+    int nf = 0, up = 0, rm = 0, same = 0, i;
+    long long bytes = 0;
+    wchar_t fields[700], names[500], mb[48], w[1800];
+    if (!d->update || !d->have_live || d->missing || d->running) return;
+    if ((now = (ia_meta *)malloc(sizeof(*now))) == NULL) return;
+    fields_get(d, now);
+    bits = ia_meta_diff(now, &d->live);
+    free(now);
+    for (i = 0; i < IA_NFIELDS; i++) if (bits & (1u << i)) nf++;
+    for (i = 0; i < d->plan.n; i++) {
+        const ia_file *f = &d->plan.f[i];
+        if (f->what == IA_F_NEW || f->what == IA_F_CHANGED) { up++; bytes += f->size; }
+        else if (f->what == IA_F_REMOVED) rm++;
+        else same++;
+    }
+    if (nf == 1) {
+        field_names(bits, names, 500);
+        _snwprintf(fields, 700, tr(T_IAUP_UPD_FIELD1), names);
+        fields[699] = 0;
+    } else if (nf) {
+        field_names(bits, names, 500);
+        _snwprintf(fields, 700, tr(T_IAUP_UPD_FIELDS), nf, names);
+        fields[699] = 0;
+    } else {
+        put_w(fields, 700, tr(T_IAUP_UPD_NOFIELDS));
+    }
+    mb_text(bytes, mb, 48);
+    _snwprintf(w, 1800, tr(T_IAUP_UPD_SUMMARY), fields, up, mb, rm, same);
+    w[1799] = 0;
+    if (d->site) {
+        wchar_t kept[800];
+        field_names(d->site, names, 500);
+        _snwprintf(kept, 800, tr(T_IAUP_SITE_KEPT), names);
+        kept[799] = 0;
+        if (wcslen(w) + wcslen(kept) + 2 < 1800) { wcscat(w, L" "); wcscat(w, kept); }
+    }
+    SetDlgItemTextW(d->dlg, IDC_IU_WARN, w);
 }
 
 /* ---- the Files tab ---- */
@@ -260,7 +331,10 @@ static void files_fill(iudlg *d)
 
     d->list = GetDlgItem(d->pages[IU_FILES], IDC_IU_LIST);
     SendMessageW(d->list, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, LVS_EX_FULLROWSELECT);
-    for (i = 0; i < 3; i++) {
+    /* filled again when an update turns out to be a first upload */
+    SendMessageW(d->list, LVM_DELETEALLITEMS, 0, 0);
+    for (i = 0; i < 3 && SendMessageW((HWND)SendMessageW(d->list, LVM_GETHEADER, 0, 0),
+                                      HDM_GETITEMCOUNT, 0, 0) < 3; i++) {
         memset(&c, 0, sizeof(c));
         c.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT;
         c.fmt = i == 2 ? LVCFMT_RIGHT : LVCFMT_LEFT;
@@ -343,7 +417,11 @@ static void result_text(const iudlg *d, const ia_result *r, wchar_t *out, int n)
     to_w(r->identifier, id, IA_ID_MAX + 8);
     switch (r->why) {
     case IA_OK:
-        _snwprintf(out, (size_t)n, tr(T_IAUP_DONE_OK), r->files_sent);
+        if (r->update)
+            _snwprintf(out, (size_t)n, tr(T_IAUP_DONE_UPD), r->files_sent, r->files_removed,
+                       r->fields_changed);
+        else
+            _snwprintf(out, (size_t)n, tr(T_IAUP_DONE_OK), r->files_sent);
         break;
     case IA_ERR_PENDING:
         _snwprintf(out, (size_t)n, tr(T_IAUP_DONE_PENDING), r->files_sent);
@@ -384,6 +462,7 @@ typedef struct {
     char id[IA_ID_MAX];
     ia_keys keys;
     ia_meta meta;
+    unsigned kept;
     volatile LONG *cancel;
     int last_pct, last_file;
 } iujob;
@@ -442,6 +521,7 @@ static DWORD WINAPI upload_worker(LPVOID p)
         cfg.secret = j->keys.secret;
         cfg.identifier = j->id;
         cfg.meta = &j->meta;
+        cfg.kept = j->kept;
         host.ctx = j;
         host.progress = job_progress;
         host.log = job_log;
@@ -514,6 +594,84 @@ static void id_check_done(iudlg *d, ia_result *r)
     free(r);
 }
 
+/* the item's fields, for an update: a short thread of the same kind */
+typedef struct { HWND dlg; char id[IA_ID_MAX], cacert[3 * MAX_PATH]; ia_keys keys; } itemjob;
+typedef struct { ia_result r; ia_meta live; } itemres;
+
+static DWORD WINAPI item_worker(LPVOID p)
+{
+    itemjob *j = (itemjob *)p;
+    itemres *r = (itemres *)calloc(1, sizeof(itemres));
+    ia_config cfg;
+    if (r) {
+        const char *md = getenv("RETROARCHIVER_IA_URL");
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.md_base = md && md[0] ? md : NULL;
+        cfg.cacert = j->cacert;
+        cfg.access = j->keys.access;
+        cfg.secret = j->keys.secret;
+        ia_item_read(&cfg, j->id, &r->live, &r->r);
+        if (!PostMessageW(j->dlg, WM_APP_IU_ITEM, 0, (LPARAM)r)) free(r);
+    }
+    SecureZeroMemory(j, sizeof(*j));
+    free(j);
+    return 0;
+}
+
+static void item_read_start(iudlg *d)
+{
+    itemjob *j;
+    HANDLE th;
+    if ((j = (itemjob *)calloc(1, sizeof(itemjob))) == NULL) return;
+    j->dlg = d->dlg;
+    str_copy(j->id, sizeof(j->id), d->id);
+    str_copy(j->cacert, sizeof(j->cacert), d->cacert);
+    j->keys = d->keys;
+    if ((th = CreateThread(NULL, 0, item_worker, j, 0, NULL)) == NULL) {
+        SecureZeroMemory(j, sizeof(*j));
+        free(j);
+        return;
+    }
+    CloseHandle(th);
+    d->reading = 1;
+    if (!d->missing) SetDlgItemTextW(d->dlg, IDC_IU_WARN, tr(T_IAUP_READING));
+}
+
+static void files_fill(iudlg *d);
+
+/* the fields Archive.org has now: those changed there stay theirs */
+static void item_read_done(iudlg *d, itemres *r)
+{
+    wchar_t w[1200];
+    d->reading = 0;
+    if (r->r.why == IA_OK && r->r.ident == IA_ID_OURS) {
+        d->live = r->live;
+        d->have_live = 1;
+        d->site = ia_meta_merge(&d->proposed, &d->rec.meta, &d->live, d->rec.kept, &d->base);
+        fields_set(d, &d->base);
+        id_status(d, tr(T_IAUP_ID_OURS));
+        update_summary(d);
+    } else if (r->r.why == IA_OK) {
+        /* the item is gone: the box goes up again, as the first time */
+        strbuf err;
+        d->update = 0;
+        ia_files_free(&d->plan);
+        sb_init(&err);
+        ia_plan(d->bagdir, NULL, &d->plan, &err);
+        sb_free(&err);
+        files_fill(d);
+        _snwprintf(w, 1200, L"%ls %ls", tr(T_IAUP_ITEM_GONE), tr(T_IAUP_WARN));
+        w[1199] = 0;
+        SetDlgItemTextW(d->dlg, IDC_IU_WARN, w);
+        SetDlgItemTextW(d->dlg, IDC_IU_UPLOAD, tr(T_IAUP_UPLOAD));
+    } else {
+        result_text(d, &r->r, w, 1200);
+        SetDlgItemTextW(d->dlg, IDC_IU_WARN, w);
+    }
+    free(r);
+    id_changed(d);
+}
+
 /* ---- the upload ---- */
 
 static void show_running(iudlg *d, int on)
@@ -550,6 +708,9 @@ static void upload_start(iudlg *d)
     str_copy(j->id, sizeof(j->id), d->id);
     j->keys = d->keys;
     j->meta = d->sent;
+    /* the fields left as Archive.org has them, remembered for the next update */
+    if (d->update && d->have_live)
+        j->kept = ia_meta_diff(&d->sent, &d->proposed) & ~ia_meta_diff(&d->sent, &d->live);
     d->cancel = 0;
     j->cancel = &d->cancel;
     if ((th = CreateThread(NULL, 0, upload_worker, j, 0, NULL)) == NULL) {
@@ -574,7 +735,8 @@ static void on_progress(iudlg *d, int pct, ia_progress *p)
     switch (p->phase) {
     case IA_PH_HASH:    _snwprintf(w, 700, tr(T_IAUP_PH_HASH), name); break;
     case IA_PH_PUT:     _snwprintf(w, 700, tr(T_IAUP_PH_PUT), name); break;
-    case IA_PH_META:    put_w(w, 700, tr(T_IAUP_PH_META)); break;
+    case IA_PH_META:    put_w(w, 700, tr(d->update ? T_IAUP_PH_FIELDS : T_IAUP_PH_META)); break;
+    case IA_PH_DELETE:  _snwprintf(w, 700, tr(T_IAUP_PH_DELETE), name); break;
     case IA_PH_TASKS:   put_w(w, 700, tr(T_IAUP_PH_TASKS)); break;
     case IA_PH_VERIFY:  put_w(w, 700, tr(T_IAUP_PH_VERIFY)); break;
     case IA_PH_RETRY:   _snwprintf(w, 700, tr(T_IAUP_PH_RETRY), p->seconds); break;
@@ -601,9 +763,28 @@ static void on_done(iudlg *d, ia_result *r)
         ShowWindow(GetDlgItem(d->dlg, IDC_IU_URL), SW_SHOW);
         ShowWindow(GetDlgItem(d->dlg, IDC_IU_OPEN), SW_SHOW);
     }
-    /* Upload becomes Resume when there is something left to send */
+    /* Upload becomes Resume when there is something left to send; after a
+     * first upload the box has an item, and the next one is an update */
+    if (r->why == IA_OK) {
+        d->update = 1;
+        d->live = d->sent;
+        d->have_live = 1;
+        d->base = d->sent;
+        d->site = 0;
+        d->missing = 0;
+        ia_record_free(&d->rec);
+        d->has_rec = ia_record_load(d->bagdir, &d->rec);
+        ia_files_free(&d->plan);
+        {
+            strbuf err;
+            sb_init(&err);
+            ia_plan(d->bagdir, &d->rec, &d->plan, &err);
+            sb_free(&err);
+        }
+        files_fill(d);
+    }
     SetDlgItemTextW(d->dlg, IDC_IU_UPLOAD,
-                    tr(r->why == IA_OK ? T_IAUP_UPLOAD : T_IAUP_RESUME));
+                    tr(r->why != IA_OK ? T_IAUP_RESUME : d->update ? T_IAUP_UPDATE : T_IAUP_UPLOAD));
     free(r);
     if (d->closing) DestroyWindow(d->dlg);
 }
@@ -628,7 +809,15 @@ static INT_PTR CALLBACK page_proc(HWND page, UINT m, WPARAM wp, LPARAM lp)
         if (!d) return FALSE;
         if (LOWORD(wp) == IDC_IU_ID && HIWORD(wp) == EN_CHANGE) id_changed(d);
         else if (LOWORD(wp) == IDC_IU_CHECK) id_check_start(d);
-        else if (LOWORD(wp) == IDC_IU_RESET) fields_set(d, &d->proposed);
+        else if (LOWORD(wp) == IDC_IU_RESET) {
+            /* the box's fields, also over those changed on Archive.org */
+            d->base = d->proposed;
+            d->site = 0;
+            fields_set(d, &d->proposed);
+            update_summary(d);
+        } else if (HIWORD(wp) == EN_CHANGE && d->update) {
+            update_summary(d);
+        }
         return TRUE;
     }
     return FALSE;
@@ -656,18 +845,21 @@ static void dlg_init(HWND dlg, const ia_dlg_args *a, iudlg *d)
     sb_init(&err);
     to_u8(d->collection, coll, (int)sizeof(coll));
     ia_meta_from_box(d->bagdir, coll, &d->proposed, &err);
-    ia_plan(d->bagdir, NULL, &d->plan, &err);
+    d->base = d->proposed;
     d->has_rec = ia_record_load(d->bagdir, &d->rec);
+    /* the item was made by this box: what is opened is an update */
+    d->update = d->has_rec && ia_record_made(&d->rec);
+    ia_plan(d->bagdir, d->update ? &d->rec : NULL, &d->plan, &err);
     cacert_path(d->userini, d->cacert, (int)sizeof(d->cacert));
     if (d->set) set_ia_keys_get(d->set, &d->keys);
 
     to_w(d->proposed.title, t, 400);
-    _snwprintf(cap, 600, tr(T_IAUP_TITLE), t);
+    _snwprintf(cap, 600, tr(d->update ? T_IAUP_TITLE_UPD : T_IAUP_TITLE), t);
     cap[599] = 0;
     SetWindowTextW(dlg, cap);
     SetDlgItemTextW(dlg, IDC_IU_WARN, tr(T_IAUP_WARN));
     SetDlgItemTextW(dlg, IDC_IU_UNDERSTOOD, tr(T_IAUP_UNDERSTOOD));
-    SetDlgItemTextW(dlg, IDC_IU_UPLOAD, tr(T_IAUP_UPLOAD));
+    SetDlgItemTextW(dlg, IDC_IU_UPLOAD, tr(d->update ? T_IAUP_UPDATE : T_IAUP_UPLOAD));
     SetDlgItemTextW(dlg, IDC_IU_STOP, tr(T_IAUP_STOP));
     SetDlgItemTextW(dlg, IDCANCEL, tr(T_IAUP_CLOSE));
     SetDlgItemTextW(dlg, IDC_IU_OPEN, tr(T_IAUP_OPENPAGE));
@@ -727,8 +919,14 @@ static void dlg_init(HWND dlg, const ia_dlg_args *a, iudlg *d)
         if (ia_journal_read(d->bagdir, tag, &done) >= 0 && done.n) {
             long long left = 0;
             int miss = 0;
-            for (i = 0; i < d->plan.n; i++)
-                if (!ia_files_find(&done, d->plan.f[i].name)) { miss++; left += d->plan.f[i].size; }
+            for (i = 0; i < d->plan.n; i++) {
+                const ia_file *f = &d->plan.f[i];
+                /* in an update the same files are not sent at all */
+                if (d->update && f->what == IA_F_SAME) continue;
+                if (ia_files_find(&done, f->name)) continue;
+                miss++;
+                if (f->what != IA_F_REMOVED) left += f->size;
+            }
             d->missing = miss;
             d->missing_bytes = left;
             mb_text(left, t, 400);
@@ -740,6 +938,8 @@ static void dlg_init(HWND dlg, const ia_dlg_args *a, iudlg *d)
         ia_files_free(&done);
     }
     sb_free(&err);
+    if (d->update) item_read_start(d);
+    id_changed(d);
 }
 
 /* Closing during an upload is allowed (it is not a save): the upload
@@ -783,6 +983,9 @@ static INT_PTR CALLBACK dlg_proc(HWND dlg, UINT m, WPARAM wp, LPARAM lp)
         return TRUE;
     case WM_APP_IU_ID:
         if (d) id_check_done(d, (ia_result *)lp); else free((void *)lp);
+        return TRUE;
+    case WM_APP_IU_ITEM:
+        if (d) item_read_done(d, (itemres *)lp); else free((void *)lp);
         return TRUE;
     case WM_NOTIFY:
         if (d && ((NMHDR *)lp)->hwndFrom == d->tabs && ((NMHDR *)lp)->code == TCN_SELCHANGE)
