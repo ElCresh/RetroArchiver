@@ -650,7 +650,7 @@ static void add_column(HWND lv, int i, int name, int w, int fmt)
 
 /* the column titles of the two lists, for a language change */
 static const int list_cols[] = { T_COL_MEDIUM, T_COL_LABEL, T_COL_READS, T_COL_OUTCOME, -1 };
-static const int arc_cols[] = { T_COL_TITLE, T_COL_PLATFORM, T_COL_YEAR, T_COL_MEDIA, T_COL_OUTCOME,
+static const int arc_cols[] = { T_COL_TITLE, T_COL_EDITION, T_COL_LANGUAGE, T_COL_PLATFORM, T_COL_YEAR, T_COL_MEDIA, T_COL_OUTCOME,
                                 T_COL_ARCHIVED, T_COL_IA, -1 };
 
 static void column_titles(HWND lv, const int *ids)
@@ -710,12 +710,14 @@ static void build_archive(void)
                  LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
     SendMessageW(g_alist, LVM_SETIMAGELIST, LVSIL_SMALL, (LPARAM)make_dots());
     add_column(g_alist, 0, arc_cols[0], 220, LVCFMT_LEFT);
-    add_column(g_alist, 1, arc_cols[1], 92, LVCFMT_LEFT);
-    add_column(g_alist, 2, arc_cols[2], 44, LVCFMT_LEFT);
-    add_column(g_alist, 3, arc_cols[3], 132, LVCFMT_LEFT);
-    add_column(g_alist, 4, arc_cols[4], 168, LVCFMT_LEFT);
-    add_column(g_alist, 5, arc_cols[5], 76, LVCFMT_LEFT);
-    add_column(g_alist, 6, arc_cols[6], 84, LVCFMT_LEFT);
+    add_column(g_alist, 1, arc_cols[1], 90, LVCFMT_LEFT);
+    add_column(g_alist, 2, arc_cols[2], 70, LVCFMT_LEFT);
+    add_column(g_alist, 3, arc_cols[3], 92, LVCFMT_LEFT);
+    add_column(g_alist, 4, arc_cols[4], 44, LVCFMT_LEFT);
+    add_column(g_alist, 5, arc_cols[5], 132, LVCFMT_LEFT);
+    add_column(g_alist, 6, arc_cols[6], 168, LVCFMT_LEFT);
+    add_column(g_alist, 7, arc_cols[7], 76, LVCFMT_LEFT);
+    add_column(g_alist, 8, arc_cols[8], 84, LVCFMT_LEFT);
     g_adetail = make(L"STATIC", L"", SS_OWNERDRAW, 0, 0, 400, 140, ID_ADETAIL);
     make_t(L"BUTTON", T_ARC_RESUME, WS_TABSTOP, 0, 0, 130, 26, ID_ARESUME);
     make_t(L"BUTTON", T_ARC_OPEN, WS_TABSTOP, 0, 0, 130, 26, ID_AOPEN);
@@ -1395,7 +1397,7 @@ static void layout_setup(int W, int H)
 /* ---- the archive ---- */
 
 #define SEL_H 200                       /* height of the "Il cofanetto scelto" box */
-#define ARC_FIXED_COLS (92 + 44 + 132 + 168 + 76 + 84)
+#define ARC_FIXED_COLS (90 + 70 + 92 + 44 + 132 + 168 + 76 + 84)
 
 static int pick_open(void)
 {
@@ -1496,20 +1498,30 @@ static void layout_archive(int W, int H)
     put(ID_ANEW, W - 8 - 150, by, 150, 28);
 }
 
-static void archive_columns(void)
+/* The stretching column takes what the list gains or loses in width, and
+ * only then: layout() also runs when a box is picked, and the widths the
+ * user dragged must stay. *last is the list width seen the time before. */
+static void stretch_column(HWND lv, int col, int fixed, int min, int *last)
 {
     RECT r; int w;
-    GetClientRect(g_alist, &r);
-    w = r.right - ARC_FIXED_COLS;
-    SendMessageW(g_alist, LVM_SETCOLUMNWIDTH, 0, w < 120 ? 120 : w);
+    GetClientRect(lv, &r);
+    if (r.right == *last) return;
+    if (*last < 0) w = r.right - fixed;
+    else w = (int)SendMessageW(lv, LVM_GETCOLUMNWIDTH, col, 0) + r.right - *last;
+    *last = r.right;
+    SendMessageW(lv, LVM_SETCOLUMNWIDTH, col, w < min ? min : w);
+}
+
+static void archive_columns(void)
+{
+    static int last = -1;
+    stretch_column(g_alist, 0, ARC_FIXED_COLS, 120, &last);
 }
 
 static void list_columns(void)
 {
-    RECT r; int w;
-    GetClientRect(g_list, &r);
-    w = r.right - 130 - 60 - 190;
-    SendMessageW(g_list, LVM_SETCOLUMNWIDTH, 1, w < 80 ? 80 : w);
+    static int last = -1;
+    stretch_column(g_list, 1, 130 + 60 + 190, 80, &last);
 }
 
 static void layout_wait(int W, int y, int by)
@@ -3729,6 +3741,8 @@ static int matches(const arc_box *b, const wchar_t *q, const char *plat)
     if (!q[0]) return 1;
     to_w(b->title, t, 300); lower(t);
     if (wcsstr(t, q)) return 1;
+    to_w(b->edition, t, 300); lower(t);
+    if (wcsstr(t, q)) return 1;
     to_w(b->publisher, t, 300); lower(t);
     return wcsstr(t, q) != NULL;
 }
@@ -3775,12 +3789,14 @@ static void arc_row(int row, int idx)
     to_w(b->title, w, 300);
     it.pszText = w;
     SendMessageW(g_alist, LVM_INSERTITEMW, 0, (LPARAM)&it);
-    to_w(b->platform, w, 300); arc_text(row, 1, w);
-    to_w(b->year, w, 300);     arc_text(row, 2, w);
-    arc_media_w(b, w, 300);    arc_text(row, 3, w);     /* "3 / 3 floppy, 0 / 1 CD" */
-    arc_outcome_w(b, w, 300);  arc_text(row, 4, w);
-    fmt_date(b->date, w, 300); arc_text(row, 5, w);
-    arc_ia_short_w(b, w, 300); arc_text(row, 6, w);     /* "verificato", "da aggiornare" */
+    to_w(b->edition, w, 300);  arc_text(row, 1, w);
+    to_w(b->language, w, 300); arc_text(row, 2, w);
+    to_w(b->platform, w, 300); arc_text(row, 3, w);
+    to_w(b->year, w, 300);     arc_text(row, 4, w);
+    arc_media_w(b, w, 300);    arc_text(row, 5, w);     /* "3 / 3 floppy, 0 / 1 CD" */
+    arc_outcome_w(b, w, 300);  arc_text(row, 6, w);
+    fmt_date(b->date, w, 300); arc_text(row, 7, w);
+    arc_ia_short_w(b, w, 300); arc_text(row, 8, w);     /* "verificato", "da aggiornare" */
 }
 
 static void archive_buttons(void)

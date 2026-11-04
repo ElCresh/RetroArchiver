@@ -125,9 +125,11 @@ dic.noleadin=il lettore %ls non legge il lead-in: i suoi CD di dati si leggono c
 # the archive
 archive.folder=Archivio
 archive.search=Cerca
-archive.search.cue=titolo, editore...
+archive.search.cue=titolo, versione, editore...
 archive.allplatforms=Tutte le piattaforme
 column.title=Titolo
+column.edition=Versione
+column.language=Lingua
 column.platform=Piattaforma
 column.year=Anno
 column.media=Supporti

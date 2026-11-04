@@ -129,9 +129,11 @@ dic.noleadin=drive %ls cannot read the lead-in: its data CDs are read with the d
 # the archive
 archive.folder=Archive
 archive.search=Search
-archive.search.cue=title, publisher...
+archive.search.cue=title, edition, publisher...
 archive.allplatforms=All platforms
 column.title=Title
+column.edition=Edition
+column.language=Language
 column.platform=Platform
 column.year=Year
 column.media=Media

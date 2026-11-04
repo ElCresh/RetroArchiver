@@ -123,9 +123,11 @@ T(T_DIC_NOLEADIN,       "dic.noleadin",         L"drive %ls cannot read the lead
 /* the archive */
 T(T_ARC_FOLDER,         "archive.folder",       L"Archive")
 T(T_ARC_SEARCH,         "archive.search",       L"Search")
-T(T_ARC_SEARCH_CUE,     "archive.search.cue",   L"title, publisher...")
+T(T_ARC_SEARCH_CUE,     "archive.search.cue",   L"title, edition, publisher...")
 T(T_ARC_ALLPLAT,        "archive.allplatforms", L"All platforms")
 T(T_COL_TITLE,          "column.title",         L"Title")
+T(T_COL_EDITION,        "column.edition",       L"Edition")
+T(T_COL_LANGUAGE,       "column.language",      L"Language")
 T(T_COL_PLATFORM,       "column.platform",      L"Platform")
 T(T_COL_YEAR,           "column.year",          L"Year")
 T(T_COL_MEDIA,          "column.media",         L"Media")
