@@ -123,12 +123,15 @@ int  session_csv_deleted(const char *outroot, const meta_box *b);
 int  session_aside_list(const char *bagdir, strbuf *out);
 /* {n} {nn} {nnn} {set} {date} ({data} as in 261017); the result is truncated to n bytes */
 void session_expand(char *out, size_t n, const char *tpl, int disk, const char *title);
-/* bag folder: outroot + cleaned-up "Title (Edition)"; the title alone
- * without an edition, or for a box made that way with this edition */
-void session_bagdir(char *out, size_t n, const char *outroot, const char *title, const char *edition);
-/* the same without looking at the disk: always "Title (Edition)" with an
- * edition. An edited box gets this one when its title or edition changes */
-void session_bagdir_fresh(char *out, size_t n, const char *outroot, const char *title, const char *edition);
+/* bag folder: outroot + cleaned-up "Title (Edition) [Language]", each part
+ * only when given; an older folder without the language ("Title (Edition)",
+ * "Title") if it holds this very box */
+void session_bagdir(char *out, size_t n, const char *outroot, const char *title,
+                    const char *edition, const char *language);
+/* the same without looking at the disk: always "Title (Edition) [Language]".
+ * An edited box gets this one when its title, edition or language changes */
+void session_bagdir_fresh(char *out, size_t n, const char *outroot, const char *title,
+                          const char *edition, const char *language);
 
 /* the naming scheme of a kind: the one fixed in the box, otherwise the
  * one in names (may be NULL), otherwise FLOPPY{nn} CD{nn} DVD{nn} */

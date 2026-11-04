@@ -294,13 +294,13 @@ static void convert_entry(void *c, const char *name, int isdir)
 }
 
 /* the boxes of 261017 in the current format: all those of outdir, or one */
-static int run_convert(const char *outdir, const char *title, const char *edition)
+static int run_convert(const char *outdir, const char *title, const char *edition, const char *language)
 {
     convert_ctx x; char bag[1024]; int rc;
     if (title[0]) {
-        session_bagdir(bag, sizeof(bag), outdir, title, edition);
+        session_bagdir(bag, sizeof(bag), outdir, title, edition, language);
         if (!u8_isdir(bag)) {
-            say("  ERROR: there is no box \"%s\" in %s: check the title, the edition and -o.\n", title, outdir);
+            say("  ERROR: there is no box \"%s\" in %s: check the title, the edition, the language and -o.\n", title, outdir);
             return 2;
         }
         rc = convert_one(bag);
@@ -323,14 +323,14 @@ static int open_reread(session_cfg *cfg, meta_box *box, const char *outdir, cons
 {
     char bag[1024], data[1040], fin[1040]; strbuf log; meta_box *m = meta_new(); int rc = -1;
     sb_init(&log);
-    session_bagdir(bag, sizeof(bag), outdir, box->title, box->edition);
+    session_bagdir(bag, sizeof(bag), outdir, box->title, box->edition, box->language);
     if (boxtxn_recover(bag, boxedit_tech, NULL, fin, sizeof(fin), &log) > 0) {
         say("  %s", log.s ? log.s : "");
-        session_bagdir(bag, sizeof(bag), outdir, box->title, box->edition);
+        session_bagdir(bag, sizeof(bag), outdir, box->title, box->edition, box->language);
     }
     u8_join(data, sizeof(data), bag, "data");
     if (!m || meta_load(m, data, &log)) {
-        say("  ERROR: there is no box \"%s\" in %s: check the title, the edition and -o.\n", box->title, outdir);
+        say("  ERROR: there is no box \"%s\" in %s: check the title, the edition, the language and -o.\n", box->title, outdir);
     } else if (parse_reread(list, m, cfg->reread) == 0) {
         cfg->edit = 1;
         meta_set_counts(box, meta_count(m, MEDIA_FLOPPY), meta_count(m, MEDIA_CD), meta_count(m, MEDIA_DVD));
@@ -344,8 +344,8 @@ static int open_reread(session_cfg *cfg, meta_box *box, const char *outdir, cons
 static void usage(void)
 {
     say("  usage: dskrun NUM_FLOPPIES -t TITLE [options]\n");
-    say("         dskrun --reread MEDIA -t TITLE [-e EDITION] [options]\n");
-    say("         dskrun --convert [-t TITLE [-e EDITION]] [-o DIR]\n\n");
+    say("         dskrun --reread MEDIA -t TITLE [-e EDITION] [-l LANGUAGE] [options]\n");
+    say("         dskrun --convert [-t TITLE [-e EDITION] [-l LANGUAGE]] [-o DIR]\n\n");
     say("    --convert  bring the boxes made by 261017 to the current format\n");
     say("               (all those of DIR, or the one of -t); a damaged box\n");
     say("               is not touched. Exit code 1 if one was not converted\n");
@@ -359,6 +359,8 @@ static void usage(void)
     say("    -t TITLE   title of the box: it becomes the package folder\n");
     say("    -e TEXT    edition or version: two boxes with the same title and\n");
     say("               different editions get two folders, TITLE (EDITION)\n");
+    say("    -l TEXT    language of the box: the same title and edition in two\n");
+    say("               languages are two boxes, TITLE (EDITION) [LANGUAGE]\n");
     say("    -P NAME    platform (MS-DOS, Amiga, ...)\n");
     say("    -p PATTERN floppy file names, with placeholders (default FLOPPY{nn})\n");
     say("    -o DIR     archive folder (default the current one)\n");
@@ -401,7 +403,7 @@ static void usage(void)
 int main(int argc, char **argv)
 {
     session_cfg cfg; session_host host; meta_box *box;
-    char title[256] = "", edition[128] = "", platform[64] = "unspecified", tpl[256] = "FLOPPY{nn}", outdir[512] = ".";
+    char title[256] = "", edition[128] = "", language[128] = "", platform[64] = "unspecified", tpl[256] = "FLOPPY{nn}", outdir[512] = ".";
     char samdisk[512] = "", source[512] = "", comp[80], dic[512] = "", drive[16] = "", dats[512] = "";
     char reread[256] = "";
     int convert = 0;
@@ -417,6 +419,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-t") && i + 1 < argc) to_utf8(argv[++i], title, sizeof(title), ARG_CP);
         else if (!strcmp(argv[i], "-P") && i + 1 < argc) to_utf8(argv[++i], platform, sizeof(platform), ARG_CP);
         else if (!strcmp(argv[i], "-e") && i + 1 < argc) to_utf8(argv[++i], edition, sizeof(edition), ARG_CP);
+        else if (!strcmp(argv[i], "-l") && i + 1 < argc) to_utf8(argv[++i], language, sizeof(language), ARG_CP);
         else if (!strcmp(argv[i], "-s") && i + 1 < argc) cfg.start = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-m") && i + 1 < argc) cfg.maxread = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-c") && i + 1 < argc) cfg.forced_cyl = atoi(argv[++i]);
@@ -444,7 +447,7 @@ int main(int argc, char **argv)
     }
     if (cfg.maxread < 2) cfg.maxread = 2;
     if (cfg.maxread > META_MAXREAD) cfg.maxread = META_MAXREAD;
-    if (convert) return run_convert(outdir, title, edition);
+    if (convert) return run_convert(outdir, title, edition, language);
     if (!title[0] || (!reread[0] && (tot < 0 || ncd < 0 || ndvd < 0 || tot + ncd + ndvd < 1 ||
                                      tot + ncd + ndvd > META_MAXDISK))) { usage(); return 2; }
 
@@ -453,6 +456,7 @@ int main(int argc, char **argv)
     str_copy(box->title, sizeof(box->title), title);
     str_copy(box->platform, sizeof(box->platform), platform);
     str_copy(box->edition, sizeof(box->edition), edition);
+    str_copy(box->language, sizeof(box->language), language);
     meta_set_counts(box, tot, ncd, ndvd);
     g_box = box;
     if (samdisk[0]) floppy_set_samdisk(samdisk);

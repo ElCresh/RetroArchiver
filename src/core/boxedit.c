@@ -168,9 +168,10 @@ static void new_folder(const char *bagdir, const meta_box *old, const meta_box *
 {
     char root[1024];
     out[0] = 0;
-    if (!strcmp(old->title, b->title) && !strcmp(old->edition, b->edition)) return;
+    if (!strcmp(old->title, b->title) && !strcmp(old->edition, b->edition)
+        && !strcmp(old->language, b->language)) return;
     parent_dir(bagdir, root, sizeof(root));
-    session_bagdir_fresh(out, n, root, b->title, b->edition);
+    session_bagdir_fresh(out, n, root, b->title, b->edition, b->language);
     if (same_path(out, bagdir)) out[0] = 0;
 }
 

@@ -1128,6 +1128,37 @@ rc, out = run("Word", 2, ["ident_a", "ident_b"], [""], ["-e", "6"])
 ok("edition in the title, same folder: clear error",
    rc == 2 and "holds the box" in out and meta(bag("Word (6)"))["box"]["title"] == "Word (6)", out)
 
+# the same title and edition in two languages are two boxes, TITLE (EDITION) [LANGUAGE]
+rc1, out1 = run("Office", 1, ["ident_a", "ident_b"], [""], ["-e", "97", "-l", "Italiano"])
+rc2, out2 = run("Office", 1, ["ident_a", "ident_b"], [""], ["-e", "97", "-l", "English"])
+ok("two languages: two closed boxes, one folder each",
+   rc1 == 0 and rc2 == 0 and info(bag("Office (97) [Italiano]")).get("Language") == "Italiano"
+   and meta(bag("Office (97) [English]"))["box"]["language"] == "English"
+   and check_bag.check(bag("Office (97) [English]"), PROFILE) == [], out1 + out2)
+rc, out = run("Office", 1, ["ident_a", "ident_b"], [""], ["-e", "97", "-l", "English"])
+ok("two languages: the same language again is the closed box", rc == 2 and "is already closed" in out, out)
+rc, out = run("Gioco", 1, ["ident_a", "ident_b"], [""], ["-l", "Deutsch"])
+ok("a language without an edition: TITLE [LANGUAGE]", rc == 0 and os.path.isdir(bag("Gioco [Deutsch]")), out)
+# a box of 261024 is in TITLE (EDITION), without the language
+rc, out = run("Lingue", 2, ["ident_a", "ident_b"], ["", "Q"], ["-e", "1.0", "-l", "Italiano"])
+os.rename(bag("Lingue (1.0) [Italiano]"), bag("Lingue (1.0)"))
+before = open(os.path.join(bag("Lingue (1.0)"), "data", "metadata.json"), "rb").read()
+rc, out = run("Lingue", 1, ["fat_144", "fat_144"], [""], ["-e", "1.0", "-l", "English"])
+ok("old folder, other language: a new box, the old one untouched",
+   rc == 0 and os.path.isdir(bag("Lingue (1.0) [English]"))
+   and open(os.path.join(bag("Lingue (1.0)"), "data", "metadata.json"), "rb").read() == before
+   and os.path.exists(os.path.join(bag("Lingue (1.0)"), ".in-progress")), out)
+rc, out = run("Lingue", 2, ["fat_144", "fat_144"], [""], ["-e", "1.0", "-l", "Italiano"])
+ok("old folder, same language: resumed and closed there",
+   rc == 0 and "Resuming" in out and not os.path.exists(bag("Lingue (1.0) [Italiano]"))
+   and check_bag.check(bag("Lingue (1.0)"), PROFILE) == [], out)
+# the language typed in the title gives the same folder: not mixed up
+rc, out = run("Excel [Italiano]", 2, ["ident_a", "ident_b"], ["", "Q"])
+rc, out = run("Excel", 2, ["ident_a", "ident_b"], [""], ["-l", "Italiano"])
+ok("language in the title, same folder: clear error",
+   rc == 2 and "holds the box" in out and "[Italiano]" in out
+   and meta(bag("Excel [Italiano]"))["box"]["title"] == "Excel [Italiano]", out)
+
 print("\nreread (--reread)")
 
 

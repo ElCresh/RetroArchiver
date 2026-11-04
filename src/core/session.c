@@ -61,41 +61,63 @@ void session_expand(char *out, size_t n, const char *tpl, int disk, const char *
     sb_free(&b);
 }
 
-/* 1 if the bag in bagdir was opened with this edition */
-static int bag_has_edition(const char *bagdir, const char *edition)
+/* 1 if the bag in bagdir was opened with this edition and this language */
+static int bag_is(const char *bagdir, const char *edition, const char *language)
 {
     char data[1040]; meta_box *m = meta_new(); strbuf err; int same = 0;
     if (!m) return 0;
     sb_init(&err);
     u8_join(data, sizeof(data), bagdir, "data");
-    if (meta_load(m, data, &err) == 0) same = !strcmp(m->edition, edition);
+    if (meta_load(m, data, &err) == 0)
+        same = !strcmp(m->edition, edition) && !strcmp(m->language, language);
     meta_delete(m);
     sb_free(&err);
     return same;
 }
 
-/* Two editions of the same title are two boxes: "Microsoft Office (97)"
- * and "Microsoft Office (2000)". Up to 261017 the folder was the title
- * alone: a box made that way keeps its folder if it has the same edition. */
-void session_bagdir(char *out, size_t n, const char *outroot, const char *title, const char *edition)
-{
-    char name[96];
-    bag_dirname(title, name, 81);
-    u8_join(out, n, outroot, name);
-    if (!edition || !edition[0] || (u8_exists(out) && bag_has_edition(out, edition))) return;
-    session_bagdir_fresh(out, n, outroot, title, edition);
-}
-
-void session_bagdir_fresh(char *out, size_t n, const char *outroot, const char *title, const char *edition)
+/* Two editions of the same title are two boxes, "Microsoft Office (97)"
+ * and "Microsoft Office (2000)", and so are two languages of the same
+ * edition, "Microsoft Office (97) [Italiano]" and "[English]". Up to
+ * 261017 the folder was the title alone, and up to 261024 it had no
+ * language: a box made that way keeps its folder if it is the same box. */
+void session_bagdir(char *out, size_t n, const char *outroot, const char *title,
+                    const char *edition, const char *language)
 {
     char name[96], ed[48], both[150];
+    if (!edition) edition = "";
+    if (!language) language = "";
+    session_bagdir_fresh(out, n, outroot, title, edition, language);
+    if (u8_exists(out) || (!edition[0] && !language[0])) return;
+    if (language[0] && edition[0]) {
+        bag_dirname(edition, ed, 41);
+        bag_dirname(title, name, 81 - strlen(ed) - 3);
+        snprintf(both, sizeof(both), "%s (%s)", name, ed);
+        u8_join(out, n, outroot, both);
+        if (u8_exists(out) && bag_is(out, edition, language)) return;
+    }
     bag_dirname(title, name, 81);
     u8_join(out, n, outroot, name);
-    if (!edition || !edition[0]) return;
-    /* the edition is never cut away by a long title: it is what tells them apart */
-    bag_dirname(edition, ed, 41);
-    bag_dirname(title, name, 81 - strlen(ed) - 3);
-    snprintf(both, sizeof(both), "%s (%s)", name, ed);
+    if (u8_exists(out) && bag_is(out, edition, language)) return;
+    session_bagdir_fresh(out, n, outroot, title, edition, language);
+}
+
+void session_bagdir_fresh(char *out, size_t n, const char *outroot, const char *title,
+                          const char *edition, const char *language)
+{
+    char name[96], ed[48], lang[32], both[160];
+    size_t room = 81;
+    if (!edition) edition = "";
+    if (!language) language = "";
+    ed[0] = lang[0] = 0;
+    /* edition and language are never cut away by a long title: they are
+     * what tells the boxes apart */
+    if (edition[0]) { bag_dirname(edition, ed, 41); room -= strlen(ed) + 3; }
+    if (language[0]) { bag_dirname(language, lang, 29); room -= strlen(lang) + 3; }
+    bag_dirname(title, name, room);
+    if (ed[0] && lang[0]) snprintf(both, sizeof(both), "%s (%s) [%s]", name, ed, lang);
+    else if (ed[0]) snprintf(both, sizeof(both), "%s (%s)", name, ed);
+    else if (lang[0]) snprintf(both, sizeof(both), "%s [%s]", name, lang);
+    else snprintf(both, sizeof(both), "%s", name);
     u8_join(out, n, outroot, both);
 }
 
@@ -740,11 +762,13 @@ static void mark_missing(meta_box *b)
     }
 }
 
-/* "Title" or "Title" (edition), for the messages */
-static void box_name(const char *title, const char *edition, char *out, size_t n)
+/* "Title", "Title" (edition), "Title" (edition) [language], for the messages */
+static void box_name(const char *title, const char *edition, const char *language, char *out, size_t n)
 {
-    if (edition[0]) snprintf(out, n, "\"%s\" (%s)", title, edition);
-    else snprintf(out, n, "\"%s\"", title);
+    char lang[80] = "";
+    if (language[0]) snprintf(lang, sizeof(lang), " [%s]", language);
+    if (edition[0]) snprintf(out, n, "\"%s\" (%s)%s", title, edition, lang);
+    else snprintf(out, n, "\"%s\"%s", title, lang);
 }
 
 static int open_edit(run_ctx *r);
@@ -753,7 +777,8 @@ static int open_edit(run_ctx *r);
 static int open_bag(run_ctx *r)
 {
     meta_box *box = r->cfg->box;
-    char want[sizeof(box->title)], want_ed[sizeof(box->edition)], mp[1040], was[80], now[80];
+    char want[sizeof(box->title)], want_ed[sizeof(box->edition)], want_lang[sizeof(box->language)];
+    char mp[1040], was[80], now[80];
     int nwant = box->media_expected;
     if (r->cfg->edit) return open_edit(r);
     if (u8_exists(r->bagdir)) {
@@ -775,6 +800,7 @@ static int open_bag(run_ctx *r)
         }
         CP(want, box->title);               /* meta_load rewrites the box */
         CP(want_ed, box->edition);
+        CP(want_lang, box->language);
         meta_composition(box, now, sizeof(now));
         if (meta_load(box, r->datadir, &r->msg)) {
             ev(r, EV_ERROR, 0, "%s", r->msg.s);
@@ -782,10 +808,10 @@ static int open_bag(run_ctx *r)
         }
         /* different titles can give the same folder ("A: B" and "A_ B"),
          * and so can an edition typed in the title ("A (2)" and "A", 2) */
-        if (strcmp(box->title, want) || strcmp(box->edition, want_ed)) {
-            char had[400], asked[400];
-            box_name(box->title, box->edition, had, sizeof(had));
-            box_name(want, want_ed, asked, sizeof(asked));
+        if (strcmp(box->title, want) || strcmp(box->edition, want_ed) || strcmp(box->language, want_lang)) {
+            char had[500], asked[500];
+            box_name(box->title, box->edition, box->language, had, sizeof(had));
+            box_name(want, want_ed, want_lang, asked, sizeof(asked));
             ev(r, EV_ERROR, 0, M_SES_HOLDS,
                r->bagdir, had, asked);
             return -1;
@@ -1016,7 +1042,7 @@ static int edit_check(run_ctx *r)
 static int open_edit(run_ctx *r)
 {
     meta_box *box = r->cfg->box; strbuf why;
-    char want[sizeof(box->title)], want_ed[sizeof(box->edition)], mp[1040];
+    char want[sizeof(box->title)], want_ed[sizeof(box->edition)], want_lang[sizeof(box->language)], mp[1040];
     int n;
     if (!u8_exists(r->bagdir)) {
         ev(r, EV_ERROR, 0, M_SES_NO_BOX, box->title, r->bagdir);
@@ -1031,9 +1057,10 @@ static int open_edit(run_ctx *r)
     sb_free(&why);
     CP(want, box->title);
     CP(want_ed, box->edition);
+    CP(want_lang, box->language);
     u8_join(mp, sizeof(mp), r->bagdir, "data");
     if (meta_load(box, mp, &r->msg)) { ev(r, EV_ERROR, 0, "%s", r->msg.s); return -1; }
-    if (strcmp(box->title, want) || strcmp(box->edition, want_ed)) {
+    if (strcmp(box->title, want) || strcmp(box->edition, want_ed) || strcmp(box->language, want_lang)) {
         ev(r, EV_ERROR, 0, M_SES_EDIT_HOLDS,
            r->bagdir, box->title, want);
         return -1;
@@ -1337,7 +1364,7 @@ int session_run(const session_cfg *cfg, const session_host *host)
         ev(&r, EV_ERROR, 0, M_SES_MKDIR_PATH, cfg->outroot);
         goto out;
     }
-    session_bagdir(r.bagdir, sizeof(r.bagdir), cfg->outroot, box->title, box->edition);
+    session_bagdir(r.bagdir, sizeof(r.bagdir), cfg->outroot, box->title, box->edition, box->language);
     u8_join(r.datadir, sizeof(r.datadir), r.bagdir, "data");
     if (names_collide(&r)) goto out;
     cp = cfg->copy_protection ? meta_prot_parse(cfg->copy_protection) : -1;

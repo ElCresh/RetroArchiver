@@ -66,7 +66,7 @@ static void test_partial(void)
     c.maxread = 3; c.start = 1; c.media[MEDIA_FLOPPY] = &m;
     fake_calls = 0;
     CHECK(session_run(&c, &h) == SESSION_CLOSED);
-    session_bagdir(p, sizeof(p), "tmp_unit/sess", "T", "");
+    session_bagdir(p, sizeof(p), "tmp_unit/sess", "T", "", "");
     strcat(p, U8_SEP "data" U8_SEP "d01_b.dsk");
     CHECK(!u8_exists(p));
     meta_delete(box);
@@ -163,7 +163,7 @@ static void mixed_box(void)
     CHECK_STR(box->disk[2].status, "");     /* to be read, not missing */
     CHECK_STR(box->disk[2].label, "NTWKS40_IT");
     CHECK_STR(box->names[MEDIA_CD], "CD{nn}");
-    session_bagdir(p, sizeof(p), "tmp_unit/sess", "NT misto", "");
+    session_bagdir(p, sizeof(p), "tmp_unit/sess", "NT misto", "", "");
     snprintf(q, sizeof(q), "%s" U8_SEP BAG_OPEN_MARK, p);
     CHECK(u8_exists(q));
 
@@ -234,7 +234,7 @@ static void twin_box(void)
     CHECK(box->disk[2].duplicate_of == 1 && box->disk[2].nreads == 0 && !box->disk[2].master[0]);
     CHECK(!meta_disk_done(&box->disk[2]));
     CHECK(session_twin(box, &box->disk[0]) == 0);
-    session_bagdir(bag, sizeof(bag), "tmp_unit/sess", "Doppione", "");
+    session_bagdir(bag, sizeof(bag), "tmp_unit/sess", "Doppione", "", "");
     snprintf(p, sizeof(p), "%s" U8_SEP "data" U8_SEP "FLOPPY03.dsk", bag);
     CHECK(!u8_exists(p));
     snprintf(p, sizeof(p), "%s" U8_SEP SESSION_ASIDE_DIR U8_SEP "FLOPPY03.dsk" SESSION_DUPLICATE, bag);
@@ -278,15 +278,24 @@ void test_session(void)
     session_expand(out, sizeof(out), "{set}{nn}", 1, longt);
     CHECK(strlen(out) == 63);
 
-    session_bagdir(dir, sizeof(dir), "arch", "A/B", "");
+    session_bagdir(dir, sizeof(dir), "arch", "A/B", "", "");
     CHECK_STR(dir, "arch" U8_SEP "A_B");
-    session_bagdir(dir, sizeof(dir), "arch", "Microsoft Office", "2000 Premium");
+    session_bagdir(dir, sizeof(dir), "arch", "Microsoft Office", "2000 Premium", "");
     CHECK_STR(dir, "arch" U8_SEP "Microsoft Office (2000 Premium)");
-    session_bagdir(dir, sizeof(dir), "arch", "A/B", "1.0: CD");
+    session_bagdir(dir, sizeof(dir), "arch", "A/B", "1.0: CD", "");
     CHECK_STR(dir, "arch" U8_SEP "A_B (1.0_ CD)");
     /* a long title is cut, the edition stays */
-    session_bagdir(dir, sizeof(dir), "arch", longt, "97");
+    session_bagdir(dir, sizeof(dir), "arch", longt, "97", "");
     CHECK(strlen(dir) < 4 + 1 + 81 && strstr(dir, "A (97)") == dir + strlen(dir) - 6);
+    /* the language too: the same edition in two languages is two boxes */
+    session_bagdir(dir, sizeof(dir), "arch", "Microsoft Office", "97", "Italiano");
+    CHECK_STR(dir, "arch" U8_SEP "Microsoft Office (97) [Italiano]");
+    session_bagdir(dir, sizeof(dir), "arch", "Doom", "", "English");
+    CHECK_STR(dir, "arch" U8_SEP "Doom [English]");
+    session_bagdir_fresh(dir, sizeof(dir), "arch", "Doom", "", "");
+    CHECK_STR(dir, "arch" U8_SEP "Doom");
+    session_bagdir(dir, sizeof(dir), "arch", longt, "97", "Italiano, English");
+    CHECK(strlen(dir) < 4 + 1 + 81 && strstr(dir, "A (97) [Italiano, English]") != NULL);
     deleted_rows();
     test_partial();
     cancel_in_compare(0, "Annullato");

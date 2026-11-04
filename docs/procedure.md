@@ -85,7 +85,8 @@ A closed box can be changed from the archive: select it and press
 **Edit** (or Archive > Edit box...). The dialog has two tabs:
 
 - **Box**: title, platform, publisher, year, language, edition, notes.
-  Changing the title or the edition renames the folder, "Title (Edition)";
+  Changing the title, the edition or the language renames the folder,
+  "Title (Edition) [Language]";
   the line at the bottom shows the new name.
 - **Media**: how many floppies, CDs and DVDs, and one row per medium with
   its outcome and how it was read. Tick the media to read again, or to

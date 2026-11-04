@@ -178,17 +178,18 @@ static void list_columns(HWND lv)
 
 static void folder_update(bedlg *d)
 {
-    char title[256], ed[128], root[1024], nd[1024], *s; wchar_t a[300], b[300], w[700];
+    char title[256], ed[128], lang[128], root[1024], nd[1024], *s; wchar_t a[300], b[300], w[700];
     const char *base = d->bagdir + strlen(d->bagdir);
     while (base > d->bagdir && base[-1] != '\\' && base[-1] != '/') base--;
     get_field(d->pages[BE_DATA], IDC_BE_TITLE, title, sizeof(title));
     get_field(d->pages[BE_DATA], IDC_BE_ED, ed, sizeof(ed));
+    get_field(d->pages[BE_DATA], IDC_BE_LANG, lang, sizeof(lang));
     to_w(base, a, 300);
     nd[0] = 0;
-    if (title[0] && (strcmp(title, d->cur->title) || strcmp(ed, d->cur->edition))) {
+    if (title[0] && (strcmp(title, d->cur->title) || strcmp(ed, d->cur->edition) || strcmp(lang, d->cur->language))) {
         str_copy(root, sizeof(root), d->bagdir);
         if ((s = root + (base - d->bagdir)) > root) s[-1] = 0;
-        session_bagdir_fresh(nd, sizeof(nd), root, title, ed);
+        session_bagdir_fresh(nd, sizeof(nd), root, title, ed, lang);
     }
     if (nd[0] && strcmp(nd, d->bagdir)) {
         const char *nb = nd + strlen(nd);

@@ -88,7 +88,7 @@ static int edit(const char *title, const char *reread, int fill, int rc, int ask
 static void bagpath(const char *title, const char *rel, char *out, size_t n)
 {
     char bag[400];
-    session_bagdir(bag, sizeof(bag), SROOT, title, "");
+    session_bagdir(bag, sizeof(bag), SROOT, title, "", "");
     snprintf(out, n, "%s/%s", bag, rel);
 }
 
@@ -125,7 +125,7 @@ static int verified(const char *title)
 {
     char bag[400]; arc_check c; strbuf err; int ok;
     sb_init(&err);
-    session_bagdir(bag, sizeof(bag), SROOT, title, "");
+    session_bagdir(bag, sizeof(bag), SROOT, title, "", "");
     ok = arc_verify(bag, &c, &err) == 0 && !c.changed && !c.lost && !c.extra && !bag_is_open(bag)
          && !exists(title, BAG_EDIT_DIR);
     sb_free(&err);
@@ -274,7 +274,7 @@ static void edit_aside_blocked(void)
 {
     char bag[400], p[600], fin[600]; FILE *f; strbuf log;
     closed_box("Blocked", 'a', 0);
-    session_bagdir(bag, sizeof(bag), SROOT, "Blocked", "");
+    session_bagdir(bag, sizeof(bag), SROOT, "Blocked", "", "");
     snprintf(p, sizeof(p), "%s/set-aside", bag);
     if ((f = u8_fopen(p, "wb")) != NULL) fclose(f);
     CHECK(edit("Blocked", "1", 'b', 2, 0) == SESSION_CLOSED);      /* worse: to be set aside */
@@ -305,7 +305,7 @@ static void edit_damage_kept(void)
     meta_delete(box);
     CHECK(exists("KeptDamage", "set-aside/e01.dsk.replaced"));
     sb_init(&err);
-    session_bagdir(bag, sizeof(bag), SROOT, "KeptDamage", "");
+    session_bagdir(bag, sizeof(bag), SROOT, "KeptDamage", "", "");
     CHECK(arc_verify(bag, &ck, &err) == 0 && ck.changed == 1);
     sb_free(&err);
 }
@@ -318,7 +318,7 @@ static void close_converts_aside(void)
     e_script[1] = CMD_QUIT;
     e_fill = 'a'; e_cmp_rc = 0;
     CHECK(session_run(&c, &h) == SESSION_OPEN);
-    session_bagdir(bag, sizeof(bag), SROOT, "Aperto Vecchio", "");
+    session_bagdir(bag, sizeof(bag), SROOT, "Aperto Vecchio", "", "");
     snprintf(p, sizeof(p), "%s/messi-da-parte", bag);
     u8_mkdir(p);
     snprintf(p, sizeof(p), "%s/messi-da-parte/e01_b.dsk.duplicato", bag);
