@@ -122,6 +122,33 @@ version 261017, with the outcomes in Italian, follow
 An interrupted box can be resumed at any time: from the archive view in
 the GUI, or by running the same `dskrun` command again.
 
+### Upload to Archive.org
+
+A closed box can go to [archive.org](https://archive.org), one box at a
+time, straight from the XP PC: the TLS 1.2 connection is made by
+[BearSSL](https://www.bearssl.org/), built into the executable, with
+Mozilla's list of root certificates. You need an Archive.org account and
+its IA-S3 keys (<https://archive.org/account/s3.php>), entered in
+Tools > Settings > Archive.org: they are kept encrypted for your Windows
+user (DPAPI), never in clear.
+
+- The item's fields (title, author, date, languages, subjects,
+  description, rights) are proposed from the box and can be edited
+  before uploading; the identifier is checked first. The item is public
+  and cannot be deleted: the window says so before you confirm.
+- The whole BagIt package goes up as it is, each file with its MD5 so a
+  file damaged on the way is refused; an interrupted upload resumes
+  where it stopped.
+- When Archive.org has archived the files, RetroArchiver checks size,
+  MD5 and SHA-1 of every file against the package. The result is kept
+  in `uploads\archive.org.json` beside the package, outside its
+  manifests, and shown in the archive view.
+- After an edit, the box is marked *to update*: the update sends only
+  the new and changed files (the old versions stay in the item's
+  history), removes from the item the files the box no longer has, and
+  writes only the changed fields. A field changed on archive.org since
+  the last upload keeps the site's value unless you restore the box's.
+
 ## Requirements
 
 - A PC with Windows XP SP3 (newer Windows versions work too) and a
