@@ -78,6 +78,10 @@ typedef struct {
     int edit;
     char reread[META_MAXDISK + 1];
     const char *reason;         /* why, for the history; may be NULL */
+    /* the box's folder, when who starts the session already knows it (the
+     * window, from the Archive list); NULL or "": found by identity with
+     * session_resolve */
+    const char *bagdir;
 } session_cfg;
 
 #define SESSION_CLOSED 0        /* bag closed, complete or incomplete */
@@ -132,6 +136,21 @@ void session_bagdir(char *out, size_t n, const char *outroot, const char *title,
  * An edited box gets this one when its title, edition or language changes */
 void session_bagdir_fresh(char *out, size_t n, const char *outroot, const char *title,
                           const char *edition, const char *language);
+
+/* The identity of a box is its title, edition and language in
+ * data/metadata.json; the folder's name is a label, and a folder renamed by
+ * hand is still that box. The direct subfolders of outroot that are a bag
+ * (closed or open) with exactly that identity: how many there are; the
+ * paths of the first two (outroot joined with the name, as a scan of the
+ * folder composes them) and how many media each has read. A bag whose
+ * metadata cannot be read has no identity and is never found */
+int  session_find_box(const char *outroot, const char *title, const char *edition, const char *language,
+                      char found[2][1024], int reads[2]);
+/* the folder a session on that box works in: the one that holds it, whatever
+ * its name; if none does, the one session_bagdir gives (which also covers a
+ * bag whose metadata.json is missing). 0, or -1 with the reason in err */
+int  session_resolve(const char *outroot, const char *title, const char *edition, const char *language,
+                     char *out, size_t n, strbuf *err);
 
 /* the naming scheme of a kind: the one fixed in the box, otherwise the
  * one in names (may be NULL), otherwise FLOPPY{nn} CD{nn} DVD{nn} */

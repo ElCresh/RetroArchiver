@@ -261,6 +261,136 @@ static void twin_box(void)
     meta_delete(box);
 }
 
+/* ---- the box is found by what metadata.json says, whatever its folder is called ---- */
+
+#define FROOT "tmp_unit/find"
+
+static char k_err[900];
+static int k_script[4], k_n;
+static void k_event(void *c, event_kind k, int d, const char *t)
+{
+    (void)c; (void)d;
+    if (k == EV_ERROR) str_copy(k_err, sizeof(k_err), t);
+}
+static int k_wait(void *c, const disk_turn *t, char *l, size_t ll, char *no, size_t nl)
+{
+    (void)c; (void)t; (void)l; (void)ll; (void)no; (void)nl;
+    nturns++;                               /* m_read: every medium its own image */
+    return k_n < 4 ? k_script[k_n++] : CMD_QUIT;
+}
+
+static int k_run(const char *title, const char *ed, const char *lang, const char *bagdir, int edit,
+                 int c1, int c2)
+{
+    static media_ops m = { "floppy", ".dsk", NULL, f_scan, m_read, m_cmp, f_tech };
+    session_host h; session_cfg c; meta_box *box = meta_new(); int rc;
+    str_copy(box->title, sizeof(box->title), title);
+    str_copy(box->edition, sizeof(box->edition), ed);
+    str_copy(box->language, sizeof(box->language), lang);
+    str_copy(box->platform, sizeof(box->platform), "X");
+    meta_set_counts(box, 2, 0, 0);
+    memset(&h, 0, sizeof(h));
+    h.event = k_event; h.wait_disk = k_wait;
+    memset(&c, 0, sizeof(c));
+    c.box = box; c.outroot = FROOT; c.maxread = 2; c.start = 1;
+    c.media[MEDIA_FLOPPY] = &m;
+    c.bagdir = bagdir;
+    if (edit) { c.edit = 1; c.reread[1] = 1; }
+    k_script[0] = c1; k_script[1] = c2; k_n = 0; k_err[0] = 0;
+    rc = session_run(&c, &h);
+    runner_clear();
+    meta_delete(box);
+    return rc;
+}
+
+/* an open bag in dir with the metadata of the box in from: the same box twice */
+static void clone_box(const char *from, const char *dir)
+{
+    char data[400]; meta_box *m = meta_new(); strbuf err;
+    sb_init(&err);
+    u8_join(data, sizeof(data), from, "data");
+    CHECK(meta_load(m, data, &err) == 0);
+    CHECK(bag_create(dir, &err) == 0);
+    u8_join(data, sizeof(data), dir, "data");
+    m->ndisk = 0;                           /* nothing read in the copy */
+    CHECK(meta_save(m, data, NULL, NULL, &err) == 0);
+    sb_free(&err);
+    meta_delete(m);
+}
+
+static void find_box(void)
+{
+    char found[2][1024], want[400], p[500]; int reads[2];
+    strbuf err;
+
+    CHECK(session_find_box(FROOT, "Alpha", "1", "It", found, reads) == 0);
+    /* opened under its canonical name, floppy 1 read */
+    CHECK(k_run("Alpha", "1", "It", NULL, 0, CMD_READ, CMD_QUIT) == SESSION_OPEN);
+    u8_join(want, sizeof(want), FROOT, "Alpha (1) [It]");
+    CHECK(session_find_box(FROOT, "Alpha", "1", "It", found, reads) == 1);
+    CHECK_STR(found[0], want);
+    CHECK(reads[0] == 1);
+    /* another edition, another language, another case: other boxes */
+    CHECK(session_find_box(FROOT, "Alpha", "2", "It", found, reads) == 0);
+    CHECK(session_find_box(FROOT, "Alpha", "1", "", found, reads) == 0);
+    CHECK(session_find_box(FROOT, "alpha", "1", "It", found, reads) == 0);
+
+    /* renamed by hand: still that box, and the path is the one a scan of the
+     * folder composes (the window compares them with strcmp) */
+    u8_join(p, sizeof(p), FROOT, "zz renamed");
+    CHECK(u8_rename_replace(want, p) == 0);
+    CHECK(session_find_box(FROOT, "Alpha", "1", "It", found, reads) == 1);
+    CHECK_STR(found[0], p);
+    CHECK(session_find_box(FROOT "/", "Alpha", "1", "It", found, reads) == 1);
+    CHECK_STR(found[0], FROOT "/zz renamed");
+    sb_init(&err);
+    CHECK(session_resolve(FROOT, "Alpha", "1", "It", found[1], sizeof(found[1]), &err) == 0);
+    CHECK_STR(found[1], p);
+    /* nothing with that identity: the canonical name, as before */
+    CHECK(session_resolve(FROOT, "Nuovo", "", "", found[1], sizeof(found[1]), &err) == 0);
+    CHECK_STR(found[1], FROOT U8_SEP "Nuovo");
+    sb_free(&err);
+
+    /* resumed with the same title: it goes on in the renamed folder */
+    CHECK(k_run("Alpha", "1", "It", NULL, 0, CMD_READ, CMD_QUIT) == SESSION_CLOSED);
+    CHECK(!u8_exists(want));
+    snprintf(want, sizeof(want), "%s" U8_SEP "bagit.txt", p);
+    CHECK(u8_exists(want));
+    snprintf(want, sizeof(want), "%s" U8_SEP BAG_OPEN_MARK, p);
+    CHECK(!u8_exists(want));
+    CHECK(session_find_box(FROOT, "Alpha", "1", "It", found, reads) == 1 && reads[0] == 2);
+    /* closed and renamed: edited where it is */
+    CHECK(k_run("Alpha", "1", "It", NULL, 1, CMD_READ, CMD_QUIT) == SESSION_CLOSED);
+    u8_join(want, sizeof(want), FROOT, "Alpha (1) [It]");
+    CHECK(!u8_exists(want));
+
+    /* the folder given by who starts the session is used as it is */
+    u8_join(want, sizeof(want), FROOT, "given by hand");
+    CHECK(k_run("Beta", "", "", want, 0, CMD_READ, CMD_QUIT) == SESSION_OPEN);
+    CHECK(session_find_box(FROOT, "Beta", "", "", found, reads) == 1);
+    CHECK_STR(found[0], want);
+    u8_join(p, sizeof(p), FROOT, "Beta");
+    CHECK(!u8_exists(p));
+    /* ... and it must hold that box */
+    CHECK(k_run("Gamma", "", "", want, 0, CMD_READ, CMD_QUIT) == SESSION_ERROR);
+    CHECK(strstr(k_err, "holds the box") != NULL);
+    CHECK(session_find_box(FROOT, "Gamma", "", "", found, reads) == 0);
+
+    /* a bag without readable metadata has no identity */
+    sb_init(&err);
+    u8_join(p, sizeof(p), FROOT, "Broken");
+    CHECK(bag_create(p, &err) == 0);
+    sb_free(&err);
+    CHECK(session_find_box(FROOT, "Broken", "", "", found, reads) == 0);
+
+    /* the same box in two folders: both, with what each has read */
+    u8_join(p, sizeof(p), FROOT, "Beta copy");
+    clone_box(want, p);
+    CHECK(session_find_box(FROOT, "Beta", "", "", found, reads) == 2);
+    CHECK((!strcmp(found[0], want) && !strcmp(found[1], p) && reads[0] == 1 && reads[1] == 0) ||
+          (!strcmp(found[1], want) && !strcmp(found[0], p) && reads[1] == 1 && reads[0] == 0));
+}
+
 void test_session(void)
 {
     char out[64], longt[501], dir[256];
@@ -302,4 +432,5 @@ void test_session(void)
     cancel_in_compare(1, "Annullato con riprova");
     mixed_box();
     twin_box();
+    find_box();
 }

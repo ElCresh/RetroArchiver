@@ -3408,6 +3408,26 @@ static void files_text(const char *title, wchar_t *out, int len)
     free(b);
 }
 
+/* Resume and Edit start from the Archive list, which knows the box's folder:
+ * the session works there, whatever the folder is called (one renamed by
+ * hand too). It holds as long as the fields still name that box */
+static char g_resume_dir[600], g_resume_id[3][256];
+
+static void resume_dir_set(const char *dir, const meta_box *m)
+{
+    str_copy(g_resume_dir, sizeof(g_resume_dir), dir);
+    str_copy(g_resume_id[0], sizeof(g_resume_id[0]), m->title);
+    str_copy(g_resume_id[1], sizeof(g_resume_id[1]), m->edition);
+    str_copy(g_resume_id[2], sizeof(g_resume_id[2]), m->language);
+}
+
+static const char *resume_dir_for(const char *title, const char *edition, const char *language)
+{
+    if (!g_resume_dir[0] || strcmp(title, g_resume_id[0]) || strcmp(edition, g_resume_id[1])
+        || strcmp(language, g_resume_id[2])) return NULL;
+    return g_resume_dir;
+}
+
 /* the grey line below the fields: where the bag will go, and the file names */
 static void bagpath_update(void)
 {
@@ -3418,7 +3438,10 @@ static void bagpath_update(void)
     get_u8(ID_DIR, dir, sizeof(dir));
     files_text(title, f, 300);
     if (title[0]) {
-        session_bagdir(bag, sizeof(bag), dir, title, edition, language);
+        const char *known = resume_dir_for(title, edition, language);
+        /* while a new title is typed: the quick guess, no scan at every key */
+        if (known) str_copy(bag, sizeof(bag), known);
+        else session_bagdir(bag, sizeof(bag), dir, title, edition, language);
         to_w(bag, wb, 800);
         _snwprintf(w, 900, tr(T_BAGPATH), wb, f);
     } else {
@@ -3602,7 +3625,24 @@ static void start(void)
     }
     /* copies for the window: while the session runs g_box belongs to the worker thread */
     str_copy(g_title, sizeof(g_title), g_box->title);
-    session_bagdir(g_bagdir, sizeof(g_bagdir), g_outdir, g_box->title, g_box->edition, g_box->language);
+    {   /* the folder the Archive list gave, or the one that holds this box:
+         * the same path a scan of the archive composes, which is what
+         * recover_one compares with */
+        const char *known = resume_dir_for(g_box->title, g_box->edition, g_box->language);
+        strbuf why;
+        sb_init(&why);
+        if (known) str_copy(g_bagdir, sizeof(g_bagdir), known);
+        else if (session_resolve(g_outdir, g_box->title, g_box->edition, g_box->language,
+                                 g_bagdir, sizeof(g_bagdir), &why)) {
+            wchar_t w[1600];
+            core_w(why.s ? why.s : "", w, 1600, 1);
+            sb_free(&why);
+            MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
+            return;
+        }
+        sb_free(&why);
+    }
+    g_cfg.bagdir = g_bagdir;
 
     reset_state();
     g_t_sess = GetTickCount();
@@ -4163,6 +4203,7 @@ static void go_setup(int from_archive)
     wchar_t w[512];
     int i;
     /* a new box starts from empty fields; platform and language stay */
+    g_resume_dir[0] = 0;
     for (i = 0; clear[i]; i++) SetDlgItemTextW(g_wnd, clear[i], L"");
     SetDlgItemTextW(g_wnd, ID_COUNT, L"0");
     SetDlgItemTextW(g_wnd, ID_CD, L"0");
@@ -4184,19 +4225,23 @@ static void go_setup(int from_archive)
 /* Riprendi: the open box's fields, then start as with Inizia */
 static void resume_pick(void)
 {
-    char data[640]; meta_box *m; strbuf err; wchar_t w[700];
+    char data[640], dir[600]; meta_box *m; strbuf err; wchar_t w[700];
     if (!pick_open() || g_running) return;
-    u8_join(data, sizeof(data), g_arc.box[g_pick].dir, "data");
+    str_copy(dir, sizeof(dir), g_arc.box[g_pick].dir);      /* go_setup and the scan move g_pick */
+    u8_join(data, sizeof(data), dir, "data");
     if (!(m = meta_new())) return;
     sb_init(&err);
     if (meta_load(m, data, &err) == 0) {
         go_setup(1);
         set_u8(ID_DIR, g_arc_root);     /* the folder it was read from */
         fill_from(m);
+        resume_dir_set(dir, m);
+        bagpath_update();
         start();
     } else {
         core_w(err.s, w, 700, 1);
         MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
+        archive_scan();                 /* the folder is gone or changed: the list says so */
     }
     sb_free(&err);
     meta_delete(m);
@@ -4469,6 +4514,8 @@ static void edit_start(const char *bagdir, const char *reread, const char *reaso
         go_setup(1);
         set_u8(ID_DIR, g_arc_root);
         fill_from(m);
+        resume_dir_set(bagdir, m);
+        bagpath_update();
         g_edit.on = 1;
         memcpy(g_edit.reread, reread, sizeof(g_edit.reread));
         str_copy(g_edit.reason, sizeof(g_edit.reason), reason);

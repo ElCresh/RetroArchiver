@@ -1342,6 +1342,34 @@ ok("convert cut: the same command again finishes it", rc == 0 and check_bag.chec
    and not os.path.exists(os.path.join(cut, "editing")) and not os.path.exists(os.path.join(cut, "messi-da-parte"))
    and meta(cut)["schema"] == "retroarchiver-3", out + str(os.listdir(cut)))
 
+print("\nfolders renamed by hand")
+
+# an open box whose folder was renamed: the same command goes on in it
+rc, out = run("Rinominato", 2, ["ident_a", "ident_b"], ["", "Q"])
+os.rename(bag("Rinominato"), bag("copia dal PC retro"))
+rc, out = run("Rinominato", 2, ["fat_144", "fat_144"], [""])
+b = bag("copia dal PC retro")
+ok("renamed: the open box is resumed in the renamed folder", rc == 0 and not os.path.exists(bag("Rinominato"))
+   and "Resuming the box" in out and "copia dal PC retro" in out, out)
+ok("renamed: closed and valid there", os.path.isdir(b) and check_bag.check(b, PROFILE) == []
+   and [d["status"] for d in meta(b)["media"]] == ["clean", "clean"], out)
+# closed and renamed: --reread finds it by what metadata.json says
+rc, out = run("Rinominato", 0, ["good_1", "good_2"], ["", "N"], ["--reread", "floppy1"])
+ok("renamed: --reread edits the box where it is", rc == 0 and "disco01.dsk.replaced" in aside(b)
+   and not os.path.exists(bag("Rinominato")) and check_bag.check(b, PROFILE) == [], out + str(aside(b)))
+# a new box with the title of a closed one, wherever that is: refused, no second folder
+rc, out = run("Rinominato", 1, ["ident_a", "ident_b"], [""])
+ok("renamed: the closed box is not opened again under its old name", rc == 2 and "already closed" in out
+   and "copia dal PC retro" in out and not os.path.exists(bag("Rinominato")), out)
+# --convert -t on a renamed box of 261017
+run("Vecchio spostato", 1, ["ident_a", "ident_b"], [""], arch=CONV)
+make_old(os.path.join(CONV, "Vecchio spostato"))
+moved = os.path.join(CONV, "spostato a mano")
+os.rename(os.path.join(CONV, "Vecchio spostato"), moved)
+rc, out = convert("-t", "Vecchio spostato")
+ok("renamed: --convert -t finds the box", rc == 0 and "Converted: Vecchio spostato" in out
+   and meta(moved)["schema"] == "retroarchiver-3" and not os.path.exists(os.path.join(CONV, "Vecchio spostato")), out)
+
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))
 sys.exit(1 if fails else 0)

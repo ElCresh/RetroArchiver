@@ -296,9 +296,13 @@ static void convert_entry(void *c, const char *name, int isdir)
 /* the boxes of 261017 in the current format: all those of outdir, or one */
 static int run_convert(const char *outdir, const char *title, const char *edition, const char *language)
 {
-    convert_ctx x; char bag[1024]; int rc;
+    convert_ctx x; char bag[1024]; int rc; strbuf why;
     if (title[0]) {
-        session_bagdir(bag, sizeof(bag), outdir, title, edition, language);
+        sb_init(&why);
+        rc = session_resolve(outdir, title, edition, language, bag, sizeof(bag), &why);
+        if (rc) say("  ERROR: %s\n",why.s ? why.s : "");
+        sb_free(&why);
+        if (rc) return 2;
         if (!u8_isdir(bag)) {
             say("  ERROR: there is no box \"%s\" in %s: check the title, the edition, the language and -o.\n", title, outdir);
             return 2;
@@ -323,11 +327,18 @@ static int open_reread(session_cfg *cfg, meta_box *box, const char *outdir, cons
 {
     char bag[1024], data[1040], fin[1040]; strbuf log; meta_box *m = meta_new(); int rc = -1;
     sb_init(&log);
-    session_bagdir(bag, sizeof(bag), outdir, box->title, box->edition, box->language);
+    if (session_resolve(outdir, box->title, box->edition, box->language, bag, sizeof(bag), &log)) {
+        say("  ERROR: %s\n",log.s ? log.s : "");
+        meta_delete(m);
+        sb_free(&log);
+        return -1;
+    }
+    /* the recovery of an interrupted edit may finish a rename: fin is where the box is now */
     if (boxtxn_recover(bag, boxedit_tech, NULL, fin, sizeof(fin), &log) > 0) {
         say("  %s", log.s ? log.s : "");
-        session_bagdir(bag, sizeof(bag), outdir, box->title, box->edition, box->language);
+        str_copy(bag, sizeof(bag), fin);
     }
+    sb_clear(&log);
     u8_join(data, sizeof(data), bag, "data");
     if (!m || meta_load(m, data, &log)) {
         say("  ERROR: there is no box \"%s\" in %s: check the title, the edition, the language and -o.\n", box->title, outdir);

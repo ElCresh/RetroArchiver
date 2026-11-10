@@ -121,6 +121,53 @@ void session_bagdir_fresh(char *out, size_t n, const char *outroot, const char *
     u8_join(out, n, outroot, both);
 }
 
+typedef struct {
+    const char *root, *title, *edition, *language;
+    int n; char (*found)[1024]; int *reads;
+} find_ctx;
+
+static void find_one(void *c, const char *name, int isdir)
+{
+    find_ctx *x = (find_ctx *)c; char dir[1024], p[1100]; meta_box *m; strbuf err; int i, reads = 0;
+    if (!isdir) return;
+    u8_join(dir, sizeof(dir), x->root, name);
+    u8_join(p, sizeof(p), dir, "bagit.txt");
+    if (!bag_is_open(dir) && !u8_exists(p)) return;
+    if (!(m = meta_new())) return;
+    sb_init(&err);
+    u8_join(p, sizeof(p), dir, "data");
+    if (meta_load(m, p, &err) == 0 && !strcmp(m->title, x->title) && !strcmp(m->edition, x->edition)
+        && !strcmp(m->language, x->language)) {
+        for (i = 0; i < m->ndisk; i++) if (m->disk[i].master[0]) reads++;
+        if (x->n < 2) { str_copy(x->found[x->n], 1024, dir); x->reads[x->n] = reads; }
+        x->n++;
+    }
+    sb_free(&err);
+    meta_delete(m);
+}
+
+int session_find_box(const char *outroot, const char *title, const char *edition, const char *language,
+                     char found[2][1024], int reads[2])
+{
+    find_ctx x;
+    x.root = outroot; x.title = title; x.edition = edition ? edition : ""; x.language = language ? language : "";
+    x.n = 0; x.found = found; x.reads = reads;
+    found[0][0] = found[1][0] = 0;
+    reads[0] = reads[1] = 0;
+    u8_listdir(outroot, find_one, &x);
+    return x.n;
+}
+
+int session_resolve(const char *outroot, const char *title, const char *edition, const char *language,
+                    char *out, size_t n, strbuf *err)
+{
+    char found[2][1024]; int reads[2];
+    (void)err;
+    if (session_find_box(outroot, title, edition, language, found, reads) == 1) str_copy(out, n, found[0]);
+    else session_bagdir(out, n, outroot, title, edition, language);
+    return 0;
+}
+
 static const char *const default_names[MEDIA_KINDS] = { "FLOPPY{nn}", "CD{nn}", "DVD{nn}" };
 
 /* "floppy 3", "CD 1": the medium at position n */
@@ -1364,7 +1411,11 @@ int session_run(const session_cfg *cfg, const session_host *host)
         ev(&r, EV_ERROR, 0, M_SES_MKDIR_PATH, cfg->outroot);
         goto out;
     }
-    session_bagdir(r.bagdir, sizeof(r.bagdir), cfg->outroot, box->title, box->edition, box->language);
+    if (cfg->bagdir && cfg->bagdir[0]) CP(r.bagdir, cfg->bagdir);
+    else if (session_resolve(cfg->outroot, box->title, box->edition, box->language, r.bagdir, sizeof(r.bagdir), &r.msg)) {
+        ev(&r, EV_ERROR, 0, "%s", r.msg.s);
+        goto out;
+    }
     u8_join(r.datadir, sizeof(r.datadir), r.bagdir, "data");
     if (names_collide(&r)) goto out;
     cp = cfg->copy_protection ? meta_prot_parse(cfg->copy_protection) : -1;
