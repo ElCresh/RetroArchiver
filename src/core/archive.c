@@ -3,6 +3,7 @@
 #include <string.h>
 #include "archive.h"
 #include "bagit.h"
+#include "boxclean.h"
 #include "session.h"
 #include "fsu8.h"
 #include "messages.h"
@@ -178,6 +179,12 @@ int arc_load(const char *bagdir, arc_box *b)
     if (u8_exists(p)) b->old_format = 1;
     u8_join(p, sizeof(p), bagdir, BAG_EDIT_DIR);
     b->editing = u8_isdir(p);
+    if (m && !b->editing && !b->old_format && (b->state == ARC_COMPLETE || b->state == ARC_INCOMPLETE)) {
+        clean_plan plan;
+        boxclean_plan_box(bagdir, m, &plan);
+        b->reclaim = plan.bytes;
+        boxclean_free(&plan);
+    }
     /* what Archive.org has: a small record, and one digest of a few KB to
      * see whether the box changed since. Cheap enough for the scan */
     {

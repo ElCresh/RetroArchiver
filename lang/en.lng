@@ -721,6 +721,16 @@ archive.text.ia.line.failed=Archive.org: the check of %ls did not match. Upload 
 archive.text.ia.line.stopped=Archive.org: the upload was interrupted. Open Archive.org... to resume it. - %ls
 archive.text.ia.line.outdated=Archive.org: the box changed after the upload of %ls. Update the item. - %ls
 delete.ia=This box is on Archive.org as %ls: that item stays there, it cannot be deleted.
+# Free space: what is superseded in set-aside of a closed box
+menu.free=&Free space...
+archive.detail.reclaim=Free space: %ls MB of superseded reads can go from set-aside (Archive > Free space...).
+free.confirm=Free space in the box "%ls"?\n\nThese entries of set-aside are superseded: they are identical to the read kept, or they are a duplicate or failed read of a medium that was then read well.\n\n%ls\nIn all %ls MB. They go to the Recycle Bin: the space comes back when you empty it. Nothing changes in data, in the manifests or in metadata.json: the box stays valid.%ls
+free.item=%ls - %ls MB
+free.item.partial=%ls - %ls MB (its .txt logs stay)
+free.more=... and %d more
+free.kept=%d other entries (%ls MB) stay: damaged, replaced, rejected or removed reads, or reads of a medium that did not end clean.
+free.kept.one=One other entry (%ls MB) stays: a damaged, replaced, rejected or removed read, or a read of a medium that did not end clean.
+free.failed=Not everything went to the Recycle Bin: something is still in %ls. Is one of those files open in another program, or did you answer No to Windows? Close that program and try again.
 iaup.title=Archive.org - %ls
 iaup.tab.item=Item
 iaup.tab.files=Files

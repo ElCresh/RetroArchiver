@@ -29,6 +29,7 @@
 #include "core/fsu8.h"
 #include "core/archive.h"
 #include "core/boxedit.h"
+#include "core/boxclean.h"
 #include "core/boxtxn.h"
 #include "core/iaupload.h"
 #include "gui/settings.h"
@@ -91,7 +92,7 @@ enum {
     ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW, ID_AIA, ID_AUSE,
     /* the menu bar */
     IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE,
-    IDM_CONVERT, IDM_IA, IDM_REFRESH
+    IDM_CONVERT, IDM_IA, IDM_REFRESH, IDM_FREE
 };
 
 /* what the window knows about a disk: copied by the worker thread, which
@@ -1441,6 +1442,14 @@ static int pick_deletable(void)
 {
     return g_pick >= 0 && g_pick < g_arc.n && !g_arc.box[g_pick].editing
         && !g_verifying && !g_saving && !g_running;
+}
+
+/* Free space: a closed box with something superseded in set-aside (the scan
+ * counted it), and nothing at work on it */
+static int pick_cleanable(void)
+{
+    return pick_closed() && g_arc.box[g_pick].reclaim > 0 && !g_arc.box[g_pick].editing
+        && !g_verifying && !g_saving && !g_running && !g_ia_dlg;
 }
 
 /* the width of a label's text, plus a little margin */
@@ -4198,6 +4207,12 @@ static void paint_detail(HDC dc, int w, int h)
         _snwprintf(line, 1100, tr(T_DETAIL_TWIN), other, b->twin_archived, b->archived); line[1099] = 0;
         if (wcslen(t) + wcslen(line) + 2 < 1200) { wcscat(t, L"\n"); wcscat(t, line); }
     }
+    if (b->reclaim > 0) {               /* what Free space would take */
+        wchar_t mb[32], line[400];
+        fmt_mb(b->reclaim, mb, 32);
+        _snwprintf(line, 400, tr(T_DETAIL_RECLAIM), mb); line[399] = 0;
+        if (wcslen(t) + wcslen(line) + 2 < 1200) { wcscat(t, L"\n"); wcscat(t, line); }
+    }
     SetRect(&r, 0, 0, w - 16, 0);
     DrawTextW(dc, t, -1, &r, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX);
     th = r.bottom;
@@ -4757,6 +4772,130 @@ static void delete_pick(void)
     }
     meta_delete(m);
     archive_scan();
+}
+
+/* ---- archive: Free space ----
+ * What is superseded in set-aside/ of a closed box (core/boxclean) goes to the
+ * Recycle Bin, after a confirmation that lists it. data/, the manifests and
+ * metadata.json are not touched */
+
+typedef struct { wchar_t *buf; size_t len, cap; } bin_list;
+
+/* boxclean's remover: nothing is removed here, the path joins the list that
+ * goes to the Recycle Bin in one operation (paths ended by NUL, two at the end) */
+static int bin_add(void *ctx, const char *path, int isdir)
+{
+    bin_list *l = (bin_list *)ctx; wchar_t w[1100], full[MAX_PATH + 2]; size_t n; DWORD k;
+    (void)isdir;
+    to_w(path, w, 1100);
+    k = GetFullPathNameW(w, MAX_PATH, full, NULL);
+    if (!k || k >= MAX_PATH) return -1;
+    n = wcslen(full) + 1;
+    if (l->len + n + 1 > l->cap) {
+        size_t cap = (l->len + n + 1) * 2;
+        wchar_t *nb = (wchar_t *)realloc(l->buf, cap * sizeof(wchar_t));
+        if (!nb) return -1;
+        l->buf = nb; l->cap = cap;
+    }
+    memcpy(l->buf + l->len, full, n * sizeof(wchar_t));
+    l->len += n;
+    l->buf[l->len] = 0;
+    return 0;
+}
+
+/* the entries of the plan, one per line; a long list is cut and counted */
+static void free_list(const clean_plan *p, wchar_t *list, size_t n)
+{
+    wchar_t line[500], name[320], mb[32]; int i;
+    list[0] = 0;
+    for (i = 0; i < p->n; i++) {
+        if (i == 12 && p->n > 13) _snwprintf(line, 500, tr(T_FREE_MORE), p->n - i);
+        else {
+            to_w(p->item[i].name, name, 320);
+            fmt_mb(p->item[i].bytes, mb, 32);
+            _snwprintf(line, 500, tr(p->item[i].partial ? T_FREE_ITEM_PARTIAL : T_FREE_ITEM), name, mb);
+        }
+        line[499] = 0;
+        if (wcslen(list) + wcslen(line) + 4 < n) { wcscat(list, L"\x2022 "); wcscat(list, line); wcscat(list, L"\n"); }
+        if (i == 12 && p->n > 13) break;
+    }
+}
+
+/* asks, then frees; 1 if something went to the Recycle Bin */
+static int free_space_box(const char *dir, const wchar_t *title)
+{
+    clean_plan p; bin_list l; SHFILEOPSTRUCTW op;
+    wchar_t *text, list[3600], kept[500], mb[32], tot[32], wd[700];
+    int failed, yes;
+    if (boxclean_plan(dir, &p) || !p.n) { boxclean_free(&p); return 0; }
+    if (!(text = (wchar_t *)malloc(5200 * sizeof(wchar_t)))) { boxclean_free(&p); return 0; }
+    free_list(&p, list, 3600);
+    kept[0] = 0;
+    if (p.kept) {                       /* what stays, and why */
+        fmt_mb(p.kept_bytes, mb, 32);
+        wcscpy(kept, L"\n\n");
+        if (p.kept == 1) _snwprintf(kept + 2, 497, tr(T_FREE_KEPT_ONE), mb);
+        else _snwprintf(kept + 2, 497, tr(T_FREE_KEPT), p.kept, mb);
+        kept[499] = 0;
+    }
+    fmt_mb(p.bytes, tot, 32);
+    _snwprintf(text, 5200, tr(T_FREE_CONFIRM), title, list, tot, kept); text[5199] = 0;
+    yes = MessageBoxW(g_wnd, text, L"RetroArchiver", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES;
+    free(text);
+    if (!yes) { boxclean_free(&p); return 0; }
+    memset(&l, 0, sizeof(l));
+    failed = boxclean_run(dir, &p, bin_add, &l);
+    boxclean_free(&p);
+    if (l.buf) {
+        memset(&op, 0, sizeof(op));
+        op.hwnd = g_wnd;
+        op.wFunc = FO_DELETE;
+        op.pFrom = l.buf;
+        op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING;      /* as Elimina */
+        if (SHFileOperationW(&op) || op.fAnyOperationsAborted) failed++;
+        free(l.buf);
+    }
+    boxclean_tidy(dir);                 /* set-aside left empty goes too */
+    if (boxclean_plan(dir, &p) == 0 && p.n) failed++;
+    boxclean_free(&p);
+    if (failed) {
+        char aside[700];
+        u8_join(aside, sizeof(aside), dir, SESSION_ASIDE_DIR);
+        to_w(aside, wd, 700);
+        text = (wchar_t *)malloc(1400 * sizeof(wchar_t));
+        if (text) {
+            _snwprintf(text, 1400, tr(T_FREE_FAILED), wd); text[1399] = 0;
+            MessageBoxW(g_wnd, text, L"RetroArchiver", MB_ICONEXCLAMATION);
+            free(text);
+        }
+    }
+    return 1;
+}
+
+/* Archive > Free space... on the chosen box */
+static void free_pick(void)
+{
+    char dir[600]; wchar_t t[300];
+    if (!pick_cleanable()) return;
+    str_copy(dir, sizeof(dir), g_arc.box[g_pick].dir);
+    to_w(g_arc.box[g_pick].title, t, 300);
+    if (free_space_box(dir, t)) archive_scan();
+}
+
+/* a box just closed with every medium read well: what its failed and
+ * duplicate reads left is of no use any more, and this is when to say so */
+static void free_offer(void)
+{
+    char data[700]; meta_box *m = meta_new(); strbuf err; wchar_t t[300]; int well;
+    if (!m) return;
+    sb_init(&err);
+    u8_join(data, sizeof(data), g_bagdir, "data");
+    well = meta_load(m, data, &err) == 0 && boxclean_all_well(m);
+    sb_free(&err);
+    meta_delete(m);
+    if (!well) return;
+    to_w(g_title, t, 300);
+    if (free_space_box(g_bagdir, t)) { aside_fill(); view(V_END); }
 }
 
 /* ---- archive: Archive.org ---- */
@@ -5418,6 +5557,7 @@ static void on_end(int rc)
     view(V_END);
     ShowWindow(GetDlgItem(g_wnd, ID_OPEN), u8_isdir(g_bagdir) ? SW_SHOW : SW_HIDE);
     focus_to(GetDlgItem(g_wnd, ID_NEW));
+    if (rc == SESSION_CLOSED) free_offer();
 }
 
 /* only Scan and Read run inside SAMdisk and can be stopped; the
@@ -5648,6 +5788,7 @@ static HMENU menu_build(void)
     AppendMenuW(arc, MF_STRING, IDM_NEW, tr(T_MENU_NEW));
     AppendMenuW(arc, MF_STRING, IDM_EDIT, tr(T_MENU_EDIT));
     AppendMenuW(arc, MF_STRING, IDM_IA, tr(T_MENU_IA));
+    AppendMenuW(arc, MF_STRING, IDM_FREE, tr(T_MENU_FREE));
     AppendMenuW(arc, MF_STRING, IDM_DELETE, tr(T_MENU_DELETE));
     AppendMenuW(arc, MF_STRING, IDM_OPENDIR, tr(T_MENU_OPENDIR));
     AppendMenuW(arc, MF_STRING, IDM_REFRESH, tr(T_MENU_REFRESH));
@@ -5681,6 +5822,7 @@ static void menu_states(HMENU m)
     EnableMenuItem(m, IDM_CONVERT, MF_BYCOMMAND | (g_view == V_ARCHIVE && old_boxes() && !g_running && !g_saving
                                                    && !g_verifying ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(m, IDM_DELETE, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_deletable() ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(m, IDM_FREE, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_cleanable() ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(m, IDM_REFRESH, MF_BYCOMMAND | (g_view == V_ARCHIVE && !g_saving ? MF_ENABLED : MF_GRAYED));
     /* the same entry says Update once the box has its item */
     ModifyMenuW(m, IDM_IA, MF_BYCOMMAND | MF_STRING, IDM_IA,
@@ -5859,6 +6001,7 @@ static int on_command(HWND h, WPARAM wp)
     case IDM_IA:      ia_pick(); return 1;
     case IDM_DELETE:  delete_pick(); return 1;
     case IDM_REFRESH: archive_refresh(); return 1;
+    case IDM_FREE:    free_pick(); return 1;
     case ID_READ:   answer(CMD_READ); return 1;
     case ID_SKIP:   answer(CMD_SKIP); return 1;
     case ID_LABELREAD: label_read(); return 1;

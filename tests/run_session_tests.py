@@ -1385,6 +1385,86 @@ rc, out = run("Doppio", 2, ["fat_144", "fat_144"], [""])
 ok("two folders: one removed, the box is resumed and closed", rc == 0
    and check_bag.check(bag("Doppio"), PROFILE) == [], out)
 
+print("\nfree space (--free-space)")
+
+
+def free_space(answer, *args):
+    p = subprocess.run([DSKRUN, "--free-space", "-o", ARCH] + list(args), input=(answer + "\n").encode("utf-8"),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return p.returncode, p.stdout.decode("utf-8", "replace")
+
+
+def aside_files(b):
+    """every file under set-aside/, relative to it"""
+    root = os.path.join(b, "set-aside")
+    return sorted(os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/")
+                  for d, _, files in os.walk(root) for f in files)
+
+
+def frozen(b):
+    """what Free space must never touch"""
+    return (manifest(b), sha(os.path.join(b, "tagmanifest-sha256.txt")), sha(os.path.join(b, "data", "metadata.json")),
+            data_files(b))
+
+
+# a CD that failed and was then read well: what the failed read left goes, its logs stay
+rc, out = run("CD fallito poi letto", 0, [], [""], ["-C", "1"], tpl=None, dic=["FAIL"])
+b = bag("CD fallito poi letto")
+# the fake DIC leaves only its logs; the real one also a half-written image
+with open(os.path.join(b, "set-aside", "CD01.failed", "CD01.scm"), "wb") as f:
+    f.write(b"\0" * 300000)
+rc, out = run("CD fallito poi letto", 0, [], [""], ["-C", "1"], tpl=None, dic=["cd_good", "cd_good"])
+had = aside_files(b)
+ok("free space: the failed CD read again is closed clean, with the failed read set aside",
+   rc == 0 and meta(b)["media"][0]["status"] == "clean" and any(".failed" in f and not f.endswith(".txt") for f in had)
+   and any(".failed" in f and f.endswith(".txt") for f in had), out + str(had))
+ok("free space: closing says which command frees the space",
+   "can go from set-aside" in out and "dskrun --free-space -o" in out and '-t "CD fallito poi letto"' in out, out)
+before = frozen(b)
+rc, out = free_space("n", "-t", "CD fallito poi letto")
+ok("free space: N deletes nothing", rc == 0 and "Nothing deleted" in out and "deleted for good" in out
+   and "its .txt logs stay" in out and aside_files(b) == had, out)
+rc, out = free_space("y", "-t", "CD fallito poi letto")
+left = aside_files(b)
+ok("free space: Y takes the failed read and leaves its logs", rc == 0 and "Freed" in out
+   and left == [f for f in had if f.endswith(".txt")] and left, out + str(left))
+ok("free space: data, manifests and metadata.json are untouched, the box is valid",
+   frozen(b) == before and check_bag.check(b, PROFILE) == [], out)
+rc, out = free_space("y", "-t", "CD fallito poi letto")
+ok("free space: nothing left to free", rc == 0 and "Nothing to free" in out and aside_files(b) == left, out)
+
+# a duplicate set aside, then the right disc: the duplicate goes, and the empty folder with it
+b = bag("CD doppione")
+before = frozen(b)
+rc, out = free_space("y", "-t", "CD doppione")
+ok("free space: the duplicate of a medium read well goes, set-aside with it", rc == 0
+   and "CD02.duplicate" in out and not os.path.exists(os.path.join(b, "set-aside"))
+   and frozen(b) == before and check_bag.check(b, PROFILE) == [], out)
+
+# a medium that ended marginal: its failed read may be the better one, it stays
+rc, out = run("Spazio marginale", 1, ["bad_a", "bad_b"], [""], ["-m", "2"])
+b = bag("Spazio marginale")
+os.makedirs(os.path.join(b, "set-aside"))
+for name in ("disco01_c.dsk.failed", "disco01_d.dsk.duplicate"):
+    with open(os.path.join(b, "set-aside", name), "wb") as f:
+        f.write(b"x" * 100)
+rc, out = free_space("y", "-t", "Spazio marginale")
+ok("free space: nothing of a marginal medium is taken", rc == 0 and "Nothing to free" in out
+   and aside(b) == ["disco01_c.dsk.failed", "disco01_d.dsk.duplicate"], out + str(aside(b)))
+# a read once CD (closed), an open box, a replaced read: none of them is touched
+keep = {name: aside_files(bag(name)) for name in ("CD una volta", "CD sbagliato", "Rilettura", "DVD doppione")}
+rc, out = free_space("y", "-t", "CD sbagliato")
+ok("free space: an open box is refused", rc == 2 and "cannot be cleaned" in out, out)
+rc, out = free_space("y", "-t", "Non esiste")
+ok("free space: a box that is not there", rc == 2 and "there is no box" in out, out)
+# without -t: every closed box of the folder, one question
+rc, out = free_space("y")
+ok("free space: all the boxes, only what is superseded", rc == 0
+   and all(aside_files(bag(name)) == files for name, files in keep.items())
+   and "Spazio marginale" not in out and "CD una volta" not in out, out)
+rc, out = free_space("y")
+ok("free space: all the boxes, nothing left", rc == 0 and "Nothing to free" in out, out)
+
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))
 sys.exit(1 if fails else 0)

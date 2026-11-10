@@ -19,6 +19,7 @@
 #include "core/boxedit.h"
 #include "core/boxtxn.h"
 #include "core/archive.h"
+#include "core/boxclean.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -321,6 +322,124 @@ static int run_convert(const char *outdir, const char *title, const char *editio
     return x.failed ? 1 : 0;
 }
 
+/* --free-space: what is superseded in set-aside/ of the closed boxes. The
+ * folder is walked twice, once to list and once to delete, so nothing is
+ * kept between the question and the answer */
+typedef struct {
+    const char *root; int del;
+    int boxes, entries, kept, failed; long long bytes, kept_bytes;
+} free_ctx;
+
+static double mb(long long bytes) { return (double)bytes / (1024.0 * 1024.0); }
+
+static void free_one(free_ctx *x, const char *bag)
+{
+    clean_plan p; arc_box *a; int i;
+    if (boxclean_plan(bag, &p) || !p.n) { boxclean_free(&p); return; }
+    x->boxes++; x->entries += p.n; x->bytes += p.bytes;
+    x->kept += p.kept; x->kept_bytes += p.kept_bytes;
+    if (x->del) {
+        x->failed += boxclean_run(bag, &p, boxclean_rm_delete, NULL);
+    } else {
+        a = (arc_box *)calloc(1, sizeof(arc_box));
+        say("  %s\n", a && arc_load(bag, a) ? a->title : bag);
+        say("    in %s\n", bag);
+        for (i = 0; i < p.n; i++)
+            say("    %-44s %9.1f MB%s\n", p.item[i].name, mb(p.item[i].bytes),
+                p.item[i].partial ? "  (its .txt logs stay)" : "");
+        free(a);
+    }
+    boxclean_free(&p);
+}
+
+static void free_entry(void *c, const char *name, int isdir)
+{
+    free_ctx *x = (free_ctx *)c; char bag[1024];
+    if (!isdir) return;
+    u8_join(bag, sizeof(bag), x->root, name);
+    free_one(x, bag);
+}
+
+/* 0 ok (also when nothing was deleted), 1 something could not be deleted, 2 error */
+static int free_pass(free_ctx *x, const char *outdir, const char *bag, int del)
+{
+    memset(x, 0, sizeof(*x));
+    x->root = outdir; x->del = del;
+    if (bag) free_one(x, bag);
+    else if (u8_listdir(outdir, free_entry, x)) {
+        say("  ERROR: cannot read the folder %s: check -o.\n", outdir);
+        return 2;
+    }
+    return 0;
+}
+
+static int run_free(const char *outdir, const char *title, const char *edition, const char *language)
+{
+    free_ctx x; char bag[1024], line[40]; strbuf why; clean_plan p; int rc;
+    if (title[0]) {
+        sb_init(&why);
+        rc = session_resolve(outdir, title, edition, language, bag, sizeof(bag), &why);
+        if (rc) say("  ERROR: %s\n", why.s ? why.s : "");
+        sb_free(&why);
+        if (rc) return 2;
+        if (!u8_isdir(bag)) {
+            say("  ERROR: there is no box \"%s\" in %s: check the title, the edition, the language and -o.\n", title, outdir);
+            return 2;
+        }
+        rc = boxclean_plan(bag, &p);
+        boxclean_free(&p);
+        if (rc) {
+            say("  ERROR: the box \"%s\" cannot be cleaned: it must be closed, in the current format\n"
+                "  (dskrun --convert) and with no edit left halfway.\n", title);
+            return 2;
+        }
+    }
+    if (free_pass(&x, outdir, title[0] ? bag : NULL, 0)) return 2;
+    if (!x.entries) {
+        say("  Nothing to free in %s: no closed box has superseded reads in set-aside.\n", title[0] ? bag : outdir);
+        return 0;
+    }
+    say("\n  To delete: %d in %d box(es), %.1f MB. They are reads identical to the one kept, and\n"
+        "  duplicate or failed reads of media that ended clean. data, the manifests and\n"
+        "  metadata.json are not touched: the boxes stay valid.\n", x.entries, x.boxes, mb(x.bytes));
+    if (x.kept)
+        say("  Staying in set-aside: %d (%.1f MB). They are damaged, replaced, rejected or removed\n"
+            "  reads, or reads of a medium that did not end clean.\n", x.kept, mb(x.kept_bytes));
+    say("\n  Delete them? They are deleted for good: there is no Recycle Bin here.  Y/N\n  > ");
+    fflush(stdout);
+    if (!fgets(line, sizeof(line), stdin) || (line[0] != 'y' && line[0] != 'Y')) {
+        say("  Nothing deleted.\n");
+        return 0;
+    }
+    if (free_pass(&x, outdir, title[0] ? bag : NULL, 1)) return 2;
+    if (x.failed) {
+        say("  %d file(s) could not be deleted: is one open in another program? Close it and run the\n"
+            "  same command again.\n", x.failed);
+        return 1;
+    }
+    say("  Freed %.1f MB.\n", mb(x.bytes));
+    return 0;
+}
+
+/* after a box is closed: if something can go, the command that does it */
+static void free_hint(const char *outdir, const meta_box *box)
+{
+    char bag[1024]; strbuf why; clean_plan p;
+    sb_init(&why);
+    if (session_resolve(outdir, box->title, box->edition, box->language, bag, sizeof(bag), &why) == 0
+        && boxclean_plan(bag, &p) == 0) {
+        if (p.n) {
+            say("    %.1f MB of superseded reads can go from set-aside:\n", mb(p.bytes));
+            say("      dskrun --free-space -o \"%s\" -t \"%s\"", outdir, box->title);
+            if (box->edition[0]) say(" -e \"%s\"", box->edition);
+            if (box->language[0]) say(" -l \"%s\"", box->language);
+            say("\n");
+        }
+        boxclean_free(&p);
+    }
+    sb_free(&why);
+}
+
 /* --reread: an edit left halfway is finished or undone first, then the
  * media to read are found in the box's own composition */
 static int open_reread(session_cfg *cfg, meta_box *box, const char *outdir, const char *list)
@@ -356,7 +475,12 @@ static void usage(void)
 {
     say("  usage: dskrun NUM_FLOPPIES -t TITLE [options]\n");
     say("         dskrun --reread MEDIA -t TITLE [-e EDITION] [-l LANGUAGE] [options]\n");
-    say("         dskrun --convert [-t TITLE [-e EDITION] [-l LANGUAGE]] [-o DIR]\n\n");
+    say("         dskrun --convert [-t TITLE [-e EDITION] [-l LANGUAGE]] [-o DIR]\n");
+    say("         dskrun --free-space [-t TITLE [-e EDITION] [-l LANGUAGE]] [-o DIR]\n\n");
+    say("    --free-space  list what is superseded in set-aside of the closed boxes\n");
+    say("               (all those of DIR, or the one of -t) and ask before deleting\n");
+    say("               it: reads identical to the one kept, and duplicate or failed\n");
+    say("               reads of media that ended clean. Nothing else is touched\n");
     say("    --convert  bring the boxes made by 261017 to the current format\n");
     say("               (all those of DIR, or the one of -t); a damaged box\n");
     say("               is not touched. Exit code 1 if one was not converted\n");
@@ -417,7 +541,7 @@ int main(int argc, char **argv)
     char title[256] = "", edition[128] = "", language[128] = "", platform[64] = "unspecified", tpl[256] = "FLOPPY{nn}", outdir[512] = ".";
     char samdisk[512] = "", source[512] = "", comp[80], dic[512] = "", drive[16] = "", dats[512] = "";
     char reread[256] = "";
-    int convert = 0;
+    int convert = 0, free_space = 0;
     int i, rc, tot = 0, ncd = 0, ndvd = 0;
 
     say("\ndskrun 2.2 - batch archiving of floppies, CDs and DVDs\n\n");
@@ -444,6 +568,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-R") && i + 1 < argc) to_utf8(argv[++i], dats, sizeof(dats), ARG_CP);
         else if (!strcmp(argv[i], "--reread") && i + 1 < argc) to_utf8(argv[++i], reread, sizeof(reread), ARG_CP);
         else if (!strcmp(argv[i], "--convert"))          convert = 1;
+        else if (!strcmp(argv[i], "--free-space"))       free_space = 1;
         else if (!strcmp(argv[i], "-k"))                 cfg.keepall = 1;
         else if (!strcmp(argv[i], "-r"))                 host.ask_again = 1;
         else if (!strncmp(argv[i], "--copy-protection=", 18)) {
@@ -459,6 +584,7 @@ int main(int argc, char **argv)
     if (cfg.maxread < 2) cfg.maxread = 2;
     if (cfg.maxread > META_MAXREAD) cfg.maxread = META_MAXREAD;
     if (convert) return run_convert(outdir, title, edition, language);
+    if (free_space) return run_free(outdir, title, edition, language);
     if (!title[0] || (!reread[0] && (tot < 0 || ncd < 0 || ndvd < 0 || tot + ncd + ndvd < 1 ||
                                      tot + ncd + ndvd > META_MAXDISK))) { usage(); return 2; }
 
@@ -509,6 +635,7 @@ int main(int argc, char **argv)
                        "Archiving failed: read the error above.");
     say("    %d clean, %d marginal, %d with errors, %d skipped or to redo\n",
            nclean, nmarginal, nerror, nother);
+    if (rc == SESSION_CLOSED) free_hint(outdir, box);
     say("  ============================================================\n\n");
     meta_delete(box);
     return rc;

@@ -40,6 +40,9 @@ typedef struct {
     int  twin;
     char twin_dir[600];
     int  twin_archived;
+    /* Free space: the bytes of set-aside/ that are superseded (boxclean.h),
+     * 0 for a box it does not work on */
+    long long reclaim;
     /* Archive.org, from uploads/archive.org.json (iarec.h): IA_ST_* , the
      * item's identifier and when it was last verified or uploaded */
     int  ia_state;

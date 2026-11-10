@@ -717,6 +717,16 @@ archive.text.ia.line.failed=Archive.org: la verifica del %ls non torna. Ricarica
 archive.text.ia.line.stopped=Archive.org: il caricamento si è interrotto. Apri Archive.org... per riprenderlo. - %ls
 archive.text.ia.line.outdated=Archive.org: il cofanetto è cambiato dopo il caricamento del %ls. Aggiorna l'item. - %ls
 delete.ia=Questo cofanetto è su Archive.org come %ls: quell'item resta lì, non si può cancellare.
+# Free space: what is superseded in set-aside of a closed box
+menu.free=&Libera spazio...
+archive.detail.reclaim=Libera spazio: %ls MB di letture superate si possono togliere da set-aside (Archivio > Libera spazio...).
+free.confirm=Liberare spazio nel cofanetto «%ls»?\n\nQueste voci di set-aside sono superate: sono identiche alla lettura tenuta, oppure sono una lettura duplicata o fallita di un supporto che poi è stato letto bene.\n\n%ls\nIn tutto %ls MB. Vanno nel Cestino: lo spazio torna quando lo svuoti. In data, nei manifest e in metadata.json non cambia niente: il cofanetto resta valido.%ls
+free.item=%ls - %ls MB
+free.item.partial=%ls - %ls MB (i suoi registri .txt restano)
+free.more=... e altre %d
+free.kept=Altre %d voci (%ls MB) restano: letture danneggiate, sostituite, scartate o tolte, oppure di un supporto che non è finito pulito.
+free.kept.one=Un'altra voce (%ls MB) resta: una lettura danneggiata, sostituita, scartata o tolta, oppure di un supporto che non è finito pulito.
+free.failed=Non tutto è andato nel Cestino: qualcosa è ancora in %ls. Uno di quei file è aperto in un altro programma, oppure hai risposto No a Windows? Chiudi quel programma e riprova.
 iaup.title=Archive.org - %ls
 iaup.tab.item=Item
 iaup.tab.files=File
