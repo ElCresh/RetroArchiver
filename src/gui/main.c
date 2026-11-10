@@ -38,6 +38,7 @@
 #include "gui/dialogs.h"
 #include "gui/resource.h"
 #include "gui/arc_text.h"
+#include "gui/imgdec.h"
 
 #define WM_APP_EVENT (WM_APP + 1)   /* there is an event in g_qhead   */
 #define WM_APP_WAIT  (WM_APP + 2)   /* the requested medium is in g_turn_in */
@@ -92,7 +93,7 @@ enum {
     ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW, ID_AIA, ID_AUSE,
     /* the menu bar */
     IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE,
-    IDM_CONVERT, IDM_IA, IDM_REFRESH, IDM_FREE
+    IDM_CONVERT, IDM_IA, IDM_REFRESH, IDM_FREE, IDM_IMAGES
 };
 
 /* what the window knows about a disk: copied by the worker thread, which
@@ -4713,6 +4714,9 @@ static int edit_confirm(const meta_box *old, const edit_change *ch, int n)
         } else if (c->what == CH_FOLDER) {
             to_w(c->from, a, 520); to_w(c->to, b, 520);
             _snwprintf(line, 1200, tr(T_EDIT_CH_FOLDER), a, b);
+        } else if (c->what == CH_REMOVED && c->images) {      /* its scans go with it */
+            name_of_kind(c->kind, c->num, t, 300);
+            _snwprintf(line, 1200, tr(T_EDIT_CH_REMOVED_IMG), t, c->images);
         } else {
             name_of_kind(c->kind, c->num, t, 300);
             _snwprintf(line, 1200, tr(c->what == CH_ADDED ? T_EDIT_CH_ADDED : T_EDIT_CH_REMOVED), t);
@@ -5013,6 +5017,44 @@ static void edit_pick(void)
         if (th) CloseHandle(th);
         else { meta_delete(job->box); free(job); g_saving = 0; archive_buttons(); }
     }
+}
+
+/* Images: the scans of a closed box. The dialog does it all (the save in
+ * its own thread, with the window disabled under it); here only what must
+ * be true before it opens, and the archive read again after */
+static void images_pick(void)
+{
+    char dir[600]; strbuf err; wchar_t w[900], e[600], t[300];
+    if (!pick_editable()) return;
+    str_copy(dir, sizeof(dir), g_arc.box[g_pick].dir);
+    if (twin_stop()) return;
+    sb_init(&err);
+    if (!boxedit_editable(dir, &err)) {
+        if (g_arc.box[g_pick].old_format) wcsncpy(e, tr(T_EDIT_OLD_FORMAT), 600);
+        else core_w(err.s, e, 600, 1);
+        e[599] = 0;
+        _snwprintf(w, 900, tr(T_EDIT_CANNOT), e); w[899] = 0;
+        MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONINFORMATION);
+        sb_free(&err);
+        return;
+    }
+    sb_free(&err);
+    g_saving = 1;                       /* no scan, no read, no upload while the box may change */
+    archive_buttons();
+    if (images_dialog(g_wnd, dir)) {
+        g_saving = 0;
+        archive_show(dir);
+        if (g_pick >= 0) to_w(g_arc.box[g_pick].title, t, 300); else t[0] = 0;
+        _snwprintf(w, 900, tr(T_IMG_SAVED), t); w[899] = 0;
+        if (g_pick >= 0 && g_arc.box[g_pick].ia_state != IA_ST_NONE &&
+            wcslen(w) + wcslen(tr(T_EDIT_SAVED_IA)) + 2 < 900) {
+            wcscat(w, L" ");
+            wcscat(w, tr(T_EDIT_SAVED_IA));
+        }
+        sbar_text(0, w);
+    }
+    g_saving = 0;
+    archive_buttons();
 }
 
 /* the banner during the read: blue, orange if re-reading or the disk is
@@ -5787,6 +5829,7 @@ static HMENU menu_build(void)
     HMENU bar = CreateMenu(), arc = CreatePopupMenu(), tools = CreatePopupMenu(), help = CreatePopupMenu();
     AppendMenuW(arc, MF_STRING, IDM_NEW, tr(T_MENU_NEW));
     AppendMenuW(arc, MF_STRING, IDM_EDIT, tr(T_MENU_EDIT));
+    AppendMenuW(arc, MF_STRING, IDM_IMAGES, tr(T_MENU_IMAGES));
     AppendMenuW(arc, MF_STRING, IDM_IA, tr(T_MENU_IA));
     AppendMenuW(arc, MF_STRING, IDM_FREE, tr(T_MENU_FREE));
     AppendMenuW(arc, MF_STRING, IDM_DELETE, tr(T_MENU_DELETE));
@@ -5819,6 +5862,7 @@ static void menu_states(HMENU m)
     EnableMenuItem(m, IDM_NEW, MF_BYCOMMAND | busy);
     EnableMenuItem(m, IDM_SETTINGS, MF_BYCOMMAND | busy);
     EnableMenuItem(m, IDM_EDIT, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_editable() ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(m, IDM_IMAGES, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_editable() ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(m, IDM_CONVERT, MF_BYCOMMAND | (g_view == V_ARCHIVE && old_boxes() && !g_running && !g_saving
                                                    && !g_verifying ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(m, IDM_DELETE, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_deletable() ? MF_ENABLED : MF_GRAYED));
@@ -5997,6 +6041,7 @@ static int on_command(HWND h, WPARAM wp)
     case IDM_GUIDE:   menu_guide(); return 1;
     case IDM_ABOUT:   about_open(); return 1;
     case IDM_EDIT:    edit_pick(); return 1;
+    case IDM_IMAGES:  images_pick(); return 1;
     case IDM_CONVERT: convert_start(NULL); return 1;
     case IDM_IA:      ia_pick(); return 1;
     case IDM_DELETE:  delete_pick(); return 1;
@@ -6392,6 +6437,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show_cmd)
      * defaults next to the exe are converted by the setup (a normal user
      * cannot write in Program Files), until then they are read as they are */
     set_convert(g_set.user);
+    {
+        /* the thumbnails of the boxes' images: a cache next to the user's
+         * ini, never in the archive */
+        wchar_t dir[MAX_PATH], thumbs[MAX_PATH];
+        user_ini_dir(g_set.user, dir, MAX_PATH);
+        if (dir[0] != L'%' && _snwprintf(thumbs, MAX_PATH, L"%ls\\thumbs", dir) > 0) {
+            thumbs[MAX_PATH - 1] = 0;
+            imgdec_cache_dir(thumbs);
+        }
+    }
     set_get(&g_set, UILANG_SEC, UILANG_KEY, L"", g_uilang, CODE_LEN);
     lang_choose();
 

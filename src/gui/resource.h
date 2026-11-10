@@ -193,4 +193,26 @@
 #define IDC_IU_LIST      1740
 #define IDC_IU_TOTAL     1741
 
+/* Images of a box */
+#define IDD_IMAGES       140
+#define IDC_IM_LIST      1800
+#define IDC_IM_ADD       1801
+#define IDC_IM_REMOVE    1802
+#define IDC_IM_UP        1803
+#define IDC_IM_DOWN      1804
+#define IDC_IM_VIEW      1805
+#define IDC_IM_KIND_L    1806
+#define IDC_IM_KIND      1807
+#define IDC_IM_SIDE_L    1808
+#define IDC_IM_SIDE      1809
+#define IDC_IM_MEDIUM_L  1810
+#define IDC_IM_MEDIUM    1811
+#define IDC_IM_NOTE_L    1812
+#define IDC_IM_NOTE      1813
+#define IDC_IM_REASON_L  1814
+#define IDC_IM_REASON    1815
+#define IDC_IM_HINT      1816
+#define IDC_IM_PROG      1817
+#define IDC_IM_BAR       1818
+
 #endif

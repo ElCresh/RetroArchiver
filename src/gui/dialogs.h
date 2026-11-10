@@ -51,6 +51,18 @@ typedef struct {
 int box_edit_dialog(HWND owner, const char *bagdir, const meta_box *current,
                     const wchar_t *const *platforms, box_edit_result *out);
 
+/* ---- Images of a box (images_dlg.c) ---- */
+
+/* The images of the closed box in bagdir: add, remove, relabel, reorder,
+ * and Save (confirmation, then the transaction in a thread). 1 if the box
+ * was changed */
+int images_dialog(HWND owner, const char *bagdir);
+/* "Box, front", "CD 2, back", "Insert": what an image shows, in the
+ * window's language */
+void image_caption(const meta_image *im, wchar_t *out, int n);
+/* the file of an image of the box in bagdir */
+void image_path(const char *bagdir, const char *file, wchar_t *out, int n);
+
 /* two reads as good as each other: 1 keep the new one, 0 the old one */
 int choose_dialog(HWND owner, const edit_choice *c);
 
