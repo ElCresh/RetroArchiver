@@ -17,6 +17,8 @@ int   u8_mkdir(const char *path);              /* 0 created or already there */
 int   u8_mkdirs(const char *path);             /* intermediate folders too; 0 if it exists at the end */
 int   u8_remove(const char *path);             /* 0 ok */
 int   u8_rename_replace(const char *from, const char *to);
+/* why the last u8_rename_replace failed: the error of Windows (errno elsewhere), 0 if it did not */
+int   u8_rename_error(void);
 int   u8_exists(const char *path);             /* 1 if file or folder */
 int   u8_isdir(const char *path);
 long long u8_filesize(const char *path);       /* -1 if it does not exist */

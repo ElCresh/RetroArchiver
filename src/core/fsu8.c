@@ -168,10 +168,31 @@ static int u8_rmdir(const char *path)
     return ok ? 0 : -1;
 }
 
+static int g_rename_error;
+
+int u8_rename_error(void) { return g_rename_error; }
+
+/* A folder never replaces anything, so it goes without the flag: a file
+ * server may refuse a "rename and replace" of a folder. And on a network
+ * drive a folder cannot be renamed while a file inside is still open: with
+ * SMB1 (all Windows XP speaks) the client closes a file a while after the
+ * program did, so "access denied" and "in use" are tried again for some
+ * seconds before giving up */
 int u8_rename_replace(const char *from, const char *to)
 {
-    wchar_t *wf = wide(from), *wt = wide(to); int ok = 0;
-    if (wf && wt) ok = MoveFileExW(wf, wt, MOVEFILE_REPLACE_EXISTING);
+    wchar_t *wf = wide(from), *wt = wide(to); int ok = 0, dir, i; DWORD at, e = 0;
+    if (wf && wt) {
+        at = GetFileAttributesW(wf);
+        dir = at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_DIRECTORY);
+        for (i = 0; ; i++) {
+            ok = MoveFileExW(wf, wt, dir ? 0 : MOVEFILE_REPLACE_EXISTING);
+            if (ok) break;
+            e = GetLastError();
+            if (!dir || i >= 24 || (e != ERROR_ACCESS_DENIED && e != ERROR_SHARING_VIOLATION)) break;
+            Sleep(500);
+        }
+    } else e = ERROR_NOT_ENOUGH_MEMORY;
+    g_rename_error = ok ? 0 : (int)e;
     free(wf); free(wt);
     return ok ? 0 : -1;
 }
@@ -251,9 +272,15 @@ int u8_remove(const char *path) { return remove(path) == 0 ? 0 : -1; }
 
 static int u8_rmdir(const char *path) { return rmdir(path) == 0 ? 0 : -1; }
 
+static int g_rename_error;
+
+int u8_rename_error(void) { return g_rename_error; }
+
 int u8_rename_replace(const char *from, const char *to)
 {
-    return rename(from, to) == 0 ? 0 : -1;
+    int ok = rename(from, to) == 0;
+    g_rename_error = ok ? 0 : errno;
+    return ok ? 0 : -1;
 }
 
 int u8_exists(const char *path) { struct stat st; return stat(path, &st) == 0; }

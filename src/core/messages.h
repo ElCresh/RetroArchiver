@@ -67,7 +67,7 @@
 #define M_TXN_MANIFESTS "the manifests of %s cannot be read"
 #define M_TXN_LINE "%s does not match the new manifest"
 #define M_TXN_EXTRA "data/ in %s has files the new manifest does not list"
-#define M_TXN_RENAME "cannot rename %s: close the folder if it is open in Explorer and try again"
+#define M_TXN_RENAME "cannot rename %s (error %d): close the folder if it is open in Explorer or in another program and try again"
 
 /* boxedit.c */
 #define M_EDIT_NOT_BOX "%s is not a box"

@@ -378,7 +378,7 @@ static int rename_bag(const char *bagdir, const char *newdir, strbuf *err)
             return 0;
         }
     }
-    sb_printf(err, M_TXN_RENAME, bagdir);
+    sb_printf(err, M_TXN_RENAME, bagdir, g_fail == 8 ? 0 : u8_rename_error());
     return -1;
 }
 
