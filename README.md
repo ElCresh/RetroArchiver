@@ -122,6 +122,26 @@ version 261017, with the outcomes in Italian, follow
 An interrupted box can be resumed at any time: from the archive view in
 the GUI, or by running the same `dskrun` command again.
 
+### Moving the archive
+
+The archive is the folder: there is no index. A box is its title, edition
+and language in `metadata.json`, and the folder name is only a label, so
+boxes can be copied to another PC or renamed by hand. Archive > Refresh
+(F5) reads the folder again, and the list refreshes by itself when you
+come back to the window. An empty archive says why, and offers the
+subfolder that holds the boxes if they are one level down. Two folders
+holding the same box are marked, and nothing is resumed or edited until
+one of them is moved away.
+
+### Freeing space
+
+Failed and duplicate reads are set aside in `set-aside\`, outside the
+package data. Archive > Free space... (or `dskrun --free-space`) removes
+the ones that were superseded by a good read of the same medium, keeping
+the text logs; damaged, replaced and rejected reads always stay, and the
+package itself is never touched. The window asks first and uses the
+Recycle Bin.
+
 ### Upload to Archive.org
 
 A closed box can go to [archive.org](https://archive.org), one box at a

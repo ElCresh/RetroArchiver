@@ -145,6 +145,49 @@ converted when it is resumed and closed.
 From the console: `dskrun --convert -o DIR` (all the old boxes of DIR) or
 `dskrun --convert -t TITLE`; exit code 1 if one was not converted.
 
+## Moving, renaming and refreshing the archive
+
+The archive is the folder: there is no index to keep in step, and
+`archive.csv` is only a log. A box is its title, edition and language in
+`data/metadata.json`; the folder name is a label. Box folders can be
+copied to another PC or renamed by hand, and Resume, Edit and `dskrun -t`
+still find them.
+
+- **Two folders with the same box** (a copy made by hand): both rows are
+  marked in the list, and Resume, Edit and `dskrun` stop naming the two
+  folders and how many media each has read. Keep one, move the other out
+  of the archive folder or delete it.
+- **An empty archive** says why: the folder does not exist, it holds no
+  box, or the boxes are in one of its subfolders, and **Use that folder**
+  switches to it.
+- **Archive > Refresh** (F5) reads the folder again. The list also
+  refreshes by itself when you come back to the window from another
+  program.
+
+## Freeing space
+
+Reads that were set aside stay in `set-aside/` next to `data/`. **Archive
+> Free space...** on a closed box removes only what is superseded:
+
+- `.identical`: a re-read equal to the one kept;
+- `.duplicate` and `.failed` of a medium that later ended `clean` or
+  `redump-verified`. Of a `.failed` folder the `.txt` logs stay.
+
+Everything else stays: `.damaged`, `.replaced`, `.rejected`, `.removed`,
+`previous-DATE/`, and any read of a medium that did not end well, since it
+may be the only one. `data/`, the manifests and `metadata.json` are never
+touched, so the package stays valid and its state on Archive.org does not
+change.
+
+The window lists the entries with their size and asks for confirmation;
+they go to the Recycle Bin, so the space comes back when it is emptied.
+The same question is offered when a box closes with every medium read
+well.
+
+From the console: `dskrun --free-space -o DIR` (all the closed boxes) or
+`dskrun --free-space -t TITLE`. It lists, asks Y/N and deletes for good:
+the console has no Recycle Bin.
+
 ## SAMdisk traps already met
 
 Verified by hand on the target PC.
