@@ -685,7 +685,14 @@ static void test_upload_problems(void)
     upload_case("Antico", "taskerror", "antico-ms-dos-ita", IA_ERR_VERIFY, &h, &res);
     CHECK(strstr(res.detail, "task") != NULL);
 
-    /* the tasks never end: uploaded, verification still to come */
+    /* a task still queued with the files already in the item (the derive):
+     * verified at once, without waiting for it */
+    item_reset();
+    memset(&h, 0, sizeof(h));
+    upload_case("Antico", "derive", "antico-ms-dos-ita", IA_OK, &h, &res);
+    CHECK(ia_box_state(bag, NULL) == IA_ST_VERIFIED);
+
+    /* the tasks never end and the files are not there: verification still to come */
     item_reset();
     memset(&h, 0, sizeof(h));
     upload_case("Antico", "busy", "antico-ms-dos-ita", IA_ERR_PENDING, &h, &res);

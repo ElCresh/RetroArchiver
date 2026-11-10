@@ -663,6 +663,7 @@ typedef struct {
     ia_progress pr;
     int deferred;                       /* fields too long for a header */
     char defer_name[4][32];
+    int quiet;                          /* a look at the item while its tasks run: no phase, no log */
 } ia_run;
 
 static void ia_log(ia_run *r, const char *fmt, ...) RA_PRINTF(2, 3);
@@ -1481,6 +1482,7 @@ static int meta_matches(const jval *m, const char *key, const char *want)
 static void verify_fail(ia_run *r, const char *name, const char *why)
 {
     r->res->mismatch++;
+    if (r->quiet) return;
     if (!r->res->file[0]) { CP(r->res->file, name); CP(r->res->detail, why); }
     ia_log(r, "verify: %s: %s", name, why);
 }
@@ -1492,7 +1494,7 @@ static int verify(ia_run *r, const char *id, const ia_files *plan)
     jval *root = NULL; item_view it;
     const jval *e;
 
-    tell(r, IA_PH_VERIFY);
+    if (!r->quiet) tell(r, IA_PH_VERIFY);
     snprintf(url, sizeof(url), "%s/metadata/%s", r->md_base, id);
     https_response_init(&rs);
     rc = ia_get(r, url, &rs);
@@ -1543,6 +1545,21 @@ static int verify(ia_run *r, const char *id, const ia_files *plan)
     json_free(root);
     https_response_free(&rs);
     return r->res->mismatch ? (r->res->why = IA_ERR_VERIFY) : IA_OK;
+}
+
+/* The item is already what went up, although Archive.org still has tasks
+ * for it? The derive (torrent, previews) can stay queued for hours after the
+ * files are in place, and the item is on the site long before. Nothing is
+ * reported: an item that is not there yet is just not ready */
+static int item_ready(ia_run *r, const char *id, const ia_files *plan)
+{
+    int rc, why = r->res->why;
+    r->quiet = 1;
+    rc = verify(r, id, plan);
+    r->quiet = 0;
+    r->res->mismatch = 0;
+    r->res->why = why;
+    return rc == IA_OK;
 }
 
 /* ---- the whole upload ---- */
@@ -1753,7 +1770,9 @@ int ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out)
         for (;;) {
             ok = tasks_done(&r, cfg->identifier, &bad, &grc);
             if (grc != IA_OK) { rc = grc; break; }
-            if (ok || left <= 0) break;
+            if (ok || bad > 0) break;
+            if (item_ready(&r, cfg->identifier, &plan)) { ok = 1; break; }
+            if (left <= 0) break;
             if (!wait_s(&r, poll < left ? poll : left, IA_PH_TASKS)) { rc = out->why = IA_ERR_CANCELED; break; }
             left -= poll;
         }

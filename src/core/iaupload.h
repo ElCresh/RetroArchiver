@@ -36,8 +36,8 @@
 /* the tries of a PUT that the network broke, and the seconds between them */
 #define IA_PUT_TRIES 3
 /* how long Archive.org is given to archive the files, and how often it is asked */
-#define IA_TASK_WAIT_S 600
-#define IA_TASK_POLL_S 30
+#define IA_TASK_WAIT_S 60
+#define IA_TASK_POLL_S 10
 
 /* why an upload, or one of the questions, stopped */
 enum {

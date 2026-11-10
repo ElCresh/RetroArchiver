@@ -54,7 +54,8 @@
  * "appears to be spam"), forbidden (403 on every PUT), badmd5 (the item
  * reports another MD5 for the last file), extra (a file under data/ that
  * the package has not), taskerror (a task in error), busy (a task that
- * never ends)
+ * never ends, and the item has no files yet), derive (a task that never
+ * ends, with the files already in the item)
  *   /redirect       307 to /hello;  /redirect-put: 307 to /upload
  *   /redirect-away  307 to https://example.com/hello
  *   /redirect-loop  307 to itself
@@ -717,6 +718,7 @@ static int serve_item(conn *c, const request *rq)
             long long size; char md5[48], sha1[64], name[600]; char *e = line + strlen(line);
             while (e > line && (e[-1] == '\n' || e[-1] == '\r')) *--e = 0;
             if (sscanf(line, "%lld %47s %63s %599[^\n]", &size, md5, sha1, name) != 4) continue;
+            if (is_scenario(rq, "busy")) continue;      /* not archived yet */
             n++;
             /* badmd5: the last file comes back with another MD5 */
             if (bad && n == nfiles) md5[0] = md5[0] == '0' ? '1' : '0';
@@ -877,7 +879,7 @@ static int serve_item_tasks(conn *c, const request *rq)
 {
     const char *json = "Content-Type: application/json\r\n";
     char body[300];
-    int queued = is_scenario(rq, "busy") ? 1 : 0, bad = is_scenario(rq, "taskerror") ? 1 : 0;
+    int queued = is_scenario(rq, "busy") || is_scenario(rq, "derive") ? 1 : 0, bad = is_scenario(rq, "taskerror") ? 1 : 0;
     if (!good_keys(rq)) {
         static const char refused[] = "{\"success\":false,\"error\":\"authentication failed\"}";
         return respond(c, 401, json, refused, sizeof(refused) - 1);
