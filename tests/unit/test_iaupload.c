@@ -698,6 +698,28 @@ static void test_upload_problems(void)
     upload_case("Antico", "busy", "antico-ms-dos-ita", IA_ERR_PENDING, &h, &res);
     CHECK(ia_box_state(bag, NULL) == IA_ST_PENDING);
 
+    /* Verify alone, later: nothing goes up and no field is written. While
+     * the item is not there the box stays to verify; then it is verified;
+     * an item that differs is a failure */
+    {
+        static const char *const sc[] = { "busy", NULL, "badmd5" };
+        static const int want[] = { IA_ERR_PENDING, IA_OK, IA_ERR_VERIFY };
+        static const int st[] = { IA_ST_PENDING, IA_ST_VERIFIED, IA_ST_FAILED };
+        int k;
+        for (k = 0; k < 3; k++) {
+            sb_init(&err);
+            CHECK(ia_meta_from_box(bag, NULL, &m, &err) == 0);
+            sb_free(&err);
+            cfg = make_cfg(bag, &m, "antico-ms-dos-ita", md, s3, sc[k]);
+            cfg.verify_only = 1;
+            memset(&h, 0, sizeof(h));
+            host = make_host(&h);
+            CHECK(ia_upload(&cfg, &host, &res) == want[k]);
+            CHECK(res.files_sent == 0);
+            CHECK(ia_box_state(bag, NULL) == st[k]);
+        }
+    }
+
     /* the item belongs to somebody else: a 403 on an item that exists */
     item_reset();
     memset(&h, 0, sizeof(h));

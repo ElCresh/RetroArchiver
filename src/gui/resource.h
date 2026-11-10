@@ -165,6 +165,7 @@
 #define IDC_IU_BAR_TOTAL 1706
 #define IDC_IU_URL       1707
 #define IDC_IU_OPEN      1708
+#define IDC_IU_VERIFY    1709             /* only reads the item: the check of an upload left to verify */
 
 #define IDC_IU_ID_L      1710
 #define IDC_IU_ID        1711

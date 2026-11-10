@@ -98,6 +98,7 @@ typedef struct {
     int connect_ms, io_ms;      /* 0: the defaults of net.c */
     int task_wait_s, task_poll_s;   /* 0: IA_TASK_WAIT_S, IA_TASK_POLL_S */
     int put_tries;              /* 0: IA_PUT_TRIES */
+    int verify_only;            /* nothing goes up: the item against the record of the last upload */
     long long now;              /* the tests: the time the certificates are checked against */
 } ia_config;
 
@@ -170,7 +171,12 @@ int  ia_plan(const char *bagdir, const ia_record *prev, ia_files *out, strbuf *e
  * x-archive-keep-old-version so the old ones stay in the item's history;
  * the files the box no longer has are deleted the same way; the fields
  * that differ from the item are written with one JSON Patch; then the same
- * wait and verification as the first time. */
+ * wait and verification as the first time.
+ * With cfg->verify_only nothing is sent and no field is written: the item
+ * is read and compared with the files and the fields the record says went
+ * up (the box may have changed since), and the record gets the outcome:
+ * IA_OK and verified, IA_ERR_VERIFY and failed, IA_ERR_PENDING (the record
+ * stays as it was) while Archive.org still has tasks and the item differs. */
 int  ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out);
 
 /* the journal of an upload under way: one line per finished file. A

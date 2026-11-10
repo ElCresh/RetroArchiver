@@ -49,6 +49,7 @@ typedef struct {
     char cacert[3 * MAX_PATH];
     ia_keys keys;
     int running, asking, closing, uploaded;
+    int verifying;                      /* the job under way is Verify: nothing goes up */
     volatile LONG cancel;
     char id[IA_ID_MAX];
 } iudlg;
@@ -239,6 +240,9 @@ static void id_changed(iudlg *d)
     EnableWindow(GetDlgItem(d->dlg, IDC_IU_UPLOAD),
                  ia_ident_ok(id) && !d->running && !d->reading && (!d->update || d->have_live) &&
                  IsDlgButtonChecked(d->dlg, IDC_IU_UNDERSTOOD) == BST_CHECKED);
+    /* Verify only reads: no "I understand", and not with an upload left halfway */
+    ShowWindow(GetDlgItem(d->dlg, IDC_IU_VERIFY), d->update && !d->missing && !d->running ? SW_SHOW : SW_HIDE);
+    EnableWindow(GetDlgItem(d->dlg, IDC_IU_VERIFY), d->update && !d->missing && !d->running);
 }
 
 /* ---- an update ---- */
@@ -465,6 +469,7 @@ typedef struct {
     unsigned kept;
     volatile LONG *cancel;
     int last_pct, last_file;
+    int verify;
 } iujob;
 
 static void job_progress(void *ctx, const ia_progress *p)
@@ -522,6 +527,7 @@ static DWORD WINAPI upload_worker(LPVOID p)
         cfg.identifier = j->id;
         cfg.meta = &j->meta;
         cfg.kept = j->kept;
+        cfg.verify_only = j->verify;
         host.ctx = j;
         host.progress = job_progress;
         host.log = job_log;
@@ -689,14 +695,16 @@ static void show_running(iudlg *d, int on)
     ShowWindow(GetDlgItem(d->dlg, IDC_IU_UPLOAD), on ? SW_HIDE : SW_SHOW);
     EnableWindow(GetDlgItem(d->dlg, IDC_IU_STOP), on);
     ShowWindow(GetDlgItem(d->dlg, IDC_IU_STOP), on ? SW_SHOW : SW_HIDE);
+    if (on) ShowWindow(GetDlgItem(d->dlg, IDC_IU_VERIFY), SW_HIDE);
 }
 
-static void upload_start(iudlg *d)
+static void upload_start(iudlg *d, int verify)
 {
     iujob *j;
     HANDLE th;
     if (d->running || !ia_ident_ok(d->id)) return;
     if ((j = (iujob *)calloc(1, sizeof(iujob))) == NULL) return;
+    d->verifying = j->verify = verify;
     fields_get(d, &d->sent);
     j->dlg = d->dlg;
     j->logwnd = d->logwnd;
@@ -721,7 +729,7 @@ static void upload_start(iudlg *d)
     SetThreadPriority(th, THREAD_PRIORITY_BELOW_NORMAL);
     CloseHandle(th);
     show_running(d, 1);
-    SetDlgItemTextW(d->dlg, IDC_IU_PROG, tr(T_IAUP_PH_PREPARE));
+    SetDlgItemTextW(d->dlg, IDC_IU_PROG, tr(verify ? T_IAUP_PH_VERIFY : T_IAUP_PH_PREPARE));
     SendDlgItemMessageW(d->dlg, IDC_IU_BAR_FILE, PBM_SETRANGE32, 0, 1000);
     SendDlgItemMessageW(d->dlg, IDC_IU_BAR_TOTAL, PBM_SETRANGE32, 0, 1000);
 }
@@ -755,6 +763,16 @@ static void on_done(iudlg *d, ia_result *r)
     show_running(d, 0);
     if (r->files_sent > 0 || r->why == IA_OK) d->uploaded = 1;
     result_text(d, r, w, 1200);
+    if (d->verifying) {                 /* nothing went up: the outcome, and the window as it was */
+        d->verifying = 0;
+        if (r->why == IA_OK) put_w(w, 1200, tr(T_IAUP_VFY_OK));
+        else if (r->why == IA_ERR_PENDING) put_w(w, 1200, tr(T_IAUP_VFY_PENDING));
+        if (r->why == IA_ERR_VERIFY) d->uploaded = 1;      /* the Archive shows the new state */
+        SetDlgItemTextW(d->dlg, IDC_IU_WARN, w);    /* several lines: the progress line has one */
+        free(r);
+        if (d->closing) DestroyWindow(d->dlg); else id_changed(d);
+        return;
+    }
     SetDlgItemTextW(d->dlg, IDC_IU_PROG, w);
     ShowWindow(GetDlgItem(d->dlg, IDC_IU_PROG), SW_SHOW);
     if (r->why == IA_OK || r->why == IA_ERR_PENDING || r->why == IA_ERR_VERIFY) {
@@ -863,6 +881,7 @@ static void dlg_init(HWND dlg, const ia_dlg_args *a, iudlg *d)
     SetDlgItemTextW(dlg, IDC_IU_STOP, tr(T_IAUP_STOP));
     SetDlgItemTextW(dlg, IDCANCEL, tr(T_IAUP_CLOSE));
     SetDlgItemTextW(dlg, IDC_IU_OPEN, tr(T_IAUP_OPENPAGE));
+    SetDlgItemTextW(dlg, IDC_IU_VERIFY, tr(T_IAUP_VERIFY));
     ShowWindow(GetDlgItem(dlg, IDC_IU_PROG), SW_HIDE);
     ShowWindow(GetDlgItem(dlg, IDC_IU_BAR_FILE), SW_HIDE);
     ShowWindow(GetDlgItem(dlg, IDC_IU_BAR_TOTAL), SW_HIDE);
@@ -995,7 +1014,8 @@ static INT_PTR CALLBACK dlg_proc(HWND dlg, UINT m, WPARAM wp, LPARAM lp)
         if (!d) return FALSE;
         switch (LOWORD(wp)) {
         case IDC_IU_UNDERSTOOD: id_changed(d); return TRUE;
-        case IDC_IU_UPLOAD:     upload_start(d); return TRUE;
+        case IDC_IU_UPLOAD:     upload_start(d, 0); return TRUE;
+        case IDC_IU_VERIFY:     upload_start(d, 1); return TRUE;
         case IDC_IU_STOP:       InterlockedExchange(&d->cancel, 1); return TRUE;
         case IDC_IU_OPEN: {
             wchar_t url[400];

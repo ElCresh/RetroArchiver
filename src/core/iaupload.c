@@ -1659,6 +1659,48 @@ int ia_upload(const ia_config *cfg, const ia_host *host, ia_result *out)
     snprintf(r.auth, sizeof(r.auth), "Authorization: LOW %s:%s\r\n",
              cfg->access ? cfg->access : "", cfg->secret ? cfg->secret : "");
 
+    if (cfg->verify_only) {
+        int bad = 0, grc = IA_OK, ok;
+        ia_config vc = *cfg;
+        if (!upd) { out->box_why = IA_BOX_OK; rc = out->why = IA_ERR_BOX; goto out; }
+        ia_files_free(&plan);
+        for (i = 0; i < rec.files.n; i++) {
+            ia_file f = rec.files.f[i];
+            f.what = IA_F_SAME;
+            ia_files_add(&plan, &f);
+        }
+        vc.meta = &rec.meta;
+        r.cfg = &vc;
+        ia_log(&r, "Verifying %s against the upload of %s", out->identifier,
+               rec.updated[0] ? rec.updated : rec.created);
+        ok = tasks_done(&r, cfg->identifier, &bad, &grc);
+        if (grc != IA_OK) { rc = grc; goto out; }
+        if (bad > 0) {
+            verify_fail(&r, cfg->identifier, "a task of Archive.org ended in error");
+            rc = out->why = IA_ERR_VERIFY;
+        } else {
+            rc = verify(&r, cfg->identifier, &plan);
+        }
+        r.cfg = cfg;
+        if (rc != IA_OK && rc != IA_ERR_VERIFY) goto out;      /* the network: nothing is known */
+        if (rc == IA_ERR_VERIFY && !ok && !bad) {               /* still being archived */
+            ia_log(&r, "Archive.org has not finished: %s", out->detail);
+            rc = out->why = IA_ERR_PENDING;
+            goto out;
+        }
+        rec.state = rc == IA_OK ? IA_ST_VERIFIED : IA_ST_FAILED;
+        if (rc == IA_OK) meta_now(rec.verified);
+        record_event(&rec, "verify", rc == IA_OK ? ", \"result\": \"ok\"" : ", \"result\": \"failed\"");
+        sb_init(&err);
+        if (ia_record_save(cfg->bagdir, &rec, &err) && rc == IA_OK) {
+            CP(out->detail, err.s ? err.s : "");
+            rc = out->why = IA_ERR_RECORD;
+        }
+        sb_free(&err);
+        ia_log(&r, "Verification finished: state %s", ia_state_key(rec.state));
+        goto out;
+    }
+
     /* the item is gone (test_collection forgets its items after 30 days):
      * the box goes up again from the start, as the first time */
     if (upd) {
