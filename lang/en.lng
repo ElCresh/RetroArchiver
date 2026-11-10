@@ -178,6 +178,7 @@ archive.detail.version=version\s
 archive.detail.media=Media
 archive.detail.notes=Notes: %ls
 archive.detail.nonotes=No notes.
+archive.detail.twin=The same box is also in the folder %ls, which has %d media read (this one has %d). Keep one and move the other out of the archive folder, or delete it: until then neither can be resumed or edited.
 
 # Check hashes
 verify.changed.one=changed file
@@ -602,6 +603,7 @@ core.ses.stays.err=%ls. %ls stays as it was.
 core.ses.mkdir.path=Cannot create the folder %ls: check the path.
 core.ses.too.many=Too many media: at most %ls per box.
 core.ses.close.failed=%ls. Start again with the same title: %ls will be asked for again.
+core.ses.twins=The box %ls is in two folders: %ls (%ls media read) and %ls (%ls media read). Keep one and move the other out of the archive folder, or delete it, then try again.
 core.meta.write=cannot write %ls: is the destination disk full or write-protected?
 core.meta.not.found=cannot find %ls: if the box is damaged, move its folder away and start over
 core.meta.unreadable=%ls cannot be read (%ls): if the box is damaged, move its folder away and start over
@@ -673,6 +675,7 @@ archive.text.errors.one=%d with errors
 archive.text.errors.many=%d with errors
 archive.text.unreadable=unreadable
 archive.text.none=no media read
+archive.text.twin=same box in another folder
 archive.text.media=%d / %d %ls
 archive.text.media.numbers=%d / %d
 archive.text.medium=%ls %d

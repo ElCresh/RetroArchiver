@@ -174,6 +174,7 @@ archive.detail.version=versione\s
 archive.detail.media=Supporti
 archive.detail.notes=Note: %ls
 archive.detail.nonotes=Nessuna nota.
+archive.detail.twin=Lo stesso cofanetto è anche nella cartella %ls, che ha %d supporti letti (questa ne ha %d). Tienine una e sposta l'altra fuori dalla cartella dell'archivio, oppure eliminala: fino ad allora nessuna delle due si può riprendere o modificare.
 
 # Check hashes
 verify.changed.one=file cambiato
@@ -598,6 +599,7 @@ core.ses.stays.err=%ls. %ls resta com'era.
 core.ses.mkdir.path=Non riesco a creare la cartella %ls: controlla il percorso.
 core.ses.too.many=Troppi supporti: al massimo %ls per cofanetto.
 core.ses.close.failed=%ls. Ricomincia con lo stesso titolo: %ls verrà chiesto di nuovo.
+core.ses.twins=Il cofanetto %ls è in due cartelle: %ls (supporti letti: %ls) e %ls (supporti letti: %ls). Tienine una e sposta l'altra fuori dalla cartella dell'archivio, oppure eliminala, poi riprova.
 core.meta.write=non riesco a scrivere %ls: il disco di destinazione è pieno o protetto dalla scrittura?
 core.meta.not.found=non trovo %ls: se il cofanetto è danneggiato, sposta altrove la sua cartella e ricomincia
 core.meta.unreadable=%ls non si legge (%ls): se il cofanetto è danneggiato, sposta altrove la sua cartella e ricomincia
@@ -669,6 +671,7 @@ archive.text.errors.one=%d con errori
 archive.text.errors.many=%d con errori
 archive.text.unreadable=illeggibile
 archive.text.none=nessun supporto letto
+archive.text.twin=stesso cofanetto in un'altra cartella
 archive.text.media=%d / %d %ls
 archive.text.media.numbers=%d / %d
 archive.text.medium=%ls %d

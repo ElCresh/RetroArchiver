@@ -389,6 +389,30 @@ static void find_box(void)
     CHECK(session_find_box(FROOT, "Beta", "", "", found, reads) == 2);
     CHECK((!strcmp(found[0], want) && !strcmp(found[1], p) && reads[0] == 1 && reads[1] == 0) ||
           (!strcmp(found[1], want) && !strcmp(found[0], p) && reads[1] == 1 && reads[0] == 0));
+
+    /* nobody chooses between the two: the message names both, with what each has read */
+    sb_init(&err);
+    CHECK(session_resolve(FROOT, "Beta", "", "", found[0], sizeof(found[0]), &err) == -1);
+    CHECK(err.s && strstr(err.s, "The box \"Beta\" is in two folders: ") == err.s);
+    CHECK(err.s && strstr(err.s, "given by hand (1 media read)") && strstr(err.s, "Beta copy (0 media read)"));
+    CHECK(err.s && strstr(err.s, "Keep one and move the other out of the archive folder, or delete it, then try again."));
+    sb_free(&err);
+    CHECK(k_run("Beta", "", "", NULL, 0, CMD_READ, CMD_QUIT) == SESSION_ERROR);
+    CHECK(strstr(k_err, "is in two folders") != NULL);
+    /* knowing one of the folders does not make it the right one */
+    CHECK(k_run("Beta", "", "", want, 0, CMD_READ, CMD_QUIT) == SESSION_ERROR);
+    CHECK(strstr(k_err, "is in two folders") != NULL);
+    /* the pair the old program left: the real box renamed, and an empty one
+     * with the canonical name. Edit stops too */
+    u8_join(want, sizeof(want), FROOT, "zz renamed");
+    u8_join(p, sizeof(p), FROOT, "Alpha (1) [It]");
+    clone_box(want, p);
+    CHECK(k_run("Alpha", "1", "It", NULL, 1, CMD_READ, CMD_QUIT) == SESSION_ERROR);
+    CHECK(strstr(k_err, "zz renamed (2 media read)") && strstr(k_err, "Alpha (1) [It] (0 media read)"));
+    CHECK(k_run("Alpha", "1", "It", NULL, 0, CMD_READ, CMD_QUIT) == SESSION_ERROR);
+    /* one moved away: it works again */
+    u8_rmtree(p);
+    CHECK(k_run("Alpha", "1", "It", NULL, 1, CMD_READ, CMD_QUIT) == SESSION_CLOSED);
 }
 
 void test_session(void)

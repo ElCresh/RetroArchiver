@@ -314,6 +314,56 @@ static void check_digests(void)
     sb_free(&err);
 }
 
+/* two folders with the same title, edition and language are the same box
+ * twice: each row says so and names the other folder */
+static void check_twins(void)
+{
+#define TW "tmp_unit/gemelli"
+    arc_list l; strbuf err; meta_box *b; const arc_box *x, *y; char t[200]; int i, n = 0;
+    sb_init(&err);
+    u8_mkdirs(TW);
+    CHECK(bag_create(TW "/renamed by hand", &err) == 0);
+    b = box("Office", "Windows", 2);
+    str_copy(b->edition, sizeof(b->edition), "97");
+    str_copy(b->language, sizeof(b->language), "Italiano");
+    disk(b, TW "/renamed by hand", 1, "clean", "2026-10-12T10:00:00");
+    disk(b, TW "/renamed by hand", 2, "clean", "2026-10-12T10:05:00");
+    bag(b, TW "/renamed by hand", "2026-10-12T10:06:00");
+    CHECK(bag_create(TW "/Office (97) [Italiano]", &err) == 0);
+    b = box("Office", "Windows", 2);
+    str_copy(b->edition, sizeof(b->edition), "97");
+    str_copy(b->language, sizeof(b->language), "Italiano");
+    bag(b, TW "/Office (97) [Italiano]", NULL);
+    /* another language is another box; a broken bag has no identity */
+    CHECK(bag_create(TW "/Office (97) [English]", &err) == 0);
+    b = box("Office", "Windows", 2);
+    str_copy(b->edition, sizeof(b->edition), "97");
+    str_copy(b->language, sizeof(b->language), "English");
+    bag(b, TW "/Office (97) [English]", NULL);
+    CHECK(bag_create(TW "/Office", &err) == 0);
+    CHECK(bag_create(TW "/Office 2", &err) == 0);
+    sb_free(&err);
+
+    CHECK(arc_scan(TW, &l) == 0 && l.n == 5);
+    x = y = NULL;
+    for (i = 0; i < l.n; i++) {
+        if (l.box[i].twin) n++;
+        if (strstr(l.box[i].dir, "renamed by hand")) x = &l.box[i];
+        if (strstr(l.box[i].dir, "[Italiano]")) y = &l.box[i];
+        if (l.box[i].state == ARC_BROKEN) CHECK(!l.box[i].twin);
+    }
+    CHECK(n == 2 && x && y);
+    CHECK(x && y && x->twin && !strcmp(x->twin_dir, y->dir) && x->twin_archived == 0);
+    CHECK(x && y && y->twin && !strcmp(y->twin_dir, x->dir) && y->twin_archived == 2);
+    /* a warning even on a box that is otherwise fine, or just open */
+    CHECK(x && arc_tone(x) == TONE_WARN);
+    CHECK(y && arc_tone(y) == TONE_WARN);
+    if (x) { arc_outcome(x, t, sizeof(t)); CHECK_STR(t, "2 clean, same box in another folder"); }
+    if (y) { arc_outcome(y, t, sizeof(t)); CHECK_STR(t, "no media read, same box in another folder"); }
+    arc_free(&l);
+#undef TW
+}
+
 void test_archive(void)
 {
     arc_list l;
@@ -323,6 +373,7 @@ void test_archive(void)
     check_texts();
     check_verify();
     check_digests();
+    check_twins();
     /* a new, empty archive: no boxes, but no error */
     u8_mkdirs("tmp_unit/archivio_vuoto");
     CHECK(arc_scan("tmp_unit/archivio_vuoto", &l) == 0 && l.n == 0);

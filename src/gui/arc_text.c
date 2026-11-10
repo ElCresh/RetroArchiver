@@ -80,6 +80,7 @@ void arc_outcome_w(const arc_box *b, wchar_t *out, size_t n)
     part(out, n, b->fragile, T_ARCT_FRAGILE_ONE, T_ARCT_FRAGILE_MANY);
     part(out, n, b->errors, T_ARCT_ERRORS_ONE, T_ARCT_ERRORS_MANY);
     if (!out[0]) put0(out, n, b->state == ARC_BROKEN ? T_ARCT_UNREADABLE : T_ARCT_NONE);
+    if (b->twin) { put0(out, n, T_ARCT_SEP); put0(out, n, T_ARCT_TWIN); }
 }
 
 void arc_media_w(const arc_box *b, wchar_t *out, size_t n)

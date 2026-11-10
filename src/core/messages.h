@@ -34,6 +34,7 @@
 #define M_SES_MKDIR_PATH "Cannot create the folder %s: check the path."
 #define M_SES_TOO_MANY "Too many media: at most %d per box."
 #define M_SES_CLOSE_FAILED "%s. Start again with the same title: %s will be asked for again."
+#define M_SES_TWINS "The box %s is in two folders: %s (%d media read) and %s (%d media read). Keep one and move the other out of the archive folder, or delete it, then try again."
 
 /* meta.c */
 #define M_META_WRITE "cannot write %s: is the destination disk full or write-protected?"

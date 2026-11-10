@@ -158,14 +158,39 @@ int session_find_box(const char *outroot, const char *title, const char *edition
     return x.n;
 }
 
+static void box_name(const char *title, const char *edition, const char *language, char *out, size_t n);
+
+void session_twins_text(strbuf *out, const char *title, const char *edition, const char *language,
+                        const char *dir_a, int reads_a, const char *dir_b, int reads_b)
+{
+    char name[700];
+    box_name(title, edition ? edition : "", language ? language : "", name, sizeof(name));
+    sb_printf(out, M_SES_TWINS, name, dir_a, reads_a, dir_b, reads_b);
+}
+
+/* the folder of the box, or the one given by who starts the session. Two
+ * folders with the same box stop everything: one of them may be the empty
+ * box an older version opened next to the renamed one, and only the user
+ * knows which to keep */
+static int resolve(const char *outroot, const char *title, const char *edition, const char *language,
+                   const char *given, char *out, size_t n, strbuf *err)
+{
+    char found[2][1024]; int reads[2], k;
+    k = session_find_box(outroot, title, edition, language, found, reads);
+    if (k >= 2) {
+        session_twins_text(err, title, edition, language, found[0], reads[0], found[1], reads[1]);
+        return -1;
+    }
+    if (given && given[0]) str_copy(out, n, given);
+    else if (k == 1) str_copy(out, n, found[0]);
+    else session_bagdir(out, n, outroot, title, edition, language);
+    return 0;
+}
+
 int session_resolve(const char *outroot, const char *title, const char *edition, const char *language,
                     char *out, size_t n, strbuf *err)
 {
-    char found[2][1024]; int reads[2];
-    (void)err;
-    if (session_find_box(outroot, title, edition, language, found, reads) == 1) str_copy(out, n, found[0]);
-    else session_bagdir(out, n, outroot, title, edition, language);
-    return 0;
+    return resolve(outroot, title, edition, language, NULL, out, n, err);
 }
 
 static const char *const default_names[MEDIA_KINDS] = { "FLOPPY{nn}", "CD{nn}", "DVD{nn}" };
@@ -1411,8 +1436,7 @@ int session_run(const session_cfg *cfg, const session_host *host)
         ev(&r, EV_ERROR, 0, M_SES_MKDIR_PATH, cfg->outroot);
         goto out;
     }
-    if (cfg->bagdir && cfg->bagdir[0]) CP(r.bagdir, cfg->bagdir);
-    else if (session_resolve(cfg->outroot, box->title, box->edition, box->language, r.bagdir, sizeof(r.bagdir), &r.msg)) {
+    if (resolve(cfg->outroot, box->title, box->edition, box->language, cfg->bagdir, r.bagdir, sizeof(r.bagdir), &r.msg)) {
         ev(&r, EV_ERROR, 0, "%s", r.msg.s);
         goto out;
     }

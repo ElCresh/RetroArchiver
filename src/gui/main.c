@@ -4127,6 +4127,12 @@ static void paint_detail(HDC dc, int w, int h)
         wcscat(t, L"\n");
         wcscat(t, tr(T_EDIT_OLD_FORMAT));
     }
+    if (b->twin) {                      /* which is the other folder, and what each holds */
+        wchar_t other[700], line[1100];
+        to_w(b->twin_dir, other, 700);
+        _snwprintf(line, 1100, tr(T_DETAIL_TWIN), other, b->twin_archived, b->archived); line[1099] = 0;
+        if (wcslen(t) + wcslen(line) + 2 < 1200) { wcscat(t, L"\n"); wcscat(t, line); }
+    }
     SetRect(&r, 0, 0, w - 16, 0);
     DrawTextW(dc, t, -1, &r, DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX);
     th = r.bottom;
@@ -4222,11 +4228,32 @@ static void go_setup(int from_archive)
     focus_to(GetDlgItem(g_wnd, ID_TITLE));
 }
 
+/* The chosen box is in two folders of the archive: Resume and Edit would have
+ * to choose one, and they do not. Looked up again now: the list may be older
+ * than what the user did to the folders. 1 if it stops, having said why */
+static int twin_stop(void)
+{
+    const arc_box *b = &g_arc.box[g_pick];
+    char found[2][1024]; int reads[2]; strbuf s; wchar_t w[1800];
+    if (!b->twin) return 0;
+    if (session_find_box(g_arc_root, b->title, b->edition, b->language, found, reads) < 2) {
+        archive_scan();                 /* solved in the meantime: the list catches up */
+        return 0;
+    }
+    sb_init(&s);
+    session_twins_text(&s, b->title, b->edition, b->language, found[0], reads[0], found[1], reads[1]);
+    core_w(s.s ? s.s : "", w, 1800, 1);
+    sb_free(&s);
+    MessageBoxW(g_wnd, w, L"RetroArchiver", MB_ICONEXCLAMATION);
+    return 1;
+}
+
 /* Riprendi: the open box's fields, then start as with Inizia */
 static void resume_pick(void)
 {
     char data[640], dir[600]; meta_box *m; strbuf err; wchar_t w[700];
     if (!pick_open() || g_running) return;
+    if (twin_stop()) return;
     str_copy(dir, sizeof(dir), g_arc.box[g_pick].dir);      /* go_setup and the scan move g_pick */
     u8_join(data, sizeof(data), dir, "data");
     if (!(m = meta_new())) return;
@@ -4710,6 +4737,7 @@ static void edit_pick(void)
     box_edit_result r; edit_change ch[META_MAXDISK + 16]; int rc, n;
     if (!pick_closed() || g_running || g_saving) return;
     str_copy(dir, sizeof(dir), g_arc.box[g_pick].dir);
+    if (twin_stop()) return;
     if (g_arc.box[g_pick].old_format) {        /* 261017: converted first, then edited */
         wchar_t t[300];
         to_w(g_arc.box[g_pick].title, t, 300);

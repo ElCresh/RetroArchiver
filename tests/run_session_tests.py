@@ -1370,6 +1370,21 @@ rc, out = convert("-t", "Vecchio spostato")
 ok("renamed: --convert -t finds the box", rc == 0 and "Converted: Vecchio spostato" in out
    and meta(moved)["schema"] == "retroarchiver-3" and not os.path.exists(os.path.join(CONV, "Vecchio spostato")), out)
 
+# two folders with the same box: nobody chooses, the message names both
+run("Doppio", 2, ["ident_a", "ident_b"], ["", "Q"])
+shutil.copytree(bag("Doppio"), bag("Doppio - copia"))
+before = sorted(os.listdir(ARCH))
+rc, out = run("Doppio", 2, ["fat_144", "fat_144"], [""])
+ok("two folders: the session stops and names both, with their media", rc == 2 and "is in two folders" in out
+   and "Doppio (1 media read)" in out and "Doppio - copia (1 media read)" in out
+   and "Keep one and move the other" in out and sorted(os.listdir(ARCH)) == before, out)
+rc, out = run("Doppio", 0, [], [""], ["--reread", "floppy1"])
+ok("two folders: --reread stops too", rc == 2 and "is in two folders" in out, out)
+shutil.rmtree(bag("Doppio - copia"))
+rc, out = run("Doppio", 2, ["fat_144", "fat_144"], [""])
+ok("two folders: one removed, the box is resumed and closed", rc == 0
+   and check_bag.check(bag("Doppio"), PROFILE) == [], out)
+
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))
 sys.exit(1 if fails else 0)

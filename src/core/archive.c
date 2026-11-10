@@ -222,6 +222,28 @@ static int by_date(const void *a, const void *b)
     return c ? c : strcmp(x->title, y->title);
 }
 
+static int same_box(const arc_box *a, const arc_box *b)
+{
+    return a->state != ARC_BROKEN && b->state != ARC_BROKEN && !strcmp(a->title, b->title)
+        && !strcmp(a->edition, b->edition) && !strcmp(a->language, b->language);
+}
+
+static void twin_of(arc_box *b, const arc_box *other)
+{
+    if (b->twin) return;
+    b->twin = 1;
+    CP(b->twin_dir, other->dir);
+    b->twin_archived = other->archived;
+}
+
+static void mark_twins(arc_list *l)
+{
+    int i, k;
+    for (i = 0; i < l->n; i++)
+        for (k = i + 1; k < l->n; k++)
+            if (same_box(&l->box[i], &l->box[k])) { twin_of(&l->box[i], &l->box[k]); twin_of(&l->box[k], &l->box[i]); }
+}
+
 int arc_scan(const char *root, arc_list *out)
 {
     scan_ctx s;
@@ -229,6 +251,7 @@ int arc_scan(const char *root, arc_list *out)
     s.root = root; s.l = out;
     if (u8_listdir(root, add_bag, &s)) return -1;
     if (out->n > 1) qsort(out->box, (size_t)out->n, sizeof(arc_box), by_date);
+    mark_twins(out);
     return 0;
 }
 
@@ -242,8 +265,9 @@ void arc_free(arc_list *l)
 
 int arc_tone(const arc_box *b)
 {
-    if (b->state == ARC_OPEN) return TONE_OPEN;
     if (b->state == ARC_BROKEN || b->errors) return TONE_BAD;
+    if (b->twin) return TONE_WARN;         /* to look at before anything else is done with it */
+    if (b->state == ARC_OPEN) return TONE_OPEN;
     if (b->state == ARC_INCOMPLETE || b->marginal || b->fragile) return TONE_WARN;
     return TONE_OK;
 }
@@ -264,6 +288,7 @@ void arc_outcome(const arc_box *b, char *out, size_t n)
     add_part(&s, b->fragile, "fragile", "fragile");
     add_part(&s, b->errors, "with errors", "with errors");
     if (!s.len) sb_puts(&s, b->state == ARC_BROKEN ? "unreadable" : "no media read");
+    if (b->twin) sb_puts(&s, ", same box in another folder");
     str_copy(out, n, s.s);
     sb_free(&s);
 }

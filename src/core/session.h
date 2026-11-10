@@ -148,9 +148,13 @@ int  session_find_box(const char *outroot, const char *title, const char *editio
                       char found[2][1024], int reads[2]);
 /* the folder a session on that box works in: the one that holds it, whatever
  * its name; if none does, the one session_bagdir gives (which also covers a
- * bag whose metadata.json is missing). 0, or -1 with the reason in err */
+ * bag whose metadata.json is missing). Two folders with that box: nobody
+ * chooses between them, -1 with M_SES_TWINS in err. 0 otherwise */
 int  session_resolve(const char *outroot, const char *title, const char *edition, const char *language,
                      char *out, size_t n, strbuf *err);
+/* M_SES_TWINS for that box: the two folders and the media each has read */
+void session_twins_text(strbuf *out, const char *title, const char *edition, const char *language,
+                        const char *dir_a, int reads_a, const char *dir_b, int reads_b);
 
 /* the naming scheme of a kind: the one fixed in the box, otherwise the
  * one in names (may be NULL), otherwise FLOPPY{nn} CD{nn} DVD{nn} */

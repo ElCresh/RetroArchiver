@@ -34,6 +34,12 @@ typedef struct {
     char error[300];                /* ARC_BROKEN: what is wrong */
     int  editing;                   /* an edit is under way, or was interrupted (editing/) */
     int  old_format;                /* written by 261017: to convert before editing it */
+    /* another folder of the archive holds the same box (title, edition and
+     * language): that folder and its media with an image. Set by arc_scan;
+     * a box that cannot be read has no identity and is never a twin */
+    int  twin;
+    char twin_dir[600];
+    int  twin_archived;
     /* Archive.org, from uploads/archive.org.json (iarec.h): IA_ST_* , the
      * item's identifier and when it was last verified or uploaded */
     int  ia_state;

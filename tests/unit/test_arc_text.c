@@ -80,6 +80,13 @@ void test_arc_text(void)
     b.redump = 1; b.clean = 2;
     arc_outcome_w(&b, w, 1200);
     CHECK(!wcscmp(w, L"2 clean (1 verified with redump)"));
+    /* the same box in two folders: the outcome says so */
+    make(&b, ARC_COMPLETE, "pp", "ff");
+    b.twin = 1;
+    CHECK(same(&b, 0));
+    make(&b, ARC_OPEN, "--", "ff");
+    b.twin = 1;
+    CHECK(same(&b, 0));
     make(&b, ARC_BROKEN, "", "");
     str_copy(b.error, sizeof(b.error), "cannot find x/metadata.json: if the box is damaged, move its folder away and start over");
     arc_advice_w(&b, w, 1200);
@@ -93,6 +100,9 @@ void test_arc_text(void)
                      L"le letture non coincidono del tutto."));
     arc_outcome_w(&b, w, 1200);
     CHECK(!wcscmp(w, L"1 pulito, 1 marginale"));
+    b.twin = 1;
+    arc_outcome_w(&b, w, 1200);
+    CHECK(!wcscmp(w, L"1 pulito, 1 marginale, stesso cofanetto in un'altra cartella"));
     make(&b, ARC_COMPLETE, "pp", "ff");
     arc_advice_w(&b, w, 1200);
     CHECK(!wcscmp(w, L"Chiuso completo: tutti i floppy letti e verificati."));
