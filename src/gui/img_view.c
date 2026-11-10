@@ -261,6 +261,7 @@ void image_viewer(HWND owner, const view_item *items, int n, int first)
 #define TS_CLASS L"RetroArchiverThumbs"
 #define TS_SIZE 48
 #define TS_GAP 6
+#define TS_LABEL 18             /* the line "Images (5):" above the thumbnails */
 
 typedef struct { int n; view_item item[1]; } ts_list;
 typedef struct {
@@ -268,7 +269,6 @@ typedef struct {
     LONG gen;
     ts_list *list;                  /* in display order; NULL: no box */
     HBITMAP thumb[META_MAXIMG];
-    RECT link;                      /* "Images...": where a click opens the dialog */
     int shown;                      /* how many thumbnails fit */
     int has_box;
 } strip;
@@ -328,12 +328,13 @@ static void ts_clear(strip *s)
     s->list = NULL;
 }
 
+/* "Images (5):" on its own line and the thumbnails under it, from the left
+ * edge; without images only the line that says so */
 static void ts_paint(strip *s, HDC dc)
 {
-    RECT r, t; wchar_t w[200]; SIZE sz; HDC mem; HFONT f, under; LOGFONTW lf; int i, x = 0, n, y, room;
+    RECT r, t; wchar_t w[200]; HDC mem; HFONT f; int i, x = 1, n, y = TS_LABEL + 1;
     GetClientRect(s->wnd, &r);
     FillRect(dc, &r, GetSysColorBrush(COLOR_BTNFACE));     /* the detail pane's own background */
-    SetRectEmpty(&s->link);
     s->shown = 0;
     if (!s->has_box) return;
     n = s->list ? s->list->n : 0;
@@ -344,21 +345,11 @@ static void ts_paint(strip *s, HDC dc)
     SetTextColor(dc, RGB(0x44, 0x44, 0x44));
     if (n) _snwprintf(w, 200, tr(T_STRIP_COUNT), n); else wcsncpy(w, tr(T_STRIP_NONE), 200);
     w[199] = 0;
-    GetTextExtentPoint32W(dc, w, (int)wcslen(w), &sz);
-    SetRect(&t, 0, 0, sz.cx, r.bottom);
-    DrawTextW(dc, w, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    x = sz.cx + 8;
-    /* the link's room on the right, then as many thumbnails as fit */
-    GetObjectW(f, sizeof(lf), &lf);
-    lf.lfUnderline = TRUE;
-    under = CreateFontIndirectW(&lf);
-    SelectObject(dc, under);
-    wcsncpy(w, tr(n ? T_STRIP_LINK : T_STRIP_LINK_ADD), 200); w[199] = 0;
-    GetTextExtentPoint32W(dc, w, (int)wcslen(w), &sz);
-    room = r.right - sz.cx - 12;
-    y = (r.bottom - TS_SIZE) / 2;
+    SetRect(&t, 0, 0, r.right, n ? TS_LABEL - 2 : r.bottom);
+    DrawTextW(dc, w, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
     mem = CreateCompatibleDC(dc);
-    for (i = 0; i < n && x + TS_SIZE <= room - (i < n - 1 ? 34 : 0); i++, x += TS_SIZE + TS_GAP) {
+    /* as many thumbnails as fit, with room for "+5" when some are left out */
+    for (i = 0; i < n && x + TS_SIZE <= r.right - (i < n - 1 ? 34 : 0); i++, x += TS_SIZE + TS_GAP) {
         if (s->thumb[i]) {
             HGDIOBJ o = SelectObject(mem, s->thumb[i]);
             BitBlt(dc, x, y, TS_SIZE, TS_SIZE, mem, 0, 0, SRCCOPY);
@@ -372,33 +363,17 @@ static void ts_paint(strip *s, HDC dc)
     if (s->shown < n) {                 /* "+5": the others are in the viewer */
         wchar_t more[16];
         _snwprintf(more, 16, L"+%d", n - s->shown); more[15] = 0;
-        SelectObject(dc, f);
-        SetRect(&t, x, 0, x + 34, r.bottom);
+        SetRect(&t, x, y, x + 34, y + TS_SIZE);
         DrawTextW(dc, more, -1, &t, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        x += 34;
-        SelectObject(dc, under);
     }
-    SetTextColor(dc, RGB(0x00, 0x55, 0xcc));
-    SetRect(&s->link, x + 4, (r.bottom - sz.cy) / 2, x + 4 + sz.cx, (r.bottom + sz.cy) / 2);
-    DrawTextW(dc, w, -1, &s->link, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-    SelectObject(dc, f);
-    DeleteObject(under);
 }
 
 /* the thumbnail at that point, -1 if none */
 static int ts_hit(const strip *s, int px, int py)
 {
-    RECT r; HDC dc; SIZE sz; wchar_t w[200]; HFONT f; int x, i;
+    int x = 1, y = TS_LABEL + 1, i;
     if (!s->list || !s->list->n) return -1;
-    GetClientRect(s->wnd, &r);
-    dc = GetDC(s->wnd);
-    f = (HFONT)SendMessageW(s->wnd, WM_GETFONT, 0, 0);
-    SelectObject(dc, f ? f : ui_font());
-    _snwprintf(w, 200, tr(T_STRIP_COUNT), s->list->n); w[199] = 0;
-    GetTextExtentPoint32W(dc, w, (int)wcslen(w), &sz);
-    ReleaseDC(s->wnd, dc);
-    x = sz.cx + 8;
-    if (py < (r.bottom - TS_SIZE) / 2 || py >= (r.bottom + TS_SIZE) / 2) return -1;
+    if (py < y || py >= y + TS_SIZE) return -1;
     for (i = 0; i < s->shown; i++, x += TS_SIZE + TS_GAP)
         if (px >= x && px < x + TS_SIZE) return i;
     return -1;
@@ -454,7 +429,7 @@ static LRESULT CALLBACK ts_proc(HWND w, UINT m, WPARAM wp, LPARAM lp)
         if (s && LOWORD(lp) == HTCLIENT) {
             GetCursorPos(&pt);
             ScreenToClient(w, &pt);
-            if (PtInRect(&s->link, pt) || ts_hit(s, pt.x, pt.y) >= 0) {
+            if (ts_hit(s, pt.x, pt.y) >= 0) {
                 SetCursor(LoadCursorW(NULL, (LPCWSTR)IDC_HAND));
                 return TRUE;
             }
@@ -463,9 +438,7 @@ static LRESULT CALLBACK ts_proc(HWND w, UINT m, WPARAM wp, LPARAM lp)
     case WM_LBUTTONUP:
         if (!s) break;
         pt.x = (short)LOWORD(lp); pt.y = (short)HIWORD(lp);
-        if (PtInRect(&s->link, pt))
-            PostMessageW(GetParent(w), WM_COMMAND, MAKEWPARAM(s->id, THUMBS_LINK), (LPARAM)w);
-        else if ((i = ts_hit(s, pt.x, pt.y)) >= 0)
+        if ((i = ts_hit(s, pt.x, pt.y)) >= 0)
             PostMessageW(GetParent(w), WM_COMMAND, MAKEWPARAM(s->id, THUMBS_VIEW + i), (LPARAM)w);
         return 0;
     }

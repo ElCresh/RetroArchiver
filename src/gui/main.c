@@ -1414,8 +1414,8 @@ static void layout_setup(int W, int H)
 /* ---- the archive ---- */
 
 #define SEL_H 200                       /* height of the "Il cofanetto scelto" box */
-#define STRIP_H 58                      /* the strip of thumbnails under the detail: 48 and a margin */
-#define STRIP_LINE 20                   /* without images: only the line with the link */
+#define STRIP_H 76                      /* the strip under the detail: its line, the thumbnails (48) and a margin */
+#define STRIP_LINE 20                   /* without images: only the line that says so */
 
 static int pick_closed(void);
 
@@ -6060,9 +6060,8 @@ static int on_command(HWND h, WPARAM wp)
     case ID_AIMAGES: images_pick(); return 1;
     case ID_ANEW:    go_setup(1); return 1;
     case ID_AUSE:    use_below(); return 1;
-    case ID_ATHUMBS:                    /* the strip: its link, or one of its thumbnails */
-        if (HIWORD(wp) == THUMBS_LINK) images_pick();
-        else if (HIWORD(wp) >= THUMBS_VIEW) thumbs_view(g_athumbs, g_wnd, HIWORD(wp) - THUMBS_VIEW);
+    case ID_ATHUMBS:                    /* the strip: one of its thumbnails */
+        if (HIWORD(wp) >= THUMBS_VIEW) thumbs_view(g_athumbs, g_wnd, HIWORD(wp) - THUMBS_VIEW);
         return 1;
     case ID_START:  start(); return 1;
     case ID_RESUME: resume(); return 1;

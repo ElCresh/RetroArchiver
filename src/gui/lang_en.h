@@ -785,8 +785,6 @@ T(T_IMG_SAVED, "images.saved", L"“%ls”: images saved, package closed and ver
 T(T_EDIT_CH_REMOVED_IMG, "edit.change.removed.images", L"%ls removed: its reads and its images (%d) go to set-aside")
 T(T_STRIP_COUNT, "strip.count", L"Images (%d):")
 T(T_STRIP_NONE, "strip.none", L"No images of the box, of its media or of its inserts.")
-T(T_STRIP_LINK, "strip.link", L"Images...")
-T(T_STRIP_LINK_ADD, "strip.link.add", L"Add images...")
 T(T_VIEW_TITLE, "view.title", L"%ls - %d of %d - %ls")
 T(T_VIEW_PREV, "view.previous", L"< Previous")
 T(T_VIEW_NEXT, "view.next", L"Next >")

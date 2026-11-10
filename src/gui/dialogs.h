@@ -73,7 +73,6 @@ void image_viewer(HWND owner, const view_item *items, int n, int first);
 
 /* The strip of thumbnails of the chosen box, for the Archive's detail pane.
  * It tells its parent with WM_COMMAND (its id, and as the code): */
-#define THUMBS_LINK 1           /* "Images..." was clicked */
 #define THUMBS_VIEW 100         /* + i: the thumbnail i was clicked */
 HWND thumbs_create(HWND parent, int id);
 /* the images of the box in bagdir, read and decoded in a thread; NULL: no box */
