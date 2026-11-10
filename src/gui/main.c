@@ -91,7 +91,7 @@ enum {
     ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW, ID_AIA, ID_AUSE,
     /* the menu bar */
     IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE,
-    IDM_CONVERT, IDM_IA
+    IDM_CONVERT, IDM_IA, IDM_REFRESH
 };
 
 /* what the window knows about a disk: copied by the worker thread, which
@@ -3689,8 +3689,8 @@ static void start(void)
  * Like the SAMdisk check: a new re-read makes those still running
  * obsolete, and the result arrives with a PostMessage. */
 
-typedef struct { LONG gen; char root[512], busy[600]; } arc_job;
-typedef struct { arc_list l; int missing, recovered, below_n; char below[256]; } arc_result;
+typedef struct { LONG gen; int quiet; char root[512], busy[600]; } arc_job;
+typedef struct { arc_list l; int missing, recovered, below_n, quiet; char below[256]; } arc_result;
 
 /* an edit left halfway (a power cut, the program closed): finished or
  * undone before the boxes are read, so the archive never shows a mix */
@@ -3713,6 +3713,7 @@ static DWORD WINAPI archive_worker(LPVOID p)
     arc_job *job = (arc_job *)p;
     arc_result *r = (arc_result *)calloc(1, sizeof(arc_result));
     if (r) {
+        r->quiet = job->quiet;
         r->missing = !u8_isdir(job->root);
         if (!r->missing) {
             rec_ctx x; x.job = job; x.n = 0;
@@ -3728,26 +3729,58 @@ static DWORD WINAPI archive_worker(LPVOID p)
     return 0;
 }
 
-static void archive_scan(void)
+/* quiet: the re-read made when the window comes back from another program.
+ * It shows nothing while it runs and, if the folder is as it was, nothing
+ * when it ends (on_archive): no "reading...", no list filled again. It reads
+ * the folder already shown, not what may be half typed in the field */
+static void archive_scan_mode(int quiet)
 {
     arc_job *job;
     HANDLE th;
-    KillTimer(g_wnd, TIMER_ADIR);
     /* the recovery of the scan must not touch the box being saved: the
      * archive is read again when the save ends */
     if (g_saving) return;
+    /* nothing read yet: a scan is on its way, and its result is as fresh */
+    if (quiet && !g_arc_loaded) return;
+    if (!quiet) {
+        KillTimer(g_wnd, TIMER_ADIR);
+        get_u8_trim(ID_ADIR, g_arc_root, sizeof(g_arc_root));
+    }
     job = (arc_job *)calloc(1, sizeof(arc_job));
-    get_u8_trim(ID_ADIR, g_arc_root, sizeof(g_arc_root));
     InterlockedIncrement(&g_arc_gen);
-    g_arc_loaded = 0;
-    if (g_view == V_ARCHIVE) { sbar_update(); repaint(g_asum); repaint(g_adetail); }
+    if (!quiet) {
+        g_arc_loaded = 0;
+        if (g_view == V_ARCHIVE) { sbar_update(); repaint(g_asum); repaint(g_adetail); }
+    }
     if (!job) return;
+    job->quiet = quiet;
     str_copy(job->root, sizeof(job->root), g_arc_root);
     if (g_running || g_saving) str_copy(job->busy, sizeof(job->busy), g_bagdir);
     job->gen = g_arc_gen;
     th = CreateThread(NULL, 0, archive_worker, job, 0, NULL);
     if (th) CloseHandle(th);
     else free(job);
+}
+
+static void archive_scan(void) { archive_scan_mode(0); }
+
+/* Archive > Refresh, and F5 on the archive: the folder is read again and the
+ * chosen box stays chosen (on_archive looks for its folder). Not during a
+ * save or a conversion, like every other scan */
+static void archive_refresh(void)
+{
+    if (g_view != V_ARCHIVE || g_saving) return;
+    archive_scan();
+}
+
+/* back from another program (Explorer, where a folder was renamed, moved or
+ * deleted): the list is read again by itself. Not while something of ours is
+ * at work or one of our dialogs is open: the window is disabled then */
+static void archive_reactivated(void)
+{
+    if (g_view != V_ARCHIVE || g_running || g_saving || g_verifying || g_ia_dlg) return;
+    if (!IsWindowEnabled(g_wnd)) return;
+    archive_scan_mode(1);
 }
 
 /* the archive folder is the same as the setup one: it is remembered */
@@ -3931,11 +3964,26 @@ static const char *pick_dir(void)
 static void edit_pick(void);
 static void convert_ask(void);
 
+/* the folder read again is what the window already shows: every box, byte
+ * for byte (arc_load starts each one from zeros) */
+static int archive_same(const arc_result *r)
+{
+    int i;
+    if (r->recovered || r->missing != g_arc_missing || r->below_n != g_arc_below_n
+        || strcmp(r->below, g_arc_below) || r->l.n != g_arc.n) return 0;
+    for (i = 0; i < g_arc.n; i++)
+        if (memcmp(&r->l.box[i], &g_arc.box[i], sizeof(arc_box))) return 0;
+    return 1;
+}
+
 static void on_archive(WPARAM gen, arc_result *r)
 {
     char want[600];
     int was_empty = g_arc_empty, was_below = g_arc_below_n, recovered;
     if ((LONG)gen != g_arc_gen) { arc_free(&r->l); free(r); return; }
+    /* nothing changed while the user was elsewhere: the screen stays as it
+     * is, selection and scrolling included */
+    if (r->quiet && g_arc_loaded && archive_same(r)) { arc_free(&r->l); free(r); return; }
     str_copy(want, sizeof(want), g_want_dir[0] ? g_want_dir : pick_dir());
     g_want_dir[0] = 0;
     arc_free(&g_arc);
@@ -5602,6 +5650,7 @@ static HMENU menu_build(void)
     AppendMenuW(arc, MF_STRING, IDM_IA, tr(T_MENU_IA));
     AppendMenuW(arc, MF_STRING, IDM_DELETE, tr(T_MENU_DELETE));
     AppendMenuW(arc, MF_STRING, IDM_OPENDIR, tr(T_MENU_OPENDIR));
+    AppendMenuW(arc, MF_STRING, IDM_REFRESH, tr(T_MENU_REFRESH));
     AppendMenuW(arc, MF_SEPARATOR, 0, NULL);
     AppendMenuW(arc, MF_STRING, IDM_EXIT, tr(T_MENU_EXIT));
     AppendMenuW(tools, MF_STRING, IDM_SETTINGS, tr(T_MENU_SETTINGS));
@@ -5632,6 +5681,7 @@ static void menu_states(HMENU m)
     EnableMenuItem(m, IDM_CONVERT, MF_BYCOMMAND | (g_view == V_ARCHIVE && old_boxes() && !g_running && !g_saving
                                                    && !g_verifying ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(m, IDM_DELETE, MF_BYCOMMAND | (g_view == V_ARCHIVE && pick_deletable() ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(m, IDM_REFRESH, MF_BYCOMMAND | (g_view == V_ARCHIVE && !g_saving ? MF_ENABLED : MF_GRAYED));
     /* the same entry says Update once the box has its item */
     ModifyMenuW(m, IDM_IA, MF_BYCOMMAND | MF_STRING, IDM_IA,
                 tr(g_view == V_ARCHIVE && g_pick >= 0 && g_pick < g_arc.n &&
@@ -5808,6 +5858,7 @@ static int on_command(HWND h, WPARAM wp)
     case IDM_CONVERT: convert_start(NULL); return 1;
     case IDM_IA:      ia_pick(); return 1;
     case IDM_DELETE:  delete_pick(); return 1;
+    case IDM_REFRESH: archive_refresh(); return 1;
     case ID_READ:   answer(CMD_READ); return 1;
     case ID_SKIP:   answer(CMD_SKIP); return 1;
     case ID_LABELREAD: label_read(); return 1;
@@ -5907,6 +5958,11 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         /* only if nobody picked another control in the meantime */
         if ((HWND)lp == g_focus && can_focus(g_focus) && GetFocus() != g_focus) SetFocus(g_focus);
         return 0;
+    /* WM_ACTIVATE fires also when our own message boxes and dialogs close:
+     * only coming back from another program reads the archive again */
+    case WM_ACTIVATEAPP:
+        if (wp && h == g_wnd) archive_reactivated();
+        break;
     case WM_ACTIVATE:
         if (LOWORD(wp) == WA_INACTIVE) focus_save();
         else if (!HIWORD(wp)) focus_restore();      /* not when minimized */
@@ -6096,6 +6152,16 @@ static int wait_key(const MSG *m)
     return 0;
 }
 
+/* F5 on the archive reads the folder again. While a disk is waited for F5 is
+ * Read, and wait_key takes it before this. 1 if the key was used */
+static int archive_key(const MSG *m)
+{
+    if (m->message != WM_KEYDOWN || m->wParam != VK_F5 || g_view != V_ARCHIVE || g_waiting) return 0;
+    if (m->hwnd != g_wnd && !IsChild(g_wnd, m->hwnd)) return 0;
+    archive_refresh();
+    return 1;
+}
+
 /* the log, a multi-line EDIT, keeps Tab for itself (IsDialogMessage gives it
  * every key): from the log Tab and Shift+Tab move on to Interrompi and the
  * other controls, as everywhere else. 1 if the key was used */
@@ -6206,7 +6272,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmd, int show_cmd)
     if (!place_load(show_cmd)) ShowWindow(g_wnd, show_cmd);
     SetFocus(g_alist);
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
-        if (wait_key(&msg) || log_key(&msg)) continue;
+        if (wait_key(&msg) || archive_key(&msg) || log_key(&msg)) continue;
         /* the upload window is not modal: another box can be read while
          * it works, so its keys pass through here */
         if (g_ia_dlg && IsDialogMessageW(g_ia_dlg, &msg)) continue;

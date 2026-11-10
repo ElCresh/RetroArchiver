@@ -387,6 +387,7 @@ error.nostart=Non riesco ad avviare la sessione.
 menu.archive=&Archivio
 menu.new=&Nuovo cofanetto
 menu.opendir=&Apri la cartella dell'archivio
+menu.refresh=A&ggiorna\tF5
 menu.exit=&Esci
 menu.tools=S&trumenti
 menu.settings=&Impostazioni...

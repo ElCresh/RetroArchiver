@@ -391,6 +391,7 @@ error.nostart=Cannot start the session.
 menu.archive=&Archive
 menu.new=&New box
 menu.opendir=&Open the archive folder
+menu.refresh=&Refresh\tF5
 menu.exit=E&xit
 menu.tools=&Tools
 menu.settings=&Settings...
