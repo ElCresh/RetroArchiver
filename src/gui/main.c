@@ -85,10 +85,10 @@ enum {
     ID_STOP, ID_LIST, ID_LOG, ID_NEW, ID_OPEN, ID_BOXBAR, ID_BOXTXT,
     ID_DISKBAR, ID_CYLTXT, ID_ELAPSED, ID_BAGDIR, ID_BAGCONT, ID_BAGHASH, ID_BAGASIDE,
     ID_SBAR, ID_TOARCH, ID_LABELREAD,
-    /* archive: from ID_ADIR to ID_AIA. The ids already there keep their
+    /* archive: from ID_ADIR to ID_AUSE.The ids already there keep their
      * numbers (guidrive.ps1 of the VM names them): a new one goes last */
     ID_ADIR = 300, ID_ABROWSE, ID_ASEARCH, ID_APLAT, ID_ASUM, ID_ALIST, ID_ADETAIL,
-    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW, ID_AIA,
+    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW, ID_AIA, ID_AUSE,
     /* the menu bar */
     IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE,
     IDM_CONVERT, IDM_IA
@@ -684,6 +684,9 @@ static arc_list g_arc;                  /* the last read of the folder */
 static int     *g_rows, g_nrows;        /* list rows: indexes into g_arc after the filter */
 static int      g_pick = -1;            /* the chosen box, index into g_arc */
 static int      g_arc_loaded, g_arc_empty, g_arc_missing, g_verifying;
+/* an empty archive whose boxes are one level down: that subfolder, how many */
+static char     g_arc_below[256];
+static int      g_arc_below_n;
 static int      g_saving;               /* an edit of the box's data, or a conversion, is being saved */
 static int      g_converting;           /* g_saving is a conversion of the boxes of 261017 */
 static HWND     g_ia_dlg;               /* the upload window, open: one at a time */
@@ -727,6 +730,7 @@ static void build_archive(void)
     make_t(L"BUTTON", T_ARC_DELETE, WS_TABSTOP, 0, 0, 130, 26, ID_ADELETE);
     make_t(L"STATIC", T_ARC_HINT, SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_AHINT);
     make_t(L"BUTTON", T_ARC_NEW, WS_TABSTOP | BS_DEFPUSHBUTTON, 0, 0, 150, 28, ID_ANEW);
+    make_t(L"BUTTON", T_EMPTY_USE, WS_TABSTOP, 0, 0, 170, 30, ID_AUSE);
     SendDlgItemMessageW(g_wnd, ID_ARESUME, WM_SETFONT, (WPARAM)g_bold, TRUE);
     SendDlgItemMessageW(g_wnd, ID_ANEW, WM_SETFONT, (WPARAM)g_bold, TRUE);
 }
@@ -1250,13 +1254,19 @@ static void paint_group(HDC dc, HANDLE theme, int i)
 #define EMPTY_ICON 96
 #define EMPTY_TEXT_W 420
 
-static struct { int icon_y, title_y, text_y, text_h, btn_y, hint_y; } g_emp;
+static struct { int icon_y, title_y, text_y, text_h, use_y, btn_y, hint_y; } g_emp;
 
 static void empty_text(wchar_t *out, int n)
 {
     wchar_t dir[512];
     to_w(g_arc_root, dir, 512);
-    _snwprintf(out, n, tr(g_arc_missing ? T_EMPTY_MISSING : T_EMPTY_NONE), dir);
+    if (!g_arc_missing && g_arc_below_n) {      /* the folder above the archive was chosen */
+        wchar_t sub[256];
+        to_w(g_arc_below, sub, 256);
+        if (g_arc_below_n == 1) _snwprintf(out, n, tr(T_EMPTY_BELOW_ONE), dir, sub);
+        else _snwprintf(out, n, tr(T_EMPTY_BELOW_MANY), dir, sub, g_arc_below_n);
+    } else
+        _snwprintf(out, n, tr(g_arc_missing ? T_EMPTY_MISSING : T_EMPTY_NONE), dir);
     out[n - 1] = 0;
 }
 
@@ -1267,19 +1277,20 @@ static void empty_metrics(void)
     HDC dc = GetDC(g_wnd);
     HGDIOBJ o = SelectObject(dc, g_font);
     RECT r = { 0, 0, EMPTY_TEXT_W, 0 };
-    int total, y;
+    int total, y, use = !g_arc_missing && g_arc_below_n ? 36 : 0;   /* the subfolder's button */
     empty_text(t, 900);
     DrawTextW(dc, t, -1, &r, DT_CALCRECT | DT_WORDBREAK | DT_CENTER | DT_NOPREFIX);
     SelectObject(dc, o);
     ReleaseDC(g_wnd, dc);
     g_emp.text_h = r.bottom;
-    total = EMPTY_ICON + 14 + 22 + 14 + r.bottom + 16 + 30 + 14 + 16;
+    total = EMPTY_ICON + 14 + 22 + 14 + r.bottom + 16 + use + 30 + 14 + 16;
     y = g_empty.top + (g_empty.bottom - g_empty.top - total) / 2;
     if (y < g_empty.top + 8) y = g_empty.top + 8;
     g_emp.icon_y = y;
     g_emp.title_y = y += EMPTY_ICON + 14;
     g_emp.text_y = y += 22 + 14;
-    g_emp.btn_y = y += r.bottom + 16;
+    g_emp.use_y = y += r.bottom + 16;
+    g_emp.btn_y = y += use;
     g_emp.hint_y = y + 30 + 14;
 }
 
@@ -1465,6 +1476,7 @@ static void layout_archive(int W, int H)
         set_empty_rect(8, y + 31, W - 16, H - 8 - (y + 31));
         empty_metrics();
         put(ID_ANEW, W / 2 - 85, g_emp.btn_y, 170, 30);
+        put(ID_AUSE, W / 2 - 85, g_emp.use_y, 170, 30);
         set_group(G_SEL, 0, 0, 0, 0);
         return;
     }
@@ -2912,7 +2924,7 @@ static const int in_wait[] = { ID_BANNER, ID_LABEL, ID_LABEL + LBL, ID_LABELREAD
 static const int in_work[] = { ID_BANNER, ID_PILLS, ID_DISKBAR, ID_DISKBAR + LBL, ID_CYLTXT, ID_ELAPSED,
                                ID_BOXBAR, ID_BOXBAR + LBL, ID_BOXTXT, ID_LOG, ID_STOP, 0 };
 static const int in_end[]  = { ID_BANNER, ID_LIST, ID_LOG, ID_NEW, ID_OPEN, ID_TOARCH, 0 };
-static const int in_empty[] = { ID_ADIR, ID_ADIR + LBL, ID_ABROWSE, ID_ANEW, 0 };
+static const int in_empty[] = { ID_ADIR, ID_ADIR + LBL, ID_ABROWSE, ID_ANEW, ID_AUSE, 0 };
 static const int in_bag[]  = { ID_BAGDIR, ID_BAGDIR + LBL, ID_BAGCONT, ID_BAGCONT + LBL,
                                ID_BAGHASH, ID_BAGHASH + LBL, 0 };
 
@@ -2927,8 +2939,9 @@ static int visible_in(int v, int id)
     if ((id >= ID_TITLE && id <= ID_START) || (id >= ID_TITLE + LBL && id <= ID_START + LBL))
         return v == V_SETUP;
     if (id == ID_SBAR) return 1;
-    if ((id >= ID_ADIR && id <= ID_AIA) || (id >= ID_ADIR + LBL && id <= ID_AIA + LBL)) {
+    if ((id >= ID_ADIR && id <= ID_AUSE) || (id >= ID_ADIR + LBL && id <= ID_AUSE + LBL)) {
         if (v != V_ARCHIVE) return 0;
+        if (id == ID_AUSE) return g_arc_empty && !g_arc_missing && g_arc_below_n > 0;
         if (g_arc_empty) return listed(in_empty, id);
         if (id == ID_ARESUME) return pick_open();
         if (id == ID_AEDIT) return pick_closed();
@@ -3677,7 +3690,7 @@ static void start(void)
  * obsolete, and the result arrives with a PostMessage. */
 
 typedef struct { LONG gen; char root[512], busy[600]; } arc_job;
-typedef struct { arc_list l; int missing, recovered; } arc_result;
+typedef struct { arc_list l; int missing, recovered, below_n; char below[256]; } arc_result;
 
 /* an edit left halfway (a power cut, the program closed): finished or
  * undone before the boxes are read, so the archive never shows a mix */
@@ -3707,6 +3720,8 @@ static DWORD WINAPI archive_worker(LPVOID p)
             r->recovered = x.n;
         }
         if (r->missing || arc_scan(job->root, &r->l)) memset(&r->l, 0, sizeof(r->l));
+        /* nothing here: one look at the level below, to say where the boxes are */
+        if (!r->missing && !r->l.n) r->below_n = arc_scan_below(job->root, r->below, sizeof(r->below));
         if (!PostMessageW(g_wnd, WM_APP_ARCHIVE, (WPARAM)job->gen, (LPARAM)r)) { arc_free(&r->l); free(r); }
     }
     free(job);
@@ -3919,13 +3934,15 @@ static void convert_ask(void);
 static void on_archive(WPARAM gen, arc_result *r)
 {
     char want[600];
-    int was_empty = g_arc_empty, recovered;
+    int was_empty = g_arc_empty, was_below = g_arc_below_n, recovered;
     if ((LONG)gen != g_arc_gen) { arc_free(&r->l); free(r); return; }
     str_copy(want, sizeof(want), g_want_dir[0] ? g_want_dir : pick_dir());
     g_want_dir[0] = 0;
     arc_free(&g_arc);
     g_arc = r->l;
     g_arc_missing = r->missing;
+    g_arc_below_n = r->below_n;
+    str_copy(g_arc_below, sizeof(g_arc_below), r->below);
     recovered = r->recovered;
     free(r);
     g_arc_loaded = 1;
@@ -3934,7 +3951,7 @@ static void on_archive(WPARAM gen, arc_result *r)
     platforms_fill();
     archive_fill(want);
     if (g_view != V_ARCHIVE) return;
-    if (was_empty != g_arc_empty) view(V_ARCHIVE);   /* the visible controls change */
+    if (was_empty != g_arc_empty || !was_below != !g_arc_below_n) view(V_ARCHIVE);   /* the visible controls change */
     else { layout(); InvalidateRect(g_wnd, &g_empty, TRUE); }
     sbar_update();
     if (recovered) {
@@ -4201,6 +4218,18 @@ static void archive_dir_changed(void)
     SetDlgItemTextW(g_wnd, ID_DIR, w);
     save_dir();
     archive_scan();
+}
+
+/* the empty archive's button: the subfolder that holds the boxes becomes the
+ * archive folder, as if chosen with "..." (and it is remembered the same way) */
+static void use_below(void)
+{
+    char dir[800];
+    if (!g_arc_below_n || !g_arc_below[0]) return;
+    u8_join(dir, sizeof(dir), g_arc_root, g_arc_below);
+    set_u8(ID_ADIR, dir);
+    archive_dir_changed();
+    focus_to(g_alist);
 }
 
 static void go_setup(int from_archive)
@@ -5764,6 +5793,7 @@ static int on_command(HWND h, WPARAM wp)
     case ID_AIA:   ia_pick(); return 1;
     case ID_ADELETE: delete_pick(); return 1;
     case ID_ANEW:    go_setup(1); return 1;
+    case ID_AUSE:    use_below(); return 1;
     case ID_START:  start(); return 1;
     case ID_RESUME: resume(); return 1;
     case ID_BROWSE: browse(ID_DIR, tr(T_BROWSE_DIR)); return 1;

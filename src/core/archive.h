@@ -51,6 +51,12 @@ typedef struct { int n, cap; arc_box *box; } arc_list;
 /* all the bags under root, most recent first; -1 if root does not open */
 int  arc_scan(const char *root, arc_list *out);
 void arc_free(arc_list *l);
+/* Why an archive is empty: the boxes may be one level down (the folder that
+ * holds the archive folder was chosen). Looks at the direct subfolders of
+ * root and counts the bags each one holds; returns the highest count, with
+ * that subfolder's name in sub (on a tie the first by name), 0 if none has
+ * any. Called only when arc_scan found nothing: no deeper than that */
+int  arc_scan_below(const char *root, char *sub, size_t n);
 /* a single bag; 0 if bagdir is not a bag */
 int  arc_load(const char *bagdir, arc_box *b);
 

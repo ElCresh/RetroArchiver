@@ -255,6 +255,42 @@ int arc_scan(const char *root, arc_list *out)
     return 0;
 }
 
+typedef struct { const char *dir; int n; } bags_ctx;
+
+/* a bag by its marks alone: nothing is loaded */
+static void count_bag(void *c, const char *name, int isdir)
+{
+    bags_ctx *x = (bags_ctx *)c; char d[1024], p[1100];
+    if (!isdir) return;
+    u8_join(d, sizeof(d), x->dir, name);
+    u8_join(p, sizeof(p), d, "bagit.txt");
+    if (bag_is_open(d) || u8_exists(p)) x->n++;
+}
+
+typedef struct { const char *root; int best; char *sub; size_t n; } below_ctx;
+
+static void below_one(void *c, const char *name, int isdir)
+{
+    below_ctx *x = (below_ctx *)c; char d[1024]; bags_ctx b;
+    if (!isdir) return;
+    u8_join(d, sizeof(d), x->root, name);
+    b.dir = d; b.n = 0;
+    u8_listdir(d, count_bag, &b);
+    if (b.n > x->best || (b.n && b.n == x->best && strcmp(name, x->sub) < 0)) {
+        x->best = b.n;
+        str_copy(x->sub, x->n, name);
+    }
+}
+
+int arc_scan_below(const char *root, char *sub, size_t n)
+{
+    below_ctx x;
+    x.root = root; x.best = 0; x.sub = sub; x.n = n;
+    if (n) sub[0] = 0;
+    u8_listdir(root, below_one, &x);
+    return x.best;
+}
+
 void arc_free(arc_list *l)
 {
     free(l->box);

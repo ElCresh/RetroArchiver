@@ -364,6 +364,44 @@ static void check_twins(void)
 #undef TW
 }
 
+/* an empty archive whose boxes are one level down: which subfolder, how many */
+static void check_below(void)
+{
+#define BL "tmp_unit/sotto"
+    char sub[256]; strbuf err; arc_list l;
+    sb_init(&err);
+    u8_mkdirs(BL "/vuota");
+    u8_mkdirs(BL "/altro/non un cofanetto");
+    str_copy(sub, sizeof(sub), "x");
+    CHECK(arc_scan_below(BL, sub, sizeof(sub)) == 0);
+    CHECK_STR(sub, "");
+    CHECK(arc_scan_below(BL "/non-esiste", sub, sizeof(sub)) == 0);
+    u8_mkdirs(BL "/zeta"); u8_mkdirs(BL "/RetroArchive"); u8_mkdirs(BL "/Archivio");
+    CHECK(bag_create(BL "/zeta/Uno", &err) == 0);
+    CHECK(arc_scan_below(BL, sub, sizeof(sub)) == 1);
+    CHECK_STR(sub, "zeta");
+    CHECK(bag_create(BL "/RetroArchive/Uno", &err) == 0);
+    CHECK(bag_create(BL "/RetroArchive/Due", &err) == 0);
+    u8_mkdirs(BL "/RetroArchive/appunti");
+    CHECK(arc_scan_below(BL, sub, sizeof(sub)) == 2);
+    CHECK_STR(sub, "RetroArchive");
+    /* as many: the first by name */
+    CHECK(bag_create(BL "/zeta/Due", &err) == 0);
+    CHECK(arc_scan_below(BL, sub, sizeof(sub)) == 2);
+    CHECK_STR(sub, "RetroArchive");
+    CHECK(bag_create(BL "/Archivio/Uno", &err) == 0);
+    CHECK(bag_create(BL "/Archivio/Due", &err) == 0);
+    CHECK(arc_scan_below(BL, sub, sizeof(sub)) == 2);
+    CHECK_STR(sub, "Archivio");
+    /* the list itself never goes down a level */
+    CHECK(arc_scan(BL, &l) == 0 && l.n == 0);
+    arc_free(&l);
+    /* a box right in the folder is not "below" */
+    CHECK(arc_scan_below(BL "/zeta", sub, sizeof(sub)) == 0);
+    sb_free(&err);
+#undef BL
+}
+
 void test_archive(void)
 {
     arc_list l;
@@ -374,6 +412,7 @@ void test_archive(void)
     check_verify();
     check_digests();
     check_twins();
+    check_below();
     /* a new, empty archive: no boxes, but no error */
     u8_mkdirs("tmp_unit/archivio_vuoto");
     CHECK(arc_scan("tmp_unit/archivio_vuoto", &l) == 0 && l.n == 0);
