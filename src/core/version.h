@@ -3,7 +3,7 @@
    programs write it into metadata.json and bag-info.txt. */
 #ifndef VERSION_H
 #define VERSION_H
-#define RA_VERSION "261104"
+#define RA_VERSION "261110"
 /* RetroArchiver's own license as the About window names it (SPDX); its text,
    LICENSE in the repository, is installed as LICENSE.txt next to
    RetroArchiver.exe, which the About window opens */
