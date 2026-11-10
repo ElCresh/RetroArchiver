@@ -3,7 +3,7 @@
     "BagIt-Profile-Identifier": "urn:retroarchiver:bagit-profile:3",
     "BagIt-Profile-Version": "3",
     "Source-Organization": "RetroArchiver",
-    "External-Description": "A box of software archived with RetroArchiver, mixed ones included (floppies, CDs, DVDs): EDSK images of the floppies in data/, the files of each CD or DVD in a subfolder of data/ (CD01/, DVD01/), scans, comparison verdicts and metadata.json (schema retroarchiver-3, outcomes in English). Media-Type is the composition (\"3 floppy, 1 CD\"); Media-Expected and Media-Archived count all the media; Missing-Media lists them by name (\"floppy 2, CD 1\"). Bags closed by version 261017 follow profile 2 (docs/bagit-profile-2.json), with Box-Status in Italian.",
+    "External-Description": "A box of software archived with RetroArchiver, mixed ones included (floppies, CDs, DVDs): EDSK images of the floppies in data/, the files of each CD or DVD in a subfolder of data/ (CD01/, DVD01/), scans, comparison verdicts and metadata.json (schema retroarchiver-3, outcomes in English; retroarchiver-4 when the box has images: scans of the box, of its media and of its inserts in data/images/, described by the images field). Media-Type is the composition (\"3 floppy, 1 CD\"); Media-Expected and Media-Archived count all the media; Missing-Media lists them by name (\"floppy 2, CD 1\"). Bags closed by version 261017 follow profile 2 (docs/bagit-profile-2.json), with Box-Status in Italian.",
     "Version": "3.0.0"
   },
   "Bag-Info": {

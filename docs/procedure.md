@@ -164,6 +164,51 @@ still find them.
   refreshes by itself when you come back to the window from another
   program.
 
+## Images of the box
+
+A closed box can hold the scans of what it is made of: the box itself
+(front, back, spine, top, bottom), each medium (front and back) and the
+inserts (manual, cards, illustrations). Scan and crop them with your own
+tools; RetroArchiver takes the files as they are and never converts them.
+JPEG, PNG, TIFF, BMP and GIF are accepted, and PDF as an insert.
+
+**Archive > Images...** on a closed box, or the **Images...** link under
+its details:
+
+- **Add...** takes one or more files from any folder, a network path
+  included. What each one shows is proposed from its name (`front`,
+  `back`, `fronte`, `retro`, `cd2`): check it, and set kind, medium, side
+  and description under the list.
+- **Remove**, **Up** and **Down** change the list; **View** opens an image.
+- **Save** lists what changes and asks. The files are copied into
+  `data/images/` (`box-front.jpg`, `cd02-front.png`, `insert-01.tif`; a
+  second front is `box-front-2`), the package is closed and checked again.
+  The copy can be stopped: the box then stays as it was. A file already
+  attached is not added twice.
+
+Nothing is deleted: an image removed goes to `set-aside/` as
+`NAME.removed`, and removing a medium with Edit sets its images aside with
+it. The thumbnails in the detail pane open a window that shows the images
+one by one (arrow keys; **Open with Windows** for the real zoom).
+
+A box with images is written as schema `retroarchiver-4`; versions up to
+261104 refuse to open it ("update the program") rather than lose the
+description of the images at their first edit. Without images a box stays
+`retroarchiver-3`, exactly as before. On Archive.org the images go up with
+the package, and a box that gets images after its upload is marked *to
+update*.
+
+From the console:
+
+```
+dskrun --add-image FILE --as WHAT [--note TEXT] [--reason TEXT] -t TITLE [-o DIR]
+dskrun --images -t TITLE
+dskrun --remove-image NAME -t TITLE
+```
+
+`WHAT` is `box-front`, `box-back`, `box-spine`, `box-top`, `box-bottom`,
+`box-other`, `cd2-front`, `floppy3-back` or `insert`.
+
 ## Freeing space
 
 Reads that were set aside stay in `set-aside/` next to `data/`. **Archive

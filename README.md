@@ -108,6 +108,7 @@ D:\Archive\Monkey Island\
   bagit.txt  bag-info.txt  manifest-sha256.txt  tagmanifest-sha256.txt
   data\  FLOPPY01.dsk  FLOPPY01.scan.txt  FLOPPY01.diff.txt  ...  metadata.json
          CD01\  CD01.cue  CD01 (Track 1).bin  ...  CD01.dat
+         images\  box-front.jpg  box-back.tif  cd01-front.png  insert-01.tif
 ```
 
 `metadata.json` records, for every medium, the reads with their SHA-256
@@ -121,6 +122,20 @@ version 261017, with the outcomes in Italian, follow
 
 An interrupted box can be resumed at any time: from the archive view in
 the GUI, or by running the same `dskrun` command again.
+
+### Images of the box
+
+Scans of the box, of the media labels and of the inserts can be attached
+to a closed box (Archive > Images..., or `dskrun --add-image FILE --as
+box-front`): JPEG, PNG, TIFF, BMP, GIF, and PDF for inserts. The files are
+copied as they are into `data\images\`, named after what they show, with
+their hash in the manifest and their description in `metadata.json`.
+RetroArchiver does not scan, crop or convert. Removing an image moves it
+to `set-aside\`. The archive view shows the thumbnails and a viewer; they
+are decoded with the GDI+ that Windows has, loaded at run time. A box with
+images uses schema `retroarchiver-4`, which versions up to 261104 refuse
+to open instead of dropping the images' description. The images go to
+Archive.org with the rest of the package.
 
 ### Moving the archive
 
