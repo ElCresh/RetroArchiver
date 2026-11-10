@@ -3,7 +3,7 @@
 # or a reason goes through core_w (lang_core_text), the archive's texts
 # through arc_text.c. Fails on the patterns that bypass them.
 cd "$(dirname "$0")/.." || exit 2
-files="src/gui/main.c src/gui/box_edit_dlg.c src/gui/settings_dlg.c src/gui/about.c src/gui/images_dlg.c"
+files="src/gui/main.c src/gui/box_edit_dlg.c src/gui/settings_dlg.c src/gui/about.c src/gui/images_dlg.c src/gui/img_view.c"
 bad=$(grep -nE 'to_w\((err\.s|r->err|r->why|why\.s|[a-z]+->error|adv)\b|wcsncpy\(g_last_err|wcsncpy\(g_why|to_w\((e->text|r->last|r->msg\.s)\b|%hs|to_w\(s, g_why|[^_]arc_(advice|outcome|media|missing)\(' $files)
 if [ -n "$bad" ]; then
     echo "core_texts: a text of the core reaches the window as it is (use core_w or arc_text.c):"

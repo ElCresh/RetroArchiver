@@ -394,10 +394,14 @@ static void move_selected(imdlg *d, int dir)
 
 static void view_selected(imdlg *d)
 {
-    wchar_t p[1024]; int sel = selected(d);
-    if (sel < 0) return;
-    item_path(d, &d->want.item[sel], p, 1024);
-    ShellExecuteW(d->dlg, L"open", p, NULL, NULL, SW_SHOWNORMAL);
+    view_item *v; int i, sel = selected(d);
+    if (sel < 0 || !(v = (view_item *)calloc((size_t)d->want.n, sizeof(view_item)))) return;
+    for (i = 0; i < d->want.n; i++) {
+        item_path(d, &d->want.item[i], v[i].path, 1024);
+        image_caption(&d->want.item[i].im, v[i].caption, 200);
+    }
+    image_viewer(d->dlg, v, d->want.n, sel);
+    free(v);
 }
 
 /* ---- Save ---- */

@@ -90,7 +90,7 @@ enum {
     /* archive: from ID_ADIR to ID_AUSE.The ids already there keep their
      * numbers (guidrive.ps1 of the VM names them): a new one goes last */
     ID_ADIR = 300, ID_ABROWSE, ID_ASEARCH, ID_APLAT, ID_ASUM, ID_ALIST, ID_ADETAIL,
-    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW, ID_AIA, ID_AUSE,
+    ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW, ID_AIA, ID_AUSE, ID_ATHUMBS,
     /* the menu bar */
     IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE,
     IDM_CONVERT, IDM_IA, IDM_REFRESH, IDM_FREE, IDM_IMAGES
@@ -681,7 +681,7 @@ static void build_list(void)
 }
 
 /* the archive: folder, search, summary, list of boxes, the chosen box */
-static HWND g_alist, g_asum, g_adetail;
+static HWND g_alist, g_asum, g_adetail, g_athumbs;
 static arc_list g_arc;                  /* the last read of the folder */
 static int     *g_rows, g_nrows;        /* list rows: indexes into g_arc after the filter */
 static int      g_pick = -1;            /* the chosen box, index into g_arc */
@@ -724,6 +724,8 @@ static void build_archive(void)
     add_column(g_alist, 7, arc_cols[7], 76, LVCFMT_LEFT);
     add_column(g_alist, 8, arc_cols[8], 84, LVCFMT_LEFT);
     g_adetail = make(L"STATIC", L"", SS_OWNERDRAW, 0, 0, 400, 140, ID_ADETAIL);
+    g_athumbs = thumbs_create(g_wnd, ID_ATHUMBS);
+    SendMessageW(g_athumbs, WM_SETFONT, (WPARAM)g_font, TRUE);
     make_t(L"BUTTON", T_ARC_RESUME, WS_TABSTOP, 0, 0, 130, 26, ID_ARESUME);
     make_t(L"BUTTON", T_ARC_OPEN, WS_TABSTOP, 0, 0, 130, 26, ID_AOPEN);
     make_t(L"BUTTON", T_ARC_VERIFY, WS_TABSTOP, 0, 0, 130, 26, ID_AVERIFY);
@@ -1410,6 +1412,18 @@ static void layout_setup(int W, int H)
 /* ---- the archive ---- */
 
 #define SEL_H 200                       /* height of the "Il cofanetto scelto" box */
+#define STRIP_H 58                      /* the strip of thumbnails under the detail: 48 and a margin */
+#define STRIP_LINE 20                   /* without images: only the line with the link */
+
+static int pick_closed(void);
+
+/* the images of the chosen box: a closed box of the current format has the
+ * strip, tall when it has images */
+static int strip_height(void)
+{
+    if (!pick_closed() || g_arc.box[g_pick].old_format) return 0;
+    return g_arc.box[g_pick].images > 0 ? STRIP_H : STRIP_LINE;
+}
 #define ARC_FIXED_COLS (90 + 70 + 92 + 44 + 132 + 168 + 76 + 84)
 
 static int pick_open(void)
@@ -1478,7 +1492,7 @@ static void set_empty_rect(int x, int y, int w, int h)
 
 static void layout_archive(int W, int H)
 {
-    int by = H - 8 - 28, y = 10, x, gy, bx, k, right = W - 8;
+    int by = H - 8 - 28, y = 10, x, gy, bx, k, right = W - 8, sh;
     if (g_arc_empty) {                  /* only the folder, then the white panel */
         put(ID_ADIR + LBL, 8, y + 3, 52, 18);
         put(ID_ADIR, 62, y, right - 36 - 62, 21);
@@ -1504,11 +1518,13 @@ static void layout_archive(int W, int H)
     y += 29;
     put(ID_ASUM, 8, y, W - 16, 22);
     y += 30;
-    gy = by - 8 - SEL_H;
+    sh = strip_height();
+    gy = by - 8 - SEL_H - sh;
     put(ID_ALIST, 8, y, W - 16, gy - 8 - y);
-    set_group(G_SEL, 8, gy, W - 16, SEL_H);
+    set_group(G_SEL, 8, gy, W - 16, SEL_H + sh);
     bx = W - 8 - 10 - 130;
     put(ID_ADETAIL, 18, gy + 20, bx - 14 - 18, SEL_H - 28);
+    if (sh) put(ID_ATHUMBS, 18, gy + SEL_H - 6, bx - 14 - 18, sh - 4);
     k = gy + 20;
     if (pick_open()) { put(ID_ARESUME, bx, k, 130, 26); k += 32; }
     else if (pick_closed()) { put(ID_AEDIT, bx, k, 130, 26); k += 32; }
@@ -2949,10 +2965,11 @@ static int visible_in(int v, int id)
     if ((id >= ID_TITLE && id <= ID_START) || (id >= ID_TITLE + LBL && id <= ID_START + LBL))
         return v == V_SETUP;
     if (id == ID_SBAR) return 1;
-    if ((id >= ID_ADIR && id <= ID_AUSE) || (id >= ID_ADIR + LBL && id <= ID_AUSE + LBL)) {
+    if ((id >= ID_ADIR && id <= ID_ATHUMBS) || (id >= ID_ADIR + LBL && id <= ID_ATHUMBS + LBL)) {
         if (v != V_ARCHIVE) return 0;
         if (id == ID_AUSE) return g_arc_empty && !g_arc_missing && g_arc_below_n > 0;
         if (g_arc_empty) return listed(in_empty, id);
+        if (id == ID_ATHUMBS) return strip_height() > 0;
         if (id == ID_ARESUME) return pick_open();
         if (id == ID_AEDIT) return pick_closed();
         if (id == ID_AIA) return pick_closed();
@@ -3919,6 +3936,12 @@ static void on_pick(int idx)
 {
     if (idx == g_pick) return;
     g_pick = idx;
+    /* the strip of its images: the detail box grows to hold it */
+    thumbs_show(g_athumbs, strip_height() ? g_arc.box[g_pick].dir : NULL);
+    if (g_view == V_ARCHIVE) {
+        layout();
+        ShowWindow(g_athumbs, visible_in(V_ARCHIVE, ID_ATHUMBS) ? SW_SHOW : SW_HIDE);
+    }
     repaint(g_adetail);
     archive_buttons();
 }
@@ -6030,6 +6053,10 @@ static int on_command(HWND h, WPARAM wp)
     case ID_ADELETE: delete_pick(); return 1;
     case ID_ANEW:    go_setup(1); return 1;
     case ID_AUSE:    use_below(); return 1;
+    case ID_ATHUMBS:                    /* the strip: its link, or one of its thumbnails */
+        if (HIWORD(wp) == THUMBS_LINK) images_pick();
+        else if (HIWORD(wp) >= THUMBS_VIEW) thumbs_view(g_athumbs, g_wnd, HIWORD(wp) - THUMBS_VIEW);
+        return 1;
     case ID_START:  start(); return 1;
     case ID_RESUME: resume(); return 1;
     case ID_BROWSE: browse(ID_DIR, tr(T_BROWSE_DIR)); return 1;

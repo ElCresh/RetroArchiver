@@ -6,6 +6,7 @@
 #include "unit.h"
 #include "core/archive.h"
 #include "core/bagit.h"
+#include "core/boximg.h"
 #include "core/fsu8.h"
 #include "core/iarec.h"
 #include "core/iaupload.h"
@@ -937,6 +938,106 @@ static void test_update(void)
     sb_free(&err);
 }
 
+/* ---- the images of the box go up with it ---- */
+
+/* attaches a file with that content to the box as what says; 0 ok */
+static int attach_image(const char *bag, const char *name, const char *content, const char *what)
+{
+    meta_box *b = meta_new(); img_list l; meta_image im; strbuf err; char data[500], src[300]; int rc;
+    sb_init(&err);
+    u8_mkdirs("tmp_unit/ia_scans");
+    snprintf(src, sizeof(src), "tmp_unit/ia_scans/%s", name);
+    put(src, content);
+    snprintf(data, sizeof(data), "%s/data", bag);
+    rc = meta_load(b, data, &err) || boximg_parse_what(what, &im);
+    boximg_list_load(b, &l);
+    if (!rc) rc = boximg_list_add(&l, b, src, &im, &err);
+    if (!rc) rc = boximg_save(bag, &l, NULL, NULL, NULL, &err);
+    boximg_list_free(&l);
+    meta_delete(b);
+    sb_free(&err);
+    return rc;
+}
+
+static int remove_image(const char *bag, const char *file)
+{
+    meta_box *b = meta_new(); img_list l; strbuf err; char data[500]; int i, rc;
+    sb_init(&err);
+    snprintf(data, sizeof(data), "%s/data", bag);
+    rc = meta_load(b, data, &err);
+    boximg_list_load(b, &l);
+    for (i = 0; i < l.n && strcmp(l.item[i].was, file); i++) ;
+    if (i == l.n) rc = -1;
+    boximg_list_remove(&l, i);
+    if (!rc) rc = boximg_save(bag, &l, NULL, NULL, NULL, &err);
+    boximg_list_free(&l);
+    meta_delete(b);
+    sb_free(&err);
+    return rc;
+}
+
+/* the first upload takes the images with the rest of the package; one
+ * added later makes the item out of date, and the update sends only that
+ * one (and the files of the package that describe it); one removed is
+ * deleted from the item, where its old version stays in the history */
+static void test_images(void)
+{
+    char bag[400];
+    ia_result res;
+    hostctx h;
+    ia_record rec;
+
+    item_reset();
+    meta_delete(make_box("Figure", "Figure", "", 1, 0, "261104", NULL));
+    bag_of("Figure", bag, sizeof(bag));
+    CHECK(attach_image(bag, "front.jpg", "the front of the box", "box-front") == 0);
+    CHECK(attach_image(bag, "back.png", "the back of the box", "box-back") == 0);
+    CHECK(ia_box_can_upload(bag) == IA_BOX_OK);
+
+    memset(&h, 0, sizeof(h));
+    upload_case("Figure", NULL, "figure-ms-dos-ita", IA_OK, &h, &res);
+    CHECK(!res.update && res.mismatch == 0);
+    CHECK(count("tmp_unit/fake_ia/puts.txt", "data/images/box-front.jpg") == 1);
+    CHECK(count("tmp_unit/fake_ia/puts.txt", "data/images/box-back.png") == 1);
+    CHECK(has("tmp_unit/fake_ia/files.txt", "data/images/box-front.jpg"));
+    CHECK(ia_box_state(bag, NULL) == IA_ST_VERIFIED);
+    CHECK(ia_record_load(bag, &rec) == 1);
+    CHECK(ia_files_find(&rec.files, "data/images/box-front.jpg") != NULL);
+    CHECK(ia_files_find(&rec.files, "data/images/box-back.png") != NULL);
+    ia_record_free(&rec);
+
+    /* an image more: the box is ahead of its item */
+    CHECK(attach_image(bag, "manual.tif", "a page of the manual", "insert") == 0);
+    CHECK(ia_box_state(bag, NULL) == IA_ST_OUTDATED);
+    memset(&h, 0, sizeof(h));
+    upload_case("Figure", NULL, "figure-ms-dos-ita", IA_OK, &h, &res);
+    CHECK(res.update && res.mismatch == 0 && res.files_removed == 0);
+    CHECK(count("tmp_unit/fake_ia/puts.txt", "data/images/insert-01.tif") == 1);
+    /* what did not change went up once, the first time */
+    CHECK(count("tmp_unit/fake_ia/puts.txt", "data/images/box-front.jpg") == 1);
+    CHECK(count("tmp_unit/fake_ia/puts.txt", "data/images/box-back.png") == 1);
+    CHECK(count("tmp_unit/fake_ia/puts.txt", "data/FLOPPY01.dsk") == 1);
+    CHECK(count("tmp_unit/fake_ia/puts.txt", "data/metadata.json") == 2);
+    CHECK(has("tmp_unit/fake_ia/keep.txt", "data/metadata.json"));
+    CHECK(ia_box_state(bag, NULL) == IA_ST_VERIFIED);
+
+    /* an image less: deleted from the item, kept in its history */
+    CHECK(remove_image(bag, "box-back.png") == 0);
+    CHECK(ia_box_state(bag, NULL) == IA_ST_OUTDATED);
+    memset(&h, 0, sizeof(h));
+    upload_case("Figure", NULL, "figure-ms-dos-ita", IA_OK, &h, &res);
+    CHECK(res.update && res.mismatch == 0 && res.files_removed == 1);
+    CHECK(has("tmp_unit/fake_ia/deletes.txt", "data/images/box-back.png"));
+    CHECK(has("tmp_unit/fake_ia/keep.txt", "data/images/box-back.png"));
+    CHECK(has("tmp_unit/fake_ia/files.txt", "history/files/data/images/box-back.png.~1~"));
+    CHECK(count("tmp_unit/fake_ia/puts.txt", "data/images/box-front.jpg") == 1);
+    CHECK(ia_box_state(bag, NULL) == IA_ST_VERIFIED);
+    CHECK(ia_record_load(bag, &rec) == 1);
+    CHECK(ia_files_find(&rec.files, "data/images/box-back.png") == NULL);
+    CHECK(ia_files_find(&rec.files, "data/images/insert-01.tif") != NULL);
+    ia_record_free(&rec);
+}
+
 /* the CA bundle the setup has not installed yet, and TLS when it is there */
 static void test_certs(void)
 {
@@ -1003,6 +1104,7 @@ void test_iaupload(void)
     test_changed_file();
     test_resume();
     test_update();
+    test_images();
     test_certs();
     item_reset();
     server_stop();

@@ -63,6 +63,24 @@ void image_caption(const meta_image *im, wchar_t *out, int n);
 /* the file of an image of the box in bagdir */
 void image_path(const char *bagdir, const char *file, wchar_t *out, int n);
 
+/* ---- Looking at the images (img_view.c) ---- */
+
+typedef struct { wchar_t path[1024], caption[200]; } view_item;
+/* The window that shows one image at a time, fitted to it, with its caption
+ * in the title: Previous and Next (the arrows too), Open with Windows, Esc.
+ * Modal over owner; first is the image it opens on */
+void image_viewer(HWND owner, const view_item *items, int n, int first);
+
+/* The strip of thumbnails of the chosen box, for the Archive's detail pane.
+ * It tells its parent with WM_COMMAND (its id, and as the code): */
+#define THUMBS_LINK 1           /* "Images..." was clicked */
+#define THUMBS_VIEW 100         /* + i: the thumbnail i was clicked */
+HWND thumbs_create(HWND parent, int id);
+/* the images of the box in bagdir, read and decoded in a thread; NULL: no box */
+void thumbs_show(HWND strip, const char *bagdir);
+/* the viewer on the strip's images, from the one at first */
+void thumbs_view(HWND strip, HWND owner, int first);
+
 /* two reads as good as each other: 1 keep the new one, 0 the old one */
 int choose_dialog(HWND owner, const edit_choice *c);
 

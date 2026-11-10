@@ -68,7 +68,7 @@ dskrun.exe: src/dskrun.c $(CORE) $(CORE_H)
 	$(WINCC) $(WINFLAGS) -o $@ src/dskrun.c $(CORE)
 
 # the window: Windows only
-GUI_C   = src/gui/settings.c src/gui/settings_dlg.c src/gui/about.c src/gui/winutil.c src/gui/box_edit_dlg.c src/gui/ia_dlg.c src/gui/images_dlg.c src/gui/imgdec.c
+GUI_C   = src/gui/settings.c src/gui/settings_dlg.c src/gui/about.c src/gui/winutil.c src/gui/box_edit_dlg.c src/gui/ia_dlg.c src/gui/images_dlg.c src/gui/imgdec.c src/gui/img_view.c
 GUI     = $(GUI_C) src/gui/settings.h src/gui/dialogs.h src/gui/winutil.h src/gui/resource.h src/gui/imgdec.h $(LANG_C) $(LANG_H)
 # the network too (Test the keys of the Archive.org tab); crypt32.dll, for
 # the DPAPI of the keys, is not linked: settings.c loads it with
