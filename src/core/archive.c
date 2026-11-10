@@ -173,7 +173,7 @@ int arc_load(const char *bagdir, arc_box *b)
         if (!b->title[0]) CP(b->title, base_name(bagdir));
         CP(b->error, err.s ? err.s : M_EDIT_NOMEM);
     }
-    if (m && b->state != ARC_BROKEN && strcmp(m->schema, META_SCHEMA)) b->old_format = 1;
+    if (m && b->state != ARC_BROKEN && !meta_schema_current(m->schema)) b->old_format = 1;
     u8_join(p, sizeof(p), bagdir, SESSION_ASIDE_DIR_OLD);
     if (u8_isdir(p)) b->old_format = 1;
     u8_join(p, sizeof(p), bagdir, BAG_OPEN_MARK_OLD);

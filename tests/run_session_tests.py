@@ -1498,7 +1498,7 @@ ok("add image: byte for byte the file that was chosen",
 h = meta(b)["history"][-1]
 ok("add image: the history says what was added and why", h["action"] == "images" and h["reason"] == "scanned today"
    and h["images"][0]["change"] == "added" and h["images"][0]["file"] == "images/box-front.jpg", json.dumps(h))
-ok("add image: the schema stays retroarchiver-3", meta(b)["schema"] == "retroarchiver-3")
+ok("add image: a box with images is retroarchiver-4", meta(b)["schema"] == "retroarchiver-4")
 rc, out = run("Con immagini", 0, [], [], ["--add-image", scan("front again.tif", b"II* second scan"), "--as", "box-front"])
 ok("add image: a second front takes -2", rc == 0 and images(b)[1]["file"] == "images/box-front-2.tif", out)
 rc, out = run("Con immagini", 0, [], [], ["--add-image", scan("cd.png", b"\x89PNG the CD"), "--as", "cd1-front",
@@ -1547,6 +1547,19 @@ ok("remove image: the history says where it went", h["action"] == "images" and h
 rc, out = run("Con immagini", 0, [], [], ["--remove-image", "nothing.jpg"])
 ok("remove image: an unknown name lists the images", rc == 2 and "has no image" in out
    and "box-front.jpg" in out and "insert-01.pdf" in out, out)
+# a box with images is not an old one: nothing to convert, Free space works on it
+rc, out = run("Con immagini", 0, [], [], ["--convert"])
+ok("images: retroarchiver-4 is not a format to convert", rc == 0 and "Already in the current format" in out, out)
+# the last image removed: the box is retroarchiver-3 again
+rc, out = run("Una immagine", 1, ["good_1", "good_2"], [""])
+one = bag("Una immagine")
+before = open(os.path.join(one, "data", "metadata.json"), "rb").read()
+rc, out = run("Una immagine", 0, [], [], ["--add-image", front, "--as", "box-front"])
+ok("images: -4 with the first image", rc == 0 and meta(one)["schema"] == "retroarchiver-4", out)
+rc, out = run("Una immagine", 0, [], [], ["--remove-image", "box-front.jpg"])
+ok("images: back to retroarchiver-3 when the last one is removed", rc == 0 and meta(one)["schema"] == "retroarchiver-3"
+   and "images" not in meta(one) and not os.path.exists(os.path.join(one, "data", "images"))
+   and check_bag.check(one, PROFILE) == [], out)
 rc, out = run("CD sbagliato", 0, [], [], ["--add-image", front, "--as", "box-front"])
 ok("add image: an open box is refused", rc == 2 and "still open" in out, out)
 rc, out = run("Non esiste", 0, [], [], ["--images"])

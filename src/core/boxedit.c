@@ -693,7 +693,7 @@ int boxedit_convert(const char *bagdir, conv_why *whyp, strbuf *err)
     if (meta_load(old, data, err)) { WHY(CONV_BROKEN); goto out; }
     /* already schema 3, an empty messi-da-parte/ left (a conversion finished
      * by a recovery): only the folder goes, no second entry in the history */
-    if (!strcmp(old->schema, META_SCHEMA)) {
+    if (meta_schema_current(old->schema)) {
         conv_list left;
         memset(&left, 0, sizeof(left));
         rel_path(dir, SESSION_ASIDE_DIR_OLD, p, sizeof(p));

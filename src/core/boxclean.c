@@ -152,7 +152,7 @@ int boxclean_plan(const char *bagdir, clean_plan *p)
     if (!cleanable(bagdir) || !(m = meta_new())) return -1;
     sb_init(&err);
     u8_join(data, sizeof(data), bagdir, "data");
-    if (meta_load(m, data, &err) == 0 && !strcmp(m->schema, META_SCHEMA)) {
+    if (meta_load(m, data, &err) == 0 && meta_schema_current(m->schema)) {
         boxclean_plan_box(bagdir, m, p);
         rc = 0;
     }

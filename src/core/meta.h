@@ -9,6 +9,14 @@
 #define META_MAXREAD 6
 #include "version.h"
 #define META_SCHEMA  "retroarchiver-3"
+/* A box with images (boximg.h) is written with this one, and goes back to
+ * retroarchiver-3 when the last image is removed. The released versions
+ * (261017, 261104) read a field they do not know without a word but write
+ * metadata.json again from their own model: an edit or a reread made with
+ * one of them would drop "images" and leave the files undescribed. With a
+ * schema they do not know they stop instead ("update the program"). It is
+ * not an older format and nothing is converted: this version reads both */
+#define META_SCHEMA_IMG "retroarchiver-4"
 /* 261017 wrote retroarchiver-2 (and earlier retroarchiver-floppy-1), with
  * the outcomes in Italian: they are still read, as the English ones */
 #define META_SCHEMA_2 "retroarchiver-2"
@@ -30,6 +38,9 @@
 
 /* an outcome as 261017 wrote it ("pulito"...) in English; others unchanged */
 const char *meta_status_english(const char *s);
+/* 1 if schema (meta_box.schema) is one this version writes: retroarchiver-3
+ * or, with images, retroarchiver-4. The others are read and can be converted */
+int  meta_schema_current(const char *schema);
 
 /* the copy protection scan of the CDs (DiscImageCreator /sf), a choice of
  * the box: the files on the disc decide (auto), always, never */

@@ -77,6 +77,11 @@ int meta_img_side_parse(const char *key)
     return -1;
 }
 
+int meta_schema_current(const char *schema)
+{
+    return schema && (!strcmp(schema, META_SCHEMA) || !strcmp(schema, META_SCHEMA_IMG));
+}
+
 void meta_set_counts(meta_box *b, int floppy, int cd, int dvd)
 {
     b->count[MEDIA_FLOPPY] = floppy;
@@ -306,7 +311,7 @@ int meta_save(const meta_box *b, const char *datadir, meta_tech_fn tech, void *c
 
     jw_init(&w);
     jw_begin_obj(&w, NULL);
-    jw_str(&w, "schema", META_SCHEMA);
+    jw_str(&w, "schema", b->nimage > 0 ? META_SCHEMA_IMG : META_SCHEMA);
     jw_begin_obj(&w, "box");
     jw_str(&w, "title", b->title);
     opt(&w, "publisher", b->publisher);
@@ -494,7 +499,7 @@ int meta_load(meta_box *b, const char *datadir, strbuf *err)
     if (!root) { sb_printf(err, M_META_UNREADABLE, path, perr); return -1; }
     schema = json_str(root, "schema");
     old = schema && !strcmp(schema, "retroarchiver-floppy-1");
-    if (!schema || (!old && strcmp(schema, META_SCHEMA) && strcmp(schema, META_SCHEMA_2))) {
+    if (!schema || (!old && !meta_schema_current(schema) && strcmp(schema, META_SCHEMA_2))) {
         if (schema && !strncmp(schema, "retroarchiver-", 14))
             sb_printf(err, M_META_NEWER, path);
         else

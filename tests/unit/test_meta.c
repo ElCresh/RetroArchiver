@@ -85,7 +85,7 @@ static void test_meta_mixed(void)
     CHECK(c->disk[0].copy_protection == META_PROT_ON && c->disk[1].copy_protection == META_PROT_OFF);
 
     /* a schema it does not know: it comes from a newer version */
-    put_text("tmp_unit/meta_misto/metadata.json", "{\"schema\": \"retroarchiver-4\"}");
+    put_text("tmp_unit/meta_misto/metadata.json", "{\"schema\": \"retroarchiver-5\"}");
     sb_clear(&err);
     CHECK(meta_load(c, "tmp_unit/meta_misto", &err) == -1);
     CHECK(strstr(err.s, "newer version") != NULL);

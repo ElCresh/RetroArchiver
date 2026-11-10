@@ -234,6 +234,7 @@ static void meta_roundtrip(void)
     meta_set_counts(b, 1, 2, 0);
     CHECK(meta_save(b, "tmp_unit/img_meta", NULL, NULL, &err) == 0);
     CHECK(!contains("tmp_unit/img_meta/metadata.json", "\"images\""));
+    CHECK(contains("tmp_unit/img_meta/metadata.json", "\"schema\": \"retroarchiver-3\""));
     CHECK(meta_load(c, "tmp_unit/img_meta", &err) == 0 && c->nimage == 0);
 
     im = &b->image[b->nimage++];
@@ -248,8 +249,11 @@ static void meta_roundtrip(void)
     strcpy(im->file, "insert-01.pdf");
     CHECK(meta_save(b, "tmp_unit/img_meta", NULL, NULL, &err) == 0);
     CHECK(contains("tmp_unit/img_meta/metadata.json", "\"file\": \"images/box-front.jpg\""));
-    CHECK(contains("tmp_unit/img_meta/metadata.json", "\"schema\": \"retroarchiver-3\""));
+    CHECK(contains("tmp_unit/img_meta/metadata.json", "\"schema\": \"retroarchiver-4\""));
     CHECK(meta_load(c, "tmp_unit/img_meta", &err) == 0 && c->nimage == 3);
+    CHECK_STR(c->schema, "retroarchiver-4");
+    CHECK(meta_schema_current("retroarchiver-4") && meta_schema_current("retroarchiver-3")
+          && !meta_schema_current("retroarchiver-2") && !meta_schema_current("retroarchiver-5"));
     CHECK_STR(c->image[0].file, "box-front.jpg");
     CHECK(c->image[0].kind == IMG_BOX && c->image[0].side == IMG_FRONT && c->image[0].bytes == 7);
     CHECK_STR(c->image[0].original, "Fronte \xc3\xa8.JPG");
@@ -298,6 +302,11 @@ static void add_three(void)
     meta_delete(b);
     a = (arc_box *)calloc(1, sizeof(arc_box));
     CHECK(arc_load(bag, a) && a->images == 3 && a->state == ARC_COMPLETE);
+    /* retroarchiver-4 is this version's: not old, not to convert, Edit works on it */
+    CHECK(!a->old_format && !boxedit_is_old(bag) && boxedit_editable(bag, &err));
+    CHECK(contains(IROOT "/Add/data/metadata.json", "\"schema\": \"retroarchiver-4\""));
+    CHECK(boxedit_convert(bag, NULL, &err) == 1);
+    sb_clear(&err);
     free(a);
 
     /* the same bytes again: not attached twice, and it says which one it is */
@@ -385,6 +394,7 @@ static void remove_relabel(void)
     CHECK(verified(bag) && !exists_in(bag, "data/images"));
     b = load(bag);
     CHECK(b->nimage == 0);
+    CHECK_STR(b->schema, "retroarchiver-3");
     meta_delete(b);
     CHECK(!contains(IROOT "/Rem/data/metadata.json", "\"original_name\": \"a.jpg\",\n      \"added\""));
     sb_free(&err);
