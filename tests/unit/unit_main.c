@@ -23,6 +23,7 @@ int main(void)
     test_boxedit();
     test_session_edit();
     test_boxclean();
+    test_boximg();
     test_optical();
     test_arc_text();
     test_https();                   /* against tests/fake_https.c on 127.0.0.1 */

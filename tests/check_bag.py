@@ -65,6 +65,30 @@ def check_media(info):
 TAG_FILES = ("bagit.txt", "bag-info.txt", "manifest-sha256.txt", "tagmanifest-sha256.txt")
 
 
+def check_images(bag, manifest):
+    """The images metadata.json describes are in the payload with that digest."""
+    errors = []
+    try:
+        with open(os.path.join(bag, "data", "metadata.json"), encoding="utf-8") as f:
+            images = json.load(f).get("images", [])
+    except (OSError, ValueError):
+        return errors
+    seen = set()
+    for im in images:
+        name = im.get("file", "")
+        if not name.startswith("images/") or name in seen:
+            errors.append("image %r: not a file of data/images, or listed twice" % name)
+            continue
+        seen.add(name)
+        if im.get("kind") not in ("box", "medium", "insert"):
+            errors.append("image %s: kind %r" % (name, im.get("kind")))
+        if manifest.get("data/" + name) != im.get("sha256"):
+            errors.append("image %s: missing from the manifest, or with another hash" % name)
+        elif not os.path.isfile(os.path.join(bag, "data", *name.split("/"))):
+            errors.append("image %s: missing from data/" % name)
+    return errors
+
+
 def check(bag, profile_path=None):
     errors = []
     # .in-corso: the open marker of version 261017
@@ -116,6 +140,7 @@ def check(bag, profile_path=None):
     oxum = "%d.%d" % (size, len(payload))
     if info.get("Payload-Oxum") != oxum:
         errors.append("Payload-Oxum %r, expected %s" % (info.get("Payload-Oxum"), oxum))
+    errors += check_images(bag, manifest)
     tags = read_manifest(os.path.join(bag, "tagmanifest-sha256.txt"))
     for name in ("bagit.txt", "bag-info.txt", "manifest-sha256.txt"):
         if name not in tags or sha256(os.path.join(bag, name)) != tags[name]:

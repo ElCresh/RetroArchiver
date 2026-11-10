@@ -1465,6 +1465,105 @@ ok("free space: all the boxes, only what is superseded", rc == 0
 rc, out = free_space("y")
 ok("free space: all the boxes, nothing left", rc == 0 and "Nothing to free" in out, out)
 
+print("\nimages (--add-image, --images, --remove-image)")
+
+SCANS = os.path.join(WORK, "scans")
+os.makedirs(SCANS, exist_ok=True)
+
+
+def scan(name, content):
+    path = os.path.join(SCANS, name)
+    with open(path, "wb") as f:
+        f.write(content)
+    return path
+
+
+def images(b):
+    return meta(b).get("images", [])
+
+
+# a closed box with a floppy and a CD
+rc, out = run("Con immagini", 1, ["good_1", "good_2"], ["", ""], ["-C", "1"])
+b = bag("Con immagini")
+ok("images: the box is closed first", rc == 0 and check_bag.check(b, PROFILE) == [] and "images" not in meta(b), out)
+front = scan("Fronte Scatola.JPG", b"\xff\xd8 front of the box")
+rc, out = run("Con immagini", 0, [], [], ["--add-image", front, "--as", "box-front", "--reason", "scanned today"])
+im = images(b)
+ok("add image: attached as box-front.jpg, the bag is valid", rc == 0 and check_bag.check(b, PROFILE) == []
+   and len(im) == 1 and im[0]["file"] == "images/box-front.jpg" and im[0]["kind"] == "box" and im[0]["side"] == "front"
+   and im[0]["original_name"] == "Fronte Scatola.JPG" and im[0]["sha256"] == sha(front)
+   and "Attached as box front" in out, out + json.dumps(im))
+ok("add image: byte for byte the file that was chosen",
+   sha(os.path.join(b, "data", "images", "box-front.jpg")) == sha(front))
+h = meta(b)["history"][-1]
+ok("add image: the history says what was added and why", h["action"] == "images" and h["reason"] == "scanned today"
+   and h["images"][0]["change"] == "added" and h["images"][0]["file"] == "images/box-front.jpg", json.dumps(h))
+ok("add image: the schema stays retroarchiver-3", meta(b)["schema"] == "retroarchiver-3")
+rc, out = run("Con immagini", 0, [], [], ["--add-image", scan("front again.tif", b"II* second scan"), "--as", "box-front"])
+ok("add image: a second front takes -2", rc == 0 and images(b)[1]["file"] == "images/box-front-2.tif", out)
+rc, out = run("Con immagini", 0, [], [], ["--add-image", scan("cd.png", b"\x89PNG the CD"), "--as", "cd1-front",
+                                         "--note", "ring code visible"])
+im = images(b)
+ok("add image: a medium's image names it", rc == 0 and im[2]["file"] == "images/cd01-front.png"
+   and im[2]["medium"] == {"type": "cd", "number": 1} and im[2]["description"] == "ring code visible", out)
+rc, out = run("Con immagini", 0, [], [], ["--add-image", scan("copy.jpg", b"\xff\xd8 front of the box"), "--as", "box-back"])
+ok("add image: the same file is not attached twice", rc == 0 and "Not attached" in out and "box-front.jpg" in out
+   and len(images(b)) == 3, out)
+rc, out = run("Con immagini", 0, [], [], ["--add-image", scan("manual.pdf", b"%PDF-1.4"), "--as", "box-other"])
+ok("add image: a PDF only as an insert", rc == 2 and "only be attached as an insert" in out, out)
+rc, out = run("Con immagini", 0, [], [], ["--add-image", scan("manual.pdf", b"%PDF-1.4"), "--as", "insert"])
+ok("add image: the PDF as insert-01.pdf", rc == 0 and images(b)[3]["file"] == "images/insert-01.pdf"
+   and check_bag.check(b, PROFILE) == [], out)
+rc, out = run("Con immagini", 0, [], [], ["--add-image", front, "--as", "cover"])
+ok("add image: --as wrong lists the forms", rc == 2 and "box-front, box-back" in out and "floppy3-back" in out, out)
+rc, out = run("Con immagini", 0, [], [], ["--add-image", front, "--as", "cd2-front"])
+ok("add image: a medium the box does not have", rc == 2 and "has no CD 2" in out, out)
+rc, out = run("Con immagini", 0, [], [], ["--add-image", scan("virus.exe", b"MZ"), "--as", "insert"])
+ok("add image: a type that is not accepted says which are", rc == 2 and "JPEG, PNG, TIFF, BMP or GIF" in out, out)
+rc, out = run("Con immagini", 0, [], [], ["--add-image", os.path.join(SCANS, "missing.jpg"), "--as", "box-back"])
+ok("add image: a file that is not there, the box is not touched", rc == 2 and "cannot read" in out
+   and check_bag.check(b, PROFILE) == [] and len(images(b)) == 4, out)
+
+rc, out = run("Con immagini", 0, [], [], ["--images"])
+ok("images: lists them in display order with what they show", rc == 0 and "Images of the box \"Con immagini\": 4" in out
+   and out.index("box-front.jpg") < out.index("box-front-2.tif") < out.index("cd01-front.png") < out.index("insert-01.pdf")
+   and "CD 1 front" in out and "ring code visible" in out and "(was Fronte Scatola.JPG)" in out, out)
+
+# the CD read again: the images stay where they are
+rc, out = run("Con immagini", 0, [], [""], ["--reread", "cd1"], tpl=None)
+ok("reread with images: the bag stays valid and keeps them", rc == 0 and check_bag.check(b, PROFILE) == []
+   and len(images(b)) == 4 and os.path.isfile(os.path.join(b, "data", "images", "cd01-front.png"))
+   and "Leaving data/images" not in out, out)
+
+rc, out = run("Con immagini", 0, [], [], ["--remove-image", "box-front-2.tif", "--reason", "blurred"])
+ok("remove image: in set-aside, out of the manifest, the bag valid", rc == 0 and check_bag.check(b, PROFILE) == []
+   and "box-front-2.tif.removed" in aside(b) and len(images(b)) == 3
+   and not os.path.exists(os.path.join(b, "data", "images", "box-front-2.tif"))
+   and b"box-front-2" not in manifest(b), out + str(aside(b)))
+h = meta(b)["history"][-1]
+ok("remove image: the history says where it went", h["action"] == "images" and h["reason"] == "blurred"
+   and h["images"][0] == {"change": "removed", "file": "images/box-front-2.tif",
+                          "set_aside": "set-aside/box-front-2.tif.removed"}, json.dumps(h))
+rc, out = run("Con immagini", 0, [], [], ["--remove-image", "nothing.jpg"])
+ok("remove image: an unknown name lists the images", rc == 2 and "has no image" in out
+   and "box-front.jpg" in out and "insert-01.pdf" in out, out)
+rc, out = run("CD sbagliato", 0, [], [], ["--add-image", front, "--as", "box-front"])
+ok("add image: an open box is refused", rc == 2 and "still open" in out, out)
+rc, out = run("Non esiste", 0, [], [], ["--images"])
+ok("images: a box that is not there", rc == 2 and "there is no box" in out, out)
+# the power goes during the transaction: the next command finishes it
+rc, out = run("Con immagini", 0, [], [], ["--add-image", scan("back.jpg", b"\xff\xd8 back"), "--as", "box-back"],
+              env_extra={"RETROARCHIVER_TXN_CRASH": "5"})
+ok("add image interrupted: the box looks open", os.path.exists(os.path.join(b, "editing")), out)
+rc, out = run("Con immagini", 0, [], [], ["--images"])
+ok("add image interrupted: finished by the next command", rc == 0 and "was finished" in out and "box-back.jpg" in out
+   and check_bag.check(b, PROFILE) == [], out)
+# check_bag notices an image that metadata.json describes and the bag lacks
+os.rename(os.path.join(b, "data", "images", "box-back.jpg"), os.path.join(WORK, "box-back.jpg"))
+ok("check_bag: an image missing from data/images is reported",
+   any("images/box-back.jpg" in e for e in check_bag.check(b, PROFILE)), str(check_bag.check(b, PROFILE)))
+os.rename(os.path.join(WORK, "box-back.jpg"), os.path.join(b, "data", "images", "box-back.jpg"))
+
 print()
 print("  %d cases, %s" % (count, "all green." if not fails else "with at least one FAIL."))
 sys.exit(1 if fails else 0)

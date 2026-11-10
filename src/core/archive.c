@@ -158,6 +158,7 @@ int arc_load(const char *bagdir, arc_box *b)
     m = meta_new();
     if (m && meta_load(m, data, &err) == 0) {
         from_meta(b, m);
+        b->images = m->nimage;
         if (open) { b->state = ARC_OPEN; last_read(m, b->date); }
         else {
             /* Box-Status was written by bag_close: that one wins */

@@ -302,6 +302,15 @@ int bag_close(const char *bagdir, const meta_box *box, const bag_digests *known,
         }
     }
 
+    /* and those of the images, taken when they were attached */
+    for (i = 0; i < box->nimage; i++) {
+        char rel[80];
+        snprintf(rel, sizeof(rel), "images/%s", box->image[i].file);
+        for (j = 0; j < l.n && strcmp(l.names[j], rel); j++) ;
+        if (j == l.n) { sb_printf(err, M_BAG_IMG_MISSING, box->image[i].file); goto out; }
+        if (strcmp(hashes[j], box->image[i].sha256)) { sb_printf(err, M_BAG_IMG_CHANGED, box->image[i].file); goto out; }
+    }
+
     for (i = 1; i <= box->media_expected; i++) {
         const meta_disk *d = disk_n(box, i);
         if (d && d->master[0]) archived++;

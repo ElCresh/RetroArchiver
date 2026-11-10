@@ -50,6 +50,33 @@ int meta_prot_parse(const char *key)
     return -1;
 }
 
+static const char *const img_kind_keys[IMG_KINDS] = { "box", "medium", "insert" };
+static const char *const img_side_keys[IMG_SIDES] = { "front", "back", "spine", "top", "bottom", "other" };
+
+const char *meta_img_kind_key(int kind)
+{
+    return kind >= 0 && kind < IMG_KINDS ? img_kind_keys[kind] : "insert";
+}
+
+int meta_img_kind_parse(const char *key)
+{
+    int k;
+    for (k = 0; key && k < IMG_KINDS; k++) if (!strcmp(key, img_kind_keys[k])) return k;
+    return -1;
+}
+
+const char *meta_img_side_key(int side)
+{
+    return side >= 0 && side < IMG_SIDES ? img_side_keys[side] : "other";
+}
+
+int meta_img_side_parse(const char *key)
+{
+    int k;
+    for (k = 0; key && k < IMG_SIDES; k++) if (!strcmp(key, img_side_keys[k])) return k;
+    return -1;
+}
+
 void meta_set_counts(meta_box *b, int floppy, int cd, int dvd)
 {
     b->count[MEDIA_FLOPPY] = floppy;
@@ -248,6 +275,29 @@ static void write_disk(json_writer *w, const meta_disk *d, const char *datadir,
     jw_end_obj(w);
 }
 
+/* "file" is relative to data/, like a read's: "images/box-front.jpg" */
+static void write_image(json_writer *w, const meta_image *im)
+{
+    char rel[80];
+    snprintf(rel, sizeof(rel), "images/%s", im->file);
+    jw_begin_obj(w, NULL);
+    jw_str(w, "file", rel);
+    jw_str(w, "kind", meta_img_kind_key(im->kind));
+    if (im->kind != IMG_INSERT) jw_str(w, "side", meta_img_side_key(im->side));
+    if (im->kind == IMG_MEDIUM) {
+        jw_begin_obj(w, "medium");
+        jw_str(w, "type", meta_kind_key(im->mkind));
+        jw_int(w, "number", im->mnum);
+        jw_end_obj(w);
+    }
+    if (im->note[0]) jw_str(w, "description", im->note);
+    jw_int(w, "bytes", im->bytes);
+    jw_str(w, "sha256", im->sha256);
+    if (im->original[0]) jw_str(w, "original_name", im->original);
+    if (im->at[0]) jw_str(w, "added", im->at);
+    jw_end_obj(w);
+}
+
 int meta_save(const meta_box *b, const char *datadir, meta_tech_fn tech, void *ctx, strbuf *err)
 {
     json_writer w; char path[1024], tmp[1040]; FILE *f; int i, k, ok, c[MEDIA_KINDS];
@@ -295,6 +345,12 @@ int meta_save(const meta_box *b, const char *datadir, meta_tech_fn tech, void *c
     jw_begin_arr(&w, "media");
     for (i = 0; i < b->ndisk; i++) write_disk(&w, &b->disk[i], datadir, tech, ctx);
     jw_end_arr(&w);
+    /* only when there are some: a box without images is written as before */
+    if (b->nimage > 0) {
+        jw_begin_arr(&w, "images");
+        for (i = 0; i < b->nimage && i < META_MAXIMG; i++) write_image(&w, &b->image[i]);
+        jw_end_arr(&w);
+    }
     jw_end_obj(&w);
 
     /* first a temporary file, then the rename: metadata.json is never
@@ -372,6 +428,33 @@ static void load_counts(meta_box *b, const jval *box)
         CP(b->names[k], json_str(names, meta_kind_key(k)));
 }
 
+/* an entry this version does not understand (another kind, a file outside
+ * images/) is skipped: the file then shows up as not belonging to the box */
+static void load_image(meta_box *b, const jval *e)
+{
+    meta_image *im; const char *file = json_str(e, "file"); const jval *m;
+    int kind = meta_img_kind_parse(json_str(e, "kind")), side = meta_img_side_parse(json_str(e, "side"));
+    if (b->nimage >= META_MAXIMG || kind < 0 || !file || strncmp(file, "images/", 7) || !file[7]
+        || strchr(file + 7, '/') || strlen(file + 7) >= sizeof(im->file)) return;
+    im = &b->image[b->nimage];
+    memset(im, 0, sizeof(*im));
+    CP(im->file, file + 7);
+    im->kind = kind;
+    im->side = kind == IMG_INSERT || side < 0 ? IMG_OTHER : side;
+    if (kind == IMG_MEDIUM) {
+        m = json_get(e, "medium");
+        im->mkind = m ? meta_kind_parse(json_str(m, "type")) : -1;
+        im->mnum = m ? (int)json_int(m, "number", 0) : 0;
+        if (im->mkind < 0 || im->mnum < 1) return;
+    }
+    CP(im->note, json_str(e, "description"));
+    im->bytes = json_int(e, "bytes", 0);
+    CP(im->sha256, json_str(e, "sha256"));
+    CP(im->original, json_str(e, "original_name"));
+    CP(im->at, json_str(e, "added"));
+    b->nimage++;
+}
+
 static void load_history(meta_box *b, const jval *h)
 {
     json_writer w;
@@ -441,6 +524,8 @@ int meta_load(meta_box *b, const char *datadir, strbuf *err)
     else load_counts(b, box);
     media = json_get(root, "media");
     for (e = media ? media->child : NULL; e; e = e->next) load_disk(b, e);
+    media = json_get(root, "images");
+    for (e = media && media->t == J_ARR ? media->child : NULL; e; e = e->next) load_image(b, e);
     json_free(root);
     return 0;
 }

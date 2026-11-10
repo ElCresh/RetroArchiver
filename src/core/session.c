@@ -588,6 +588,8 @@ static int referenced(const meta_box *b, const char *name)
 {
     int i, k;
     if (!strcmp(name, "metadata.json")) return 1;
+    /* the folder of the box's images (boximg.h): attached when it was closed */
+    if (b->nimage > 0 && !strcmp(name, "images")) return 1;
     for (i = 0; i < b->ndisk; i++) {
         const meta_disk *d = &b->disk[i];
         if (!strcmp(name, d->scan) || !strcmp(name, d->report)) return 1;

@@ -20,6 +20,7 @@
 #include "core/boxtxn.h"
 #include "core/archive.h"
 #include "core/boxclean.h"
+#include "core/boximg.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -440,6 +441,126 @@ static void free_hint(const char *outdir, const meta_box *box)
     sb_free(&why);
 }
 
+/* ---- the images of a closed box: --images, --add-image, --remove-image ---- */
+
+/* the box of -t, with a change left halfway put in order first; NULL (and
+ * the error printed) if there is none. bag: its folder */
+static meta_box *image_box(const char *outdir, const char *title, const char *edition, const char *language,
+                           char *bag, size_t n)
+{
+    char data[1040], fin[1040]; strbuf log; meta_box *m;
+    sb_init(&log);
+    if (session_resolve(outdir, title, edition, language, bag, n, &log)) {
+        say("  ERROR: %s\n", log.s ? log.s : "");
+        sb_free(&log);
+        return NULL;
+    }
+    if (boxtxn_recover(bag, boxedit_tech, NULL, fin, sizeof(fin), &log) > 0) {
+        say("  %s", log.s ? log.s : "");
+        str_copy(bag, n, fin);
+    }
+    sb_clear(&log);
+    u8_join(data, sizeof(data), bag, "data");
+    m = meta_new();
+    if (!m || meta_load(m, data, &log)) {
+        say("  ERROR: there is no box \"%s\" in %s: check the title, the edition, the language and -o.\n", title, outdir);
+        meta_delete(m);
+        m = NULL;
+    }
+    sb_free(&log);
+    return m;
+}
+
+static void image_names(const meta_box *m)
+{
+    int i;
+    if (!m->nimage) { say("  The box has no images.\n"); return; }
+    say("  Its images:");
+    for (i = 0; i < m->nimage; i++) say(" %s", m->image[i].file);
+    say("\n");
+}
+
+static int run_images(const char *outdir, const char *title, const char *edition, const char *language)
+{
+    char bag[1024], what[64]; int idx[META_MAXIMG], i;
+    meta_box *m = image_box(outdir, title, edition, language, bag, sizeof(bag));
+    if (!m) return 2;
+    if (!m->nimage) say("  The box \"%s\" has no images: attach one with --add-image FILE --as WHAT.\n", m->title);
+    else say("  Images of the box \"%s\": %d, in %s%sdata%simages\n", m->title, m->nimage, bag, U8_SEP, U8_SEP);
+    boximg_order(m, idx);
+    for (i = 0; i < m->nimage; i++) {
+        const meta_image *im = &m->image[idx[i]];
+        boximg_what_text(im, what, sizeof(what));
+        say("    %-24s %-18s %9.1f KB", im->file, what, (double)im->bytes / 1024.0);
+        if (im->note[0]) say("  %s", im->note);
+        if (im->original[0]) say("  (was %s)", im->original);
+        say("\n");
+    }
+    meta_delete(m);
+    return 0;
+}
+
+#define WHAT_FORMS "box-front, box-back, box-spine, box-top, box-bottom, box-other, cd2-front, floppy3-back or insert"
+
+static int run_add_image(const char *outdir, const char *title, const char *edition, const char *language,
+                         const char *file, const char *as, const char *note, const char *reason)
+{
+    char bag[1024], what[64]; meta_image im; img_list l; img_result res; strbuf err; meta_box *m; int rc;
+    if (boximg_parse_what(as, &im)) {
+        say("  ERROR: --as \"%s\" does not say what the image shows: write %s.\n", as, WHAT_FORMS);
+        return 2;
+    }
+    if (!(m = image_box(outdir, title, edition, language, bag, sizeof(bag)))) return 2;
+    sb_init(&err);
+    str_copy(im.note, sizeof(im.note), note);
+    boximg_list_load(m, &l);
+    rc = boximg_list_add(&l, m, file, &im, &err);
+    if (rc == 0) rc = boximg_save(bag, &l, reason, NULL, &res, &err);
+    if (rc) {
+        say("  ERROR: %s.\n", err.s ? err.s : "the image was not attached");
+        rc = 2;
+    } else if (res.skipped) {
+        say("  Not attached: it is the same file as an image the box already has (%s).\n", res.skipped_names);
+    } else {
+        meta_box *now = image_box(outdir, title, edition, language, bag, sizeof(bag));
+        boximg_what_text(&im, what, sizeof(what));
+        if (now && now->nimage)
+            say("  Attached as %s: data%simages%s%s. The box is closed and verified.\n", what, U8_SEP, U8_SEP,
+                now->image[now->nimage - 1].file);
+        meta_delete(now);
+    }
+    boximg_list_free(&l);
+    sb_free(&err);
+    meta_delete(m);
+    return rc;
+}
+
+static int run_remove_image(const char *outdir, const char *title, const char *edition, const char *language,
+                            const char *name, const char *reason)
+{
+    char bag[1024]; img_list l; img_result res; strbuf err; meta_box *m; int i, rc = 2;
+    if (!(m = image_box(outdir, title, edition, language, bag, sizeof(bag)))) return 2;
+    sb_init(&err);
+    boximg_list_load(m, &l);
+    for (i = 0; i < l.n && strcmp(l.item[i].was, name); i++) ;
+    if (i == l.n) {
+        say("  ERROR: the box has no image \"%s\": write the name as --images lists it.\n", name);
+        image_names(m);
+    } else {
+        boximg_list_remove(&l, i);
+        if (boximg_save(bag, &l, reason, NULL, &res, &err))
+            say("  ERROR: %s.\n", err.s ? err.s : "the image was not removed");
+        else {
+            say("  Removed: %s is now in set-aside (nothing is deleted). The box is closed and verified.\n", name);
+            rc = 0;
+        }
+    }
+    boximg_list_free(&l);
+    sb_free(&err);
+    meta_delete(m);
+    return rc;
+}
+
 /* --reread: an edit left halfway is finished or undone first, then the
  * media to read are found in the box's own composition */
 static int open_reread(session_cfg *cfg, meta_box *box, const char *outdir, const char *list)
@@ -476,7 +597,19 @@ static void usage(void)
     say("  usage: dskrun NUM_FLOPPIES -t TITLE [options]\n");
     say("         dskrun --reread MEDIA -t TITLE [-e EDITION] [-l LANGUAGE] [options]\n");
     say("         dskrun --convert [-t TITLE [-e EDITION] [-l LANGUAGE]] [-o DIR]\n");
-    say("         dskrun --free-space [-t TITLE [-e EDITION] [-l LANGUAGE]] [-o DIR]\n\n");
+    say("         dskrun --free-space [-t TITLE [-e EDITION] [-l LANGUAGE]] [-o DIR]\n");
+    say("         dskrun --add-image FILE --as WHAT [--note TEXT] -t TITLE [-e ..] [-l ..] [-o DIR]\n");
+    say("         dskrun --images -t TITLE [-e EDITION] [-l LANGUAGE] [-o DIR]\n");
+    say("         dskrun --remove-image NAME -t TITLE [-e EDITION] [-l LANGUAGE] [-o DIR]\n\n");
+    say("    --add-image FILE  attach a scan (JPEG, PNG, TIFF, BMP, GIF; a PDF as an\n");
+    say("               insert) to a closed box: copied as it is into data\\images,\n");
+    say("               with its fingerprint in the manifest. --as WHAT says what it\n");
+    say("               shows: box-front, box-back, box-spine, box-top, box-bottom,\n");
+    say("               box-other, cd2-front, floppy3-back, insert. --note TEXT adds\n");
+    say("               a description, --reason TEXT goes in the history of the box\n");
+    say("    --images   list the images of a box\n");
+    say("    --remove-image NAME  take an image out of the box: it goes to\n");
+    say("               set-aside, it is not deleted\n");
     say("    --free-space  list what is superseded in set-aside of the closed boxes\n");
     say("               (all those of DIR, or the one of -t) and ask before deleting\n");
     say("               it: reads identical to the one kept, and duplicate or failed\n");
@@ -540,7 +673,9 @@ int main(int argc, char **argv)
     session_cfg cfg; session_host host; meta_box *box;
     char title[256] = "", edition[128] = "", language[128] = "", platform[64] = "unspecified", tpl[256] = "FLOPPY{nn}", outdir[512] = ".";
     char samdisk[512] = "", source[512] = "", comp[80], dic[512] = "", drive[16] = "", dats[512] = "";
-    char reread[256] = "";
+    char reread[256] = "", add_image[1024] = "", image_as[64] = "", image_note[256] = "";
+    char remove_image[128] = "", reason[256] = "";
+    int list_images = 0;
     int convert = 0, free_space = 0;
     int i, rc, tot = 0, ncd = 0, ndvd = 0;
 
@@ -567,6 +702,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "-d") && i + 1 < argc) to_utf8(argv[++i], drive, sizeof(drive), ARG_CP);
         else if (!strcmp(argv[i], "-R") && i + 1 < argc) to_utf8(argv[++i], dats, sizeof(dats), ARG_CP);
         else if (!strcmp(argv[i], "--reread") && i + 1 < argc) to_utf8(argv[++i], reread, sizeof(reread), ARG_CP);
+        else if (!strcmp(argv[i], "--add-image") && i + 1 < argc) to_utf8(argv[++i], add_image, sizeof(add_image), ARG_CP);
+        else if (!strcmp(argv[i], "--as") && i + 1 < argc) to_utf8(argv[++i], image_as, sizeof(image_as), ARG_CP);
+        else if (!strcmp(argv[i], "--note") && i + 1 < argc) to_utf8(argv[++i], image_note, sizeof(image_note), ARG_CP);
+        else if (!strcmp(argv[i], "--reason") && i + 1 < argc) to_utf8(argv[++i], reason, sizeof(reason), ARG_CP);
+        else if (!strcmp(argv[i], "--remove-image") && i + 1 < argc) to_utf8(argv[++i], remove_image, sizeof(remove_image), ARG_CP);
+        else if (!strcmp(argv[i], "--images"))           list_images = 1;
         else if (!strcmp(argv[i], "--convert"))          convert = 1;
         else if (!strcmp(argv[i], "--free-space"))       free_space = 1;
         else if (!strcmp(argv[i], "-k"))                 cfg.keepall = 1;
@@ -585,6 +726,12 @@ int main(int argc, char **argv)
     if (cfg.maxread > META_MAXREAD) cfg.maxread = META_MAXREAD;
     if (convert) return run_convert(outdir, title, edition, language);
     if (free_space) return run_free(outdir, title, edition, language);
+    if (add_image[0] || remove_image[0] || list_images) {
+        if (!title[0]) { usage(); return 2; }
+        if (list_images) return run_images(outdir, title, edition, language);
+        if (remove_image[0]) return run_remove_image(outdir, title, edition, language, remove_image, reason);
+        return run_add_image(outdir, title, edition, language, add_image, image_as, image_note, reason);
+    }
     if (!title[0] || (!reread[0] && (tot < 0 || ncd < 0 || ndvd < 0 || tot + ncd + ndvd < 1 ||
                                      tot + ncd + ndvd > META_MAXDISK))) { usage(); return 2; }
 

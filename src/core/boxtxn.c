@@ -159,12 +159,22 @@ static int freed_before(const txn_moves *m, int i)
     return 0;
 }
 
+/* the source of move i is the destination of one of the moves from..i-1: it
+ * will be there by then (a file renamed through editing/, so that two files
+ * can swap their names) */
+static int made_before(const txn_moves *m, int from, int i)
+{
+    int k;
+    for (k = from; k < i; k++) if (!strcmp(m->to[k], m->from[i])) return 1;
+    return 0;
+}
+
 /* 1: nothing is touched if a move cannot be made */
 static int precheck(const char *bagdir, const txn_moves *m, const char *newdir, strbuf *err)
 {
     int i;
     for (i = 0; i < m->n; i++) {
-        if (!rel_exists(bagdir, m->from[i])) {
+        if (!rel_exists(bagdir, m->from[i]) && !made_before(m, 0, i)) {
             sb_printf(err, M_TXN_MISSING, m->from[i], bagdir);
             return -1;
         }
@@ -537,7 +547,7 @@ static int forward_possible(const char *bagdir, const txn_moves *m, int done, me
 {
     char p[1024]; strbuf err; int i, ok;
     for (i = done; i < m->n; i++)
-        if (!rel_exists(bagdir, m->from[i])) return 0;
+        if (!rel_exists(bagdir, m->from[i]) && !made_before(m, done, i)) return 0;
     sb_init(&err);
     path_of(bagdir, NEW_DIR, p, sizeof(p));
     ok = meta_load(box, p, &err) == 0;

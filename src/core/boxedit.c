@@ -10,14 +10,6 @@
 
 #define CP(dst, src) str_copy(dst, sizeof(dst), src)
 
-/* the technical data of the media an edit does not read: the old ones */
-typedef struct {
-    jval *old;                  /* the metadata.json before the edit */
-    int kind, num;              /* the medium read again: its data is computed; kind -1 none */
-    meta_tech_fn inner;
-    void *ctx;
-} keep_tech;
-
 int boxedit_grade(const char *status, const char *method)
 {
     if (!strcmp(status, ST_REDUMP)) return 6;
@@ -72,7 +64,7 @@ static int model_key(const char *k)
     return 0;
 }
 
-static void keep_tech_open(keep_tech *k, const char *bagdir, int kind, int num, meta_tech_fn inner, void *ctx)
+void boxedit_keep_open(boxedit_keep *k, const char *bagdir, int kind, int num, meta_tech_fn inner, void *ctx)
 {
     char data[1040], p[1100], perr[160]; FILE *f; long n; char *s;
     memset(k, 0, sizeof(*k));
@@ -88,16 +80,16 @@ static void keep_tech_open(keep_tech *k, const char *bagdir, int kind, int num, 
     fclose(f);
 }
 
-static void keep_tech_close(keep_tech *k)
+void boxedit_keep_close(boxedit_keep *k)
 {
     json_free(k->old);
     k->old = NULL;
 }
 
 /* the old technical data of d, or the inner function for the medium just read */
-static void kept_tech(void *c, const meta_disk *d, const char *img, json_writer *w)
+void boxedit_kept_tech(void *c, const meta_disk *d, const char *img, json_writer *w)
 {
-    keep_tech *k = (keep_tech *)c; const jval *media, *e, *f;
+    boxedit_keep *k = (boxedit_keep *)c; const jval *media, *e, *f;
     if (k->old && !(d->kind == k->kind && d->num == k->num)) {
         media = json_get(k->old, "media");
         for (e = media ? media->child : NULL; e; e = e->next) {
@@ -198,7 +190,12 @@ int boxedit_diff(const char *bagdir, const meta_box *old, const meta_box *edited
     for (k = 0; k < MEDIA_KINDS; k++) {
         int was = meta_count(old, k), now = meta_count(edited, k);
         for (num = now + 1; num <= was; num++, n++)
-            if ((c = slot_at(out, max, n, CH_REMOVED)) != NULL) { c->kind = k; c->num = num; }
+            if ((c = slot_at(out, max, n, CH_REMOVED)) != NULL) {
+                c->kind = k; c->num = num;
+                for (i = 0; i < old->nimage; i++)
+                    if (old->image[i].kind == IMG_MEDIUM && old->image[i].mkind == k && old->image[i].mnum == num)
+                        c->images++;
+            }
         for (num = was + 1; num <= now; num++, n++)
             if ((c = slot_at(out, max, n, CH_ADDED)) != NULL) { c->kind = k; c->num = num; }
     }
@@ -224,6 +221,24 @@ static int position(const int c[MEDIA_KINDS], int kind, int num)
     int k, pos = num;
     for (k = 0; k < kind; k++) pos += c[k];
     return pos;
+}
+
+/* the images of a medium that goes: out of data/images with it, as
+ * NAME.removed, listed in w; the others stay in nb */
+static void remove_images(meta_box *nb, const char *bagdir, int kind, int num, txn_moves *m, json_writer *w)
+{
+    char from[120], to[400]; int i, k = 0, any = 0;
+    for (i = 0; i < nb->nimage; i++) {
+        const meta_image *im = &nb->image[i];
+        if (im->kind != IMG_MEDIUM || im->mkind != kind || im->mnum != num) { nb->image[k++] = *im; continue; }
+        if (!any++) jw_begin_arr(w, "images_set_aside");
+        snprintf(from, sizeof(from), "data/images/%s", im->file);
+        txn_aside_name(bagdir, m, im->file, EDIT_REMOVED, to, sizeof(to));
+        txn_add(m, from, to);
+        jw_str(w, NULL, to);
+    }
+    if (any) jw_end_arr(w);
+    nb->nimage = k;
 }
 
 /* every file of d out of data/, as NAME.removed, listed in w */
@@ -266,6 +281,7 @@ static void recompose(meta_box *nb, const meta_box *old, const char *bagdir, txn
             jw_str(w, "medium", who);
             jw_str(w, "change", "removed");
             remove_disk(bagdir, d, m, w);
+            remove_images(nb, bagdir, d->kind, d->num, m, w);
             jw_end_obj(w);
             continue;
         }
@@ -313,7 +329,7 @@ static int freeze_set(meta_box *nb, const char *old_title, strbuf *err)
     return 0;
 }
 
-static void entry_head(json_writer *w, const char *action, const char *reason)
+void boxedit_entry_head(json_writer *w, const char *action, const char *reason)
 {
     char now[20];
     meta_now(now);
@@ -341,7 +357,7 @@ static void apply_fields(meta_box *nb, const meta_box *edited, json_writer *w)
     if (any) jw_end_arr(w);
 }
 
-static int damaged(const char *bagdir, bag_digests *ok, strbuf *err)
+int boxedit_whole(const char *bagdir, bag_digests *ok, strbuf *err)
 {
     arc_check c;
     if (arc_verify_digests(bagdir, &c, ok, err)) return -1;
@@ -354,7 +370,7 @@ int boxedit_save_data(const char *bagdir, const meta_box *edited, const char *re
                       char *newbagdir, size_t n, strbuf *err)
 {
     meta_box *old = meta_new(), *nb = meta_new();
-    char data[1040], nd[1024]; json_writer w; txn_moves m; bag_digests ok; edit_change one; keep_tech kt;
+    char data[1040], nd[1024]; json_writer w; txn_moves m; bag_digests ok; edit_change one; boxedit_keep kt;
     int rc = -1, rc2;
 
     str_copy(newbagdir, n, bagdir);
@@ -369,11 +385,11 @@ int boxedit_save_data(const char *bagdir, const meta_box *edited, const char *re
         sb_puts(err, M_EDIT_EMPTY);
         goto out;
     }
-    if (damaged(bagdir, &ok, err)) goto out;
+    if (boxedit_whole(bagdir, &ok, err)) goto out;
 
     *nb = *old;
     new_folder(bagdir, old, edited, nd, sizeof(nd));
-    entry_head(&w, "edit", reason);
+    boxedit_entry_head(&w, "edit", reason);
     if (nd[0]) {
         jw_begin_obj(&w, "folder");
         jw_str(&w, "from", base_of(bagdir));
@@ -392,9 +408,9 @@ int boxedit_save_data(const char *bagdir, const meta_box *edited, const char *re
         goto out;
     }
     meta_now(nb->closed);
-    keep_tech_open(&kt, bagdir, -1, 0, boxedit_tech, NULL);
-    rc2 = boxtxn_commit(bagdir, &m, nb, kept_tech, &kt, &ok, nd[0] ? nd : NULL, err);
-    keep_tech_close(&kt);
+    boxedit_keep_open(&kt, bagdir, -1, 0, boxedit_tech, NULL);
+    rc2 = boxtxn_commit(bagdir, &m, nb, boxedit_kept_tech, &kt, &ok, nd[0] ? nd : NULL, err);
+    boxedit_keep_close(&kt);
     if (rc2) goto out;
     if (nd[0]) str_copy(newbagdir, n, nd);
     {
@@ -540,14 +556,14 @@ int boxedit_commit_disk(const char *bagdir, meta_box *box, const edit_disk *e, b
                         const bag_digests *bad, meta_tech_fn tech, void *ctx, strbuf *err)
 {
     char who[32]; meta_box *nb; meta_disk *d; json_writer w; txn_moves m; bag_digests trust;
-    keep_tech kt; int rc = -1, damaged = 0, same = e->keep == KEEP_OLD_IDENTICAL;
+    boxedit_keep kt; int rc = -1, damaged = 0, same = e->keep == KEEP_OLD_IDENTICAL;
 
     if (e->keep == KEEP_OLD) { drop_new(bagdir, e->now, EDIT_REJECTED); return 0; }
     if (!(nb = meta_new())) { sb_puts(err, M_EDIT_NOMEM); return -1; }
     *nb = *box;
     memset(&m, 0, sizeof(m)); memset(&trust, 0, sizeof(trust));
     jw_init(&w);
-    entry_head(&w, "edit", e->reason);
+    boxedit_entry_head(&w, "edit", e->reason);
     jw_begin_arr(&w, "media");
     jw_begin_obj(&w, NULL);
     medium_key(e->now->kind, e->now->num, who, sizeof(who));
@@ -570,16 +586,16 @@ int boxedit_commit_disk(const char *bagdir, meta_box *box, const edit_disk *e, b
     if (d && !same) *d = *e->now;
     meta_now(nb->closed);
     with_bad(known, bad, &trust);
-    keep_tech_open(&kt, bagdir, same ? -1 : e->now->kind, e->now->num, tech, ctx);
+    boxedit_keep_open(&kt, bagdir, same ? -1 : e->now->kind, e->now->num, tech, ctx);
     if (!d || meta_history_add(nb, w.out.s)) {
         sb_puts(err, M_EDIT_HISTORY_FULL);
-    } else if (boxtxn_commit(bagdir, &m, nb, kept_tech, &kt, &trust, NULL, err) == 0) {
+    } else if (boxtxn_commit(bagdir, &m, nb, boxedit_kept_tech, &kt, &trust, NULL, err) == 0) {
         *box = *nb;
         bag_digests_free(known);
         bag_manifest_load(bagdir, "manifest-sha256.txt", known);
         rc = 0;
     }
-    keep_tech_close(&kt);
+    boxedit_keep_close(&kt);
     bag_digests_free(&trust);
     jw_free(&w);
     txn_free(&m);
@@ -645,7 +661,7 @@ static void aside_moves(const char *bagdir, txn_moves *m, json_writer *w)
 int boxedit_convert(const char *bagdir, conv_why *whyp, strbuf *err)
 {
     char dir[1024], fin[1040], data[1040], p[1100]; strbuf log; arc_box *a; meta_box *old = NULL, *nb = NULL;
-    json_writer w; txn_moves m; bag_digests ok; keep_tech kt; arc_check ck; conv_why spare; int rc = -1;
+    json_writer w; txn_moves m; bag_digests ok; boxedit_keep kt; arc_check ck; conv_why spare; int rc = -1;
     conv_why *why = whyp ? whyp : &spare;
 
     memset(why, 0, sizeof(*why));
@@ -699,7 +715,7 @@ int boxedit_convert(const char *bagdir, conv_why *whyp, strbuf *err)
         goto out;
     }
     *nb = *old;
-    entry_head(&w, "convert", NULL);
+    boxedit_entry_head(&w, "convert", NULL);
     jw_str(&w, "from", old->schema[0] ? old->schema : "unknown");
     jw_begin_arr(&w, "set_aside");
     aside_moves(dir, &m, &w);
@@ -710,9 +726,9 @@ int boxedit_convert(const char *bagdir, conv_why *whyp, strbuf *err)
      * into messi-da-parte/ */
     rel_path(dir, SESSION_ASIDE_DIR, p, sizeof(p));
     if (u8_mkdir(p)) { sb_printf(err, M_TXN_MKDIR, p); goto out; }
-    keep_tech_open(&kt, dir, -1, 0, boxedit_tech, NULL);
-    rc = boxtxn_commit(dir, &m, nb, kept_tech, &kt, &ok, NULL, err) ? -1 : 0;
-    keep_tech_close(&kt);
+    boxedit_keep_open(&kt, dir, -1, 0, boxedit_tech, NULL);
+    rc = boxtxn_commit(dir, &m, nb, boxedit_kept_tech, &kt, &ok, NULL, err) ? -1 : 0;
+    boxedit_keep_close(&kt);
     if (rc == 0) {
         conv_list left;
         WHY(CONV_DONE);

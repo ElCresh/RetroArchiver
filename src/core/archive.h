@@ -40,6 +40,7 @@ typedef struct {
     int  twin;
     char twin_dir[600];
     int  twin_archived;
+    int  images;                    /* the images attached to the box (boximg.h) */
     /* Free space: the bytes of set-aside/ that are superseded (boxclean.h),
      * 0 for a box it does not work on */
     long long reclaim;

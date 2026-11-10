@@ -106,4 +106,16 @@
 #define M_OPT_INCOMPLETE "DiscImageCreator finished but %.200s is missing: the read is incomplete."
 #define M_OPT_WITH_RESETS "%s The drive was reset during the read (UNIT_ATTENTION, timeouts): the copy protection scan would not help, it makes the drive reset even more."
 
+/* bagit.c, boximg.c: the images of a box */
+#define M_BAG_IMG_MISSING "data/images/%s is missing: put it back, or remove the image from the box with Images"
+#define M_BAG_IMG_CHANGED "data/images/%s changed after it was attached (different fingerprint): put the original file back, or remove the image and attach it again"
+#define M_IMG_TYPE "%s cannot be attached: attach JPEG, PNG, TIFF, BMP or GIF pictures, or a PDF as an insert"
+#define M_IMG_PDF "%s is a PDF: a PDF can only be attached as an insert"
+#define M_IMG_NO_MEDIUM "the box has no %s: choose one of its media"
+#define M_IMG_SIDE "choose what the image shows: a side of the box, the front or the back of a medium, or an insert"
+#define M_IMG_TOO_MANY "too many images: at most %d per box"
+#define M_IMG_SOURCE "cannot read %s: is the folder still reachable (the network, the NAS)? The box was not changed"
+#define M_IMG_COPY "cannot copy %s into the box: is the archive disk full or write-protected? The box was not changed"
+#define M_IMG_NOT_THERE "%s is not an image of this box: it was changed in the meantime, open Images again"
+
 #endif

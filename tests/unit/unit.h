@@ -32,6 +32,7 @@ void test_archive(void);
 void test_boxtxn(void);
 void test_boxedit(void);
 void test_boxclean(void);
+void test_boximg(void);
 void test_session_edit(void);
 void test_optical(void);
 void test_lang(void);

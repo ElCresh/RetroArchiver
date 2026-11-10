@@ -36,6 +36,7 @@ typedef struct {
     char field[16];             /* CH_FIELD: "title", "platform", "publisher"... */
     char from[512], to[512];    /* CH_FIELD: the values; CH_FOLDER: the folders */
     int kind, num;              /* CH_ADDED, CH_REMOVED: the medium */
+    int images;                 /* CH_REMOVED: its images, set aside with it */
 } edit_change;
 /* what saving edited would change in the box of bagdir: how many entries */
 int  boxedit_diff(const char *bagdir, const meta_box *old, const meta_box *edited, edit_change *out, int max);
@@ -81,6 +82,28 @@ enum {
  * English text for the console */
 typedef struct { int code; char file[300]; } conv_why;
 int  boxedit_convert(const char *bagdir, conv_why *why, strbuf *err);
+
+/* ---- for the other changes of a closed box (boximg.c) ---- */
+
+/* The technical data of the media a change does not read: the old ones, as
+ * metadata.json had them (computed again now, a CD could lose its redump
+ * match because the DATs moved). kind, num: the medium just read, whose data
+ * inner computes; kind -1 none */
+typedef struct {
+    jval *old;                  /* the metadata.json before the change */
+    int kind, num;
+    meta_tech_fn inner;
+    void *ctx;
+} boxedit_keep;
+void boxedit_keep_open(boxedit_keep *k, const char *bagdir, int kind, int num, meta_tech_fn inner, void *ctx);
+void boxedit_keep_close(boxedit_keep *k);
+/* the meta_tech_fn to give boxtxn_commit, with a boxedit_keep as its ctx */
+void boxedit_kept_tech(void *keep, const meta_disk *d, const char *img, json_writer *w);
+/* opens an entry of the history: at, action, software and, if given, reason */
+void boxedit_entry_head(json_writer *w, const char *action, const char *reason);
+/* 0 if every file of the closed box matches its manifest (ok gets their
+ * digests); -1 with the reason: a damaged box is not changed */
+int  boxedit_whole(const char *bagdir, bag_digests *ok, strbuf *err);
 
 /* the technical data of a medium, by its kind */
 void boxedit_tech(void *ctx, const meta_disk *d, const char *img, json_writer *w);

@@ -70,6 +70,25 @@ typedef struct {
     int  copy_protection;
 } meta_disk;
 
+/* The images of a box: scans of the box itself, of its media and of what
+ * was inside (a manual, a card). Files of data/images/, attached after the
+ * box is closed (boximg.h); byte for byte the files that were chosen */
+#define META_MAXIMG 200
+enum { IMG_BOX, IMG_MEDIUM, IMG_INSERT, IMG_KINDS };
+enum { IMG_FRONT, IMG_BACK, IMG_SPINE, IMG_TOP, IMG_BOTTOM, IMG_OTHER, IMG_SIDES };
+
+typedef struct {
+    char file[64];           /* name inside data/images/ */
+    int  kind;               /* IMG_BOX, IMG_MEDIUM, IMG_INSERT */
+    int  side;               /* IMG_FRONT...: a box has all of them, a medium front and back, an insert none */
+    int  mkind, mnum;        /* IMG_MEDIUM: which medium of the box (MEDIA_..., number within the type) */
+    char note[256];          /* free description */
+    char original[200];      /* the name the file had where it was taken from */
+    char sha256[65];
+    long long bytes;
+    char at[20];             /* when it was attached */
+} meta_image;
+
 typedef struct {
     char title[256], publisher[128], year[16], platform[64];
     char language[64], edition[128], notes[512];
@@ -83,7 +102,16 @@ typedef struct {
     char history[131072];
     int  ndisk;
     meta_disk disk[META_MAXDISK];   /* in order of n */
+    int  nimage;
+    meta_image image[META_MAXIMG];  /* in the order they are shown */
 } meta_box;
+
+/* "box" "medium" "insert", and "front" "back" "spine" "top" "bottom"
+ * "other", as in metadata.json; -1 if unknown */
+const char *meta_img_kind_key(int kind);
+int  meta_img_kind_parse(const char *key);
+const char *meta_img_side_key(int side);
+int  meta_img_side_parse(const char *key);
 
 /* "floppy", "cd", "dvd" (metadata.json); -1 if unknown */
 const char *meta_kind_key(int kind);
