@@ -85,7 +85,9 @@ typedef struct {
  * was inside (a manual, a card). Files of data/images/, attached after the
  * box is closed (boximg.h); byte for byte the files that were chosen */
 #define META_MAXIMG 200
-enum { IMG_BOX, IMG_MEDIUM, IMG_INSERT, IMG_KINDS };
+/* IMG_CASE is the jewel case or sleeve a medium came in, apart from the
+ * outer box; it is last so the numbers of the others stay */
+enum { IMG_BOX, IMG_MEDIUM, IMG_INSERT, IMG_CASE, IMG_KINDS };
 enum { IMG_FRONT, IMG_BACK, IMG_SPINE, IMG_TOP, IMG_BOTTOM, IMG_OTHER, IMG_SIDES };
 
 typedef struct {

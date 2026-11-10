@@ -57,6 +57,7 @@ void boximg_base(const meta_image *im, char *out, size_t n)
     if (im->kind == IMG_BOX) snprintf(out, n, "box-%s", meta_img_side_key(im->side));
     else if (im->kind == IMG_MEDIUM)
         snprintf(out, n, "%s%02d-%s", meta_kind_key(im->mkind), im->mnum, meta_img_side_key(im->side));
+    else if (im->kind == IMG_CASE) snprintf(out, n, "case-%s", meta_img_side_key(im->side));
     else snprintf(out, n, "insert");
 }
 
@@ -114,9 +115,10 @@ int boximg_parse_what(const char *what, meta_image *im)
     int k, side; size_t l; const char *p; char *end; long num;
     memset(im, 0, sizeof(*im));
     if (!strcmp(what, "insert")) { im->kind = IMG_INSERT; im->side = IMG_OTHER; return 0; }
-    if (!strncmp(what, "box-", 4)) {
-        if ((side = meta_img_side_parse(what + 4)) < 0) return -1;
-        im->kind = IMG_BOX; im->side = side;
+    if (!strncmp(what, "box-", 4) || !strncmp(what, "case-", 5)) {
+        int box = what[0] == 'b';
+        if ((side = meta_img_side_parse(what + (box ? 4 : 5))) < 0) return -1;
+        im->kind = box ? IMG_BOX : IMG_CASE; im->side = side;
         return 0;
     }
     for (k = 0; k < MEDIA_KINDS; k++) {
@@ -163,13 +165,17 @@ int boximg_guess(const char *filename, const meta_box *b, meta_image *im)
     static const char *const spine[] = { "spine", "dorso", "costa", NULL };
     static const char *const top[] = { "top", "sopra", NULL };
     static const char *const bottom[] = { "bottom", "sotto", NULL };
-    char s[200]; size_t i; const char *p;
+    /* the jewel case of a CD, not the big box: "custodia cd1 retro" is the
+     * case, so these words win over the name of a medium */
+    static const char *const cases[] = { "jewel", "custodia", "case", "inlay", "booklet", NULL };
+    char s[200]; size_t i; const char *p; int in_case;
 
     memset(im, 0, sizeof(*im));
     im->kind = IMG_INSERT; im->side = IMG_OTHER;
     stem_of(base_of(filename), s, sizeof(s));
     if (boximg_file_type(filename) == 2) return 1;          /* a PDF is an insert */
-    for (i = 0; i < sizeof(media) / sizeof(media[0]); i++) {
+    in_case = has_any(s, cases);
+    for (i = 0; !in_case && i < sizeof(media) / sizeof(media[0]); i++) {
         int num = 0, have = meta_count(b, media[i].kind);
         if (!(p = word_in(s, media[i].word))) continue;
         while (*p == ' ' || *p == '_' || *p == '-' || *p == '.') p++;
@@ -180,12 +186,13 @@ int boximg_guess(const char *filename, const meta_box *b, meta_image *im)
         im->side = has_any(s, back) ? IMG_BACK : IMG_FRONT;
         return 1;
     }
-    im->kind = IMG_BOX;
+    im->kind = in_case ? IMG_CASE : IMG_BOX;
     if (has_any(s, back)) im->side = IMG_BACK;              /* before "front": "retro" has no "front" in it */
     else if (has_any(s, front)) im->side = IMG_FRONT;
     else if (has_any(s, spine)) im->side = IMG_SPINE;
     else if (has_any(s, top)) im->side = IMG_TOP;
     else if (has_any(s, bottom)) im->side = IMG_BOTTOM;
+    else if (in_case) im->side = strstr(s, "inlay") ? IMG_BACK : IMG_FRONT;
     else { im->kind = IMG_INSERT; im->side = IMG_OTHER; return 0; }
     return 1;
 }
@@ -203,7 +210,7 @@ int boximg_valid(const meta_box *b, const meta_image *im, const char *filename, 
             return -1;
         }
         if (im->side != IMG_FRONT && im->side != IMG_BACK) { sb_puts(err, M_IMG_SIDE); return -1; }
-    } else if (im->kind == IMG_BOX) {
+    } else if (im->kind == IMG_BOX || im->kind == IMG_CASE) {
         if (im->side < 0 || im->side >= IMG_SIDES) { sb_puts(err, M_IMG_SIDE); return -1; }
     } else if (im->kind != IMG_INSERT) {
         sb_puts(err, M_IMG_SIDE);
@@ -216,6 +223,7 @@ static int rank_of(const meta_box *b, const meta_image *im)
 {
     int k, pos;
     if (im->kind == IMG_BOX) return im->side == IMG_FRONT ? 0 : 1;
+    if (im->kind == IMG_CASE) return im->side == IMG_FRONT ? 2 : 3;     /* after the box, before the media */
     if (im->kind == IMG_INSERT) return 100000;
     for (pos = im->mnum, k = 0; k < im->mkind && k < MEDIA_KINDS; k++) pos += meta_count(b, k);
     return 10 + pos;
@@ -237,6 +245,7 @@ void boximg_what_text(const meta_image *im, char *out, size_t n)
 {
     char who[32];
     if (im->kind == IMG_BOX) snprintf(out, n, "box %s", meta_img_side_key(im->side));
+    else if (im->kind == IMG_CASE) snprintf(out, n, "case %s", meta_img_side_key(im->side));
     else if (im->kind == IMG_MEDIUM) {
         meta_disk_name(im->mkind, im->mnum, who, sizeof(who));
         snprintf(out, n, "%s %s", who, meta_img_side_key(im->side));

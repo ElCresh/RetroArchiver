@@ -174,8 +174,9 @@ static void names(void)
 static void parse_guess(void)
 {
     static const char *const good[] = { "box-front", "box-back", "box-spine", "box-top", "box-bottom", "box-other",
-                                        "cd2-front", "floppy3-back", "dvd1-front", "insert" };
-    static const char *const bad[] = { "cd0-front", "box", "insert-front", "cd2", "cd2-spine", "tape1-front", "" };
+                                        "cd2-front", "floppy3-back", "dvd1-front", "insert", "case-front", "case-back",
+                                        "case-spine", "case-other" };
+    static const char *const bad[] = { "cd0-front", "box", "case", "case-", "case-left", "insert-front", "cd2", "cd2-spine", "tape1-front", "" };
     meta_box *b = meta_new(); meta_image im; strbuf err; size_t i; char t[64];
     sb_init(&err);
     meta_set_counts(b, 3, 2, 0);
@@ -197,6 +198,19 @@ static void parse_guess(void)
     CHECK(boximg_guess("scan0001.jpg", b, &im) == 0 && im.kind == IMG_INSERT);
     CHECK(boximg_guess("manuale.pdf", b, &im) == 1 && im.kind == IMG_INSERT);
     CHECK(boximg_guess("abcd1.jpg", b, &im) == 0);
+    /* the jewel case is not the big box, and its words win over "cd1" */
+    CHECK(boximg_guess("jewel case front.jpg", b, &im) == 1 && im.kind == IMG_CASE && im.side == IMG_FRONT);
+    CHECK(boximg_guess("custodia cd1 retro.jpg", b, &im) == 1 && im.kind == IMG_CASE && im.side == IMG_BACK);
+    CHECK(boximg_guess("inlay.png", b, &im) == 1 && im.kind == IMG_CASE && im.side == IMG_BACK);
+    CHECK(boximg_guess("Custodia.tif", b, &im) == 1 && im.kind == IMG_CASE && im.side == IMG_FRONT);
+    im = what("case-spine");
+    CHECK(im.kind == IMG_CASE && im.side == IMG_SPINE);
+    boximg_what_text(&im, t, sizeof(t));
+    CHECK_STR(t, "case spine");
+    boximg_base(&im, t, sizeof(t));
+    CHECK_STR(t, "case-spine");
+    CHECK(boximg_valid(b, &im, "x.jpg", &err) == 0);
+    CHECK(strcmp(meta_img_kind_key(IMG_CASE), "case") == 0 && meta_img_kind_parse("case") == IMG_CASE);
 
     im = what("box-front");
     CHECK(boximg_valid(b, &im, "a.pdf", &err) == -1 && strstr(err.s, "PDF"));

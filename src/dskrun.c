@@ -500,7 +500,7 @@ static int run_images(const char *outdir, const char *title, const char *edition
     return 0;
 }
 
-#define WHAT_FORMS "box-front, box-back, box-spine, box-top, box-bottom, box-other, cd2-front, floppy3-back or insert"
+#define WHAT_FORMS "box-front, box-back, box-spine, box-top, box-bottom, box-other, case-front, case-back (the same sides), cd2-front, floppy3-back or insert"
 
 static int run_add_image(const char *outdir, const char *title, const char *edition, const char *language,
                          const char *file, const char *as, const char *note, const char *reason)
@@ -605,7 +605,8 @@ static void usage(void)
     say("               insert) to a closed box: copied as it is into data\\images,\n");
     say("               with its fingerprint in the manifest. --as WHAT says what it\n");
     say("               shows: box-front, box-back, box-spine, box-top, box-bottom,\n");
-    say("               box-other, cd2-front, floppy3-back, insert. --note TEXT adds\n");
+    say("               box-other, case-front ... case-other (the jewel case), cd2-front,\n");
+    say("               floppy3-back, insert. --note TEXT adds\n");
     say("               a description, --reason TEXT goes in the history of the box\n");
     say("    --images   list the images of a box\n");
     say("    --remove-image NAME  take an image out of the box: it goes to\n");

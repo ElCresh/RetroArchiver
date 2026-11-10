@@ -91,6 +91,7 @@ enum {
      * numbers (guidrive.ps1 of the VM names them): a new one goes last */
     ID_ADIR = 300, ID_ABROWSE, ID_ASEARCH, ID_APLAT, ID_ASUM, ID_ALIST, ID_ADETAIL,
     ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_ADELETE, ID_AHINT, ID_ANEW, ID_AIA, ID_AUSE, ID_ATHUMBS,
+    ID_AIMAGES,
     /* the menu bar */
     IDM_NEW = 400, IDM_OPENDIR, IDM_EXIT, IDM_SETTINGS, IDM_GUIDE, IDM_ABOUT, IDM_EDIT, IDM_DELETE,
     IDM_CONVERT, IDM_IA, IDM_REFRESH, IDM_FREE, IDM_IMAGES
@@ -730,6 +731,7 @@ static void build_archive(void)
     make_t(L"BUTTON", T_ARC_OPEN, WS_TABSTOP, 0, 0, 130, 26, ID_AOPEN);
     make_t(L"BUTTON", T_ARC_VERIFY, WS_TABSTOP, 0, 0, 130, 26, ID_AVERIFY);
     make_t(L"BUTTON", T_BTN_EDIT, WS_TABSTOP, 0, 0, 130, 26, ID_AEDIT);
+    make_t(L"BUTTON", T_ARC_IMAGES, WS_TABSTOP, 0, 0, 130, 26, ID_AIMAGES);
     make_t(L"BUTTON", T_ARC_IA, WS_TABSTOP, 0, 0, 130, 26, ID_AIA);
     make_t(L"BUTTON", T_ARC_DELETE, WS_TABSTOP, 0, 0, 130, 26, ID_ADELETE);
     make_t(L"STATIC", T_ARC_HINT, SS_NOPREFIX | SS_ENDELLIPSIS, 0, 0, 400, 18, ID_AHINT);
@@ -1528,6 +1530,9 @@ static void layout_archive(int W, int H)
     k = gy + 20;
     if (pick_open()) { put(ID_ARESUME, bx, k, 130, 26); k += 32; }
     else if (pick_closed()) { put(ID_AEDIT, bx, k, 130, 26); k += 32; }
+    /* Images sits with the other actions of the box, not only in the menu:
+     * the strip makes the group taller exactly when the button is there */
+    if (sh) { put(ID_AIMAGES, bx, k, 130, 26); k += 32; }
     put(ID_AOPEN, bx, k, 130, 26);
     put(ID_AVERIFY, bx, k + 32, 130, 26);
     put(ID_AIA, bx, k + 64, 130, 26);
@@ -2965,11 +2970,11 @@ static int visible_in(int v, int id)
     if ((id >= ID_TITLE && id <= ID_START) || (id >= ID_TITLE + LBL && id <= ID_START + LBL))
         return v == V_SETUP;
     if (id == ID_SBAR) return 1;
-    if ((id >= ID_ADIR && id <= ID_ATHUMBS) || (id >= ID_ADIR + LBL && id <= ID_ATHUMBS + LBL)) {
+    if ((id >= ID_ADIR && id <= ID_AIMAGES) || (id >= ID_ADIR + LBL && id <= ID_AIMAGES + LBL)) {
         if (v != V_ARCHIVE) return 0;
         if (id == ID_AUSE) return g_arc_empty && !g_arc_missing && g_arc_below_n > 0;
         if (g_arc_empty) return listed(in_empty, id);
-        if (id == ID_ATHUMBS) return strip_height() > 0;
+        if (id == ID_ATHUMBS || id == ID_AIMAGES) return strip_height() > 0;
         if (id == ID_ARESUME) return pick_open();
         if (id == ID_AEDIT) return pick_closed();
         if (id == ID_AIA) return pick_closed();
@@ -3917,11 +3922,12 @@ static void arc_row(int row, int idx)
 static void archive_buttons(void)
 {
     int i;
-    static const int ids[] = { ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_AIA, ID_ADELETE, 0 };
+    static const int ids[] = { ID_ARESUME, ID_AOPEN, ID_AVERIFY, ID_AEDIT, ID_AIMAGES, ID_AIA, ID_ADELETE, 0 };
     layout();
     if (g_view != V_ARCHIVE) return;
     EnableWindow(GetDlgItem(g_wnd, ID_AVERIFY), !g_verifying);
     EnableWindow(GetDlgItem(g_wnd, ID_AEDIT), pick_editable());
+    EnableWindow(GetDlgItem(g_wnd, ID_AIMAGES), pick_editable());
     EnableWindow(GetDlgItem(g_wnd, ID_AIA), pick_uploadable());
     EnableWindow(GetDlgItem(g_wnd, ID_ADELETE), pick_deletable());
     /* moved by layout, on XP they kept the neighbour's image: redraw them */
@@ -6051,6 +6057,7 @@ static int on_command(HWND h, WPARAM wp)
     case ID_AEDIT: edit_pick(); return 1;
     case ID_AIA:   ia_pick(); return 1;
     case ID_ADELETE: delete_pick(); return 1;
+    case ID_AIMAGES: images_pick(); return 1;
     case ID_ANEW:    go_setup(1); return 1;
     case ID_AUSE:    use_below(); return 1;
     case ID_ATHUMBS:                    /* the strip: its link, or one of its thumbnails */

@@ -50,7 +50,7 @@ int meta_prot_parse(const char *key)
     return -1;
 }
 
-static const char *const img_kind_keys[IMG_KINDS] = { "box", "medium", "insert" };
+static const char *const img_kind_keys[IMG_KINDS] = { "box", "medium", "insert", "case" };
 static const char *const img_side_keys[IMG_SIDES] = { "front", "back", "spine", "top", "bottom", "other" };
 
 const char *meta_img_kind_key(int kind)

@@ -112,7 +112,7 @@
 #define M_IMG_TYPE "%s cannot be attached: attach JPEG, PNG, TIFF, BMP or GIF pictures, or a PDF as an insert"
 #define M_IMG_PDF "%s is a PDF: a PDF can only be attached as an insert"
 #define M_IMG_NO_MEDIUM "the box has no %s: choose one of its media"
-#define M_IMG_SIDE "choose what the image shows: a side of the box, the front or the back of a medium, or an insert"
+#define M_IMG_SIDE "choose what the image shows: a side of the box or of the case, the front or the back of a medium, or an insert"
 #define M_IMG_TOO_MANY "too many images: at most %d per box"
 #define M_IMG_SOURCE "cannot read %s: is the folder still reachable (the network, the NAS)? The box was not changed"
 #define M_IMG_COPY "cannot copy %s into the box: is the archive disk full or write-protected? The box was not changed"

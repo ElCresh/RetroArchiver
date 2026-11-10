@@ -207,7 +207,9 @@ dskrun --remove-image NAME -t TITLE
 ```
 
 `WHAT` is `box-front`, `box-back`, `box-spine`, `box-top`, `box-bottom`,
-`box-other`, `cd2-front`, `floppy3-back` or `insert`.
+`box-other`, `case-front`... `case-other` (the jewel case or sleeve, apart
+from the outer box, with the same sides), `cd2-front`, `floppy3-back` or
+`insert`.
 
 ## Freeing space
 

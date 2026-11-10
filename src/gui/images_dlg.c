@@ -44,15 +44,15 @@ typedef struct {
     int saved;
 } imdlg;
 
-static const int kind_text[IMG_KINDS] = { T_IMG_KIND_BOX, T_IMG_KIND_MEDIUM, T_IMG_KIND_INSERT };
+static const int kind_text[IMG_KINDS] = { T_IMG_KIND_BOX, T_IMG_KIND_MEDIUM, T_IMG_KIND_INSERT, T_IMG_KIND_CASE };
 static const int side_text[IMG_SIDES] = { T_IMG_SIDE_FRONT, T_IMG_SIDE_BACK, T_IMG_SIDE_SPINE, T_IMG_SIDE_TOP,
                                           T_IMG_SIDE_BOTTOM, T_IMG_SIDE_OTHER };
 static const int kind_cap[MEDIA_KINDS] = { T_KIND_FLOPPY_CAP, T_KIND_CD_CAP, T_KIND_DVD_CAP };
 
 void image_caption(const meta_image *im, wchar_t *out, int n)
 {
-    if (im->kind == IMG_BOX)
-        _snwprintf(out, n, tr(T_IMG_CAP_BOX), tr(side_text[im->side >= 0 && im->side < IMG_SIDES ? im->side : IMG_OTHER]));
+    if (im->kind == IMG_BOX || im->kind == IMG_CASE)
+        _snwprintf(out, n, tr(im->kind == IMG_BOX ? T_IMG_CAP_BOX : T_IMG_CAP_CASE), tr(side_text[im->side >= 0 && im->side < IMG_SIDES ? im->side : IMG_OTHER]));
     else if (im->kind == IMG_MEDIUM)
         _snwprintf(out, n, tr(T_IMG_CAP_MEDIUM), tr(kind_cap[im->mkind >= 0 && im->mkind < MEDIA_KINDS ? im->mkind : 0]),
                    im->mnum, tr(side_text[im->side == IMG_BACK ? IMG_BACK : IMG_FRONT]));
@@ -219,10 +219,10 @@ static LPARAM combo_data(HWND dlg, int id, LPARAM def)
     return i < 0 ? def : (LPARAM)SendDlgItemMessageW(dlg, id, CB_GETITEMDATA, (WPARAM)i, 0);
 }
 
-/* the sides a kind has: all six for the box, front and back for a medium */
+/* the sides a kind has: all six for the box and the case, front and back for a medium */
 static void sides_fill(HWND dlg, int kind)
 {
-    int s, n = kind == IMG_BOX ? IMG_SIDES : kind == IMG_MEDIUM ? 2 : 0;
+    int s, n = kind == IMG_BOX || kind == IMG_CASE ? IMG_SIDES : kind == IMG_MEDIUM ? 2 : 0;
     SendDlgItemMessageW(dlg, IDC_IM_SIDE, CB_RESETCONTENT, 0, 0);
     for (s = 0; s < n; s++) combo_add(dlg, IDC_IM_SIDE, tr(side_text[s]), s);
 }
@@ -299,7 +299,7 @@ static void read_selected(imdlg *d, int from)
                 im->mnum = 1;
             }
         }
-        if (im->kind == IMG_BOX && (im->side < 0 || im->side >= IMG_SIDES)) im->side = IMG_FRONT;
+        if ((im->kind == IMG_BOX || im->kind == IMG_CASE) && (im->side < 0 || im->side >= IMG_SIDES)) im->side = IMG_FRONT;
     } else if (from == IDC_IM_SIDE) {
         im->side = (int)combo_data(d->dlg, IDC_IM_SIDE, im->side);
     } else if (from == IDC_IM_MEDIUM) {
@@ -604,7 +604,10 @@ static void dlg_init(HWND dlg, imdlg *d)
     column(d->list, 1, T_IMG_COL_FILE, 160);
     column(d->list, 2, T_IMG_COL_SIZE, 76);
     column(d->list, 3, T_IMG_NOTE_L, 140);
-    for (i = 0; i < IMG_KINDS; i++) combo_add(dlg, IDC_IM_KIND, tr(kind_text[i]), i);
+    {   /* the case right after the box, not in the order of the numbers */
+        static const int order[IMG_KINDS] = { IMG_BOX, IMG_CASE, IMG_MEDIUM, IMG_INSERT };
+        for (i = 0; i < IMG_KINDS; i++) combo_add(dlg, IDC_IM_KIND, tr(kind_text[order[i]]), order[i]);
+    }
     media_fill(dlg, d->box);
     SendDlgItemMessageW(dlg, IDC_IM_NOTE, EM_LIMITTEXT, 120, 0);
     SendDlgItemMessageW(dlg, IDC_IM_REASON, EM_LIMITTEXT, 120, 0);

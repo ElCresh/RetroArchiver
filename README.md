@@ -127,7 +127,9 @@ the GUI, or by running the same `dskrun` command again.
 
 Scans of the box, of the media labels and of the inserts can be attached
 to a closed box (Archive > Images..., or `dskrun --add-image FILE --as
-box-front`): JPEG, PNG, TIFF, BMP, GIF, and PDF for inserts. The files are
+box-front`): JPEG, PNG, TIFF, BMP, GIF, and PDF for inserts. The outer box
+and the jewel case inside it are two different kinds (`box-...`,
+`case-...`). The files are
 copied as they are into `data\images\`, named after what they show, with
 their hash in the manifest and their description in `metadata.json`.
 RetroArchiver does not scan, crop or convert. Removing an image moves it
